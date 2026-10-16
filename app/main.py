@@ -663,11 +663,11 @@ async def _container_load(name: str):
 
 
 async def load_loop():
-    """Host-Last alle 5 s, Container-Last aller verknüpften Container alle 10 s."""
+    """Host-Last alle 2,5 s, Container-Last/Netz und Lancache alle 5 s."""
     hoststats.sample()
     n = 0
     while True:
-        await asyncio.sleep(5)
+        await asyncio.sleep(2.5)
         hoststats.sample()
         n += 1
         if n % 2 == 0 and docker_api.available():
@@ -697,7 +697,7 @@ async def load_loop():
                 metrics.record("_cache", {}, _loads[lc])
                 ld = _loads[lc]
                 if ld.get("rx_bps") is not None:
-                    cache_history.add_net((ld["rx_bps"] or 0) * 10, (ld["tx_bps"] or 0) * 10)
+                    cache_history.add_net((ld["rx_bps"] or 0) * 5, (ld["tx_bps"] or 0) * 5)
             servers = load_servers()
             for s in servers:
                 metrics.record(s["id"], _state.get(s["id"], {}), _loads.get(s.get("container") or ""))
@@ -913,6 +913,20 @@ async def cache_dns_check():
             item["resolves"] = m.group(1) if m else None
             item["nameserver"] = re.findall(r"nameserver\s+(\S+)", ns)
             item["ok"] = bool(m) and ipaddress.ip_address(m.group(1)).is_private
+            if item["ok"]:
+                ip = m.group(1)
+                hb = (f"(curl -s -m 4 -D - -o /dev/null -H 'Host: lancache.steamcontent.com' http://{ip}/lancache-heartbeat 2>/dev/null"
+                      f" || wget -S -q -T 4 -O /dev/null --header='Host: lancache.steamcontent.com' http://{ip}/lancache-heartbeat 2>&1"
+                      f" || bash -c 'exec 3<>/dev/tcp/{ip}/80 && printf \"GET /lancache-heartbeat HTTP/1.1\\r\\nHost: lancache.steamcontent.com\\r\\nConnection: close\\r\\n\\r\\n\" >&3 && timeout 4 head -c 400 <&3' 2>&1) | head -c 600;"
+                      " echo '#CDN'; getent hosts cache1-fra1.steamcontent.com 2>/dev/null | head -1; getent hosts steampipe.akamaized.net 2>/dev/null | head -1")
+                out2 = await asyncio.wait_for(docker_api.exec_cmd(cname, ["sh", "-c", hb]), 10)
+                head, _, cdn = out2.partition("#CDN")
+                item["reach"] = bool(re.search(r"HTTP/1\.[01] 204|X-LanCache", head, re.I))
+                item["reach_raw"] = head.strip().splitlines()[0][:120] if head.strip() else "keine Antwort"
+                item["cdn"] = re.findall(r"(\d+\.\d+\.\d+\.\d+)\s+(\S+)", cdn)
+                if not item["reach"]:
+                    item["ok"] = False
+                    item["note"] = f"DNS stimmt, aber Lancache auf {ip}:80 aus dem Container nicht erreichbar ({item['reach_raw']})"
         except (docker_api.DockerError, asyncio.TimeoutError, ValueError) as e:
             item["note"] = str(e) or "Zeitüberschreitung"
         return item
@@ -968,7 +982,7 @@ async def cache_history_api(range: str = "30d"):
 @app.get("/api/host", dependencies=auth)
 async def host_load():
     h = dict(hoststats.state)
-    if h.get("updated") is None or time.time() - h["updated"] > 15:
+    if h.get("updated") is None or time.time() - h["updated"] > 8:
         h = dict(hoststats.sample())
     games = [v for v in _loads.values() if v.get("cpu") is not None]
     h["games"] = {"containers": len(_loads), "running": sum(1 for v in _loads.values() if v.get("state") == "running"),

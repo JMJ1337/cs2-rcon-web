@@ -222,16 +222,54 @@ const led = o => { const l = ledOf(o); return `<span class="dot ${l.cls}" title=
 /* ================= Last ================= */
 const lvl = p => p >= 85 ? "crit" : p >= 60 ? "warn" : "ok";
 const fmtMem = mb => mb == null ? "–" : mb >= 1024 ? (mb/1024).toFixed(1) + " GB" : mb + " MB";
+// Zahlen weich animieren statt springen
+function tween(el, target, fmt, ms = 800){
+  if (!el) return;
+  if (target == null || isNaN(target)){ el.textContent = fmt(null); el._v = null; return; }
+  const from = el._v == null ? target : el._v, t0 = performance.now();
+  el._v = target;
+  cancelAnimationFrame(el._raf);
+  const step = now => {
+    const k = Math.min(1, (now - t0) / ms), e = 1 - Math.pow(1 - k, 3);
+    el.textContent = fmt(from + (target - from) * e);
+    if (k < 1) el._raf = requestAnimationFrame(step);
+  };
+  el._raf = requestAnimationFrame(step);
+}
+// weich gerundete Kurve (monotone kubische Interpolation, kein Überschwingen)
+function smoothPath(pts){
+  if (pts.length < 2) return pts.length ? `M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}` : "";
+  const n = pts.length, d = [], m = [];
+  for (let i = 0; i < n - 1; i++) d.push((pts[i+1][1] - pts[i][1]) / ((pts[i+1][0] - pts[i][0]) || 1));
+  m[0] = d[0]; m[n-1] = d[n-2];
+  for (let i = 1; i < n - 1; i++) m[i] = d[i-1] * d[i] <= 0 ? 0 : (d[i-1] + d[i]) / 2;
+  for (let i = 0; i < n - 1; i++){
+    if (d[i] === 0){ m[i] = 0; m[i+1] = 0; continue; }
+    const a = m[i] / d[i], b = m[i+1] / d[i], h = a*a + b*b;
+    if (h > 9){ const t = 3 / Math.sqrt(h); m[i] = t * a * d[i]; m[i+1] = t * b * d[i]; }
+  }
+  let p = `M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}`;
+  for (let i = 0; i < n - 1; i++){
+    const [x0, y0] = pts[i], [x1, y1] = pts[i+1], dx = (x1 - x0) / 3;
+    p += `C${(x0+dx).toFixed(1)},${(y0+m[i]*dx).toFixed(1)} ${(x1-dx).toFixed(1)},${(y1-m[i+1]*dx).toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)}`;
+  }
+  return p;
+}
 async function refreshHost(){
   let h;
   try { h = await api("/api/host"); } catch { return; }
   const cpu = h.cpu, memPct = h.mem_total_mb ? Math.round(h.mem_used_mb / h.mem_total_mb * 100) : null;
-  $("#hlCpu").textContent = cpu != null ? cpu.toFixed(0) + " %" : "–";
+  tween($("#hlCpu"), cpu, v => v == null ? "–" : v.toFixed(0) + " %");
   $("#hlCpuBar").style.width = (cpu || 0) + "%"; $("#hlCpuBar").className = lvl(cpu || 0);
-  $("#hlMem").textContent = memPct != null ? memPct + " %" : "–";
+  tween($("#hlMem"), memPct, v => v == null ? "–" : Math.round(v) + " %");
   $("#hlMemBar").style.width = (memPct || 0) + "%"; $("#hlMemBar").className = lvl(memPct || 0);
   $("#hlHost").textContent = h.cores ? h.cores + " Kerne" : "";
   const g = h.games || {};
+  const rx = g.rx_bps || 0, tx = g.tx_bps || 0;
+  $("#hlNetDownBar").style.width = Math.min(100, rx / LINK_BPS * 100) + "%";
+  $("#hlNetUpBar").style.width = Math.min(100, tx / LINK_BPS * 100) + "%";
+  tween($("#hlNetTot"), rx + tx, v => v == null ? "–" : fmtRate(v));
+  $("#hlNetTotRow").title = `Netzwerk aller Container: ↓ ${fmtRate(rx)} · ↑ ${fmtRate(tx)} (Balken = Anteil an 1 Gbit/s)`;
   $("#hlSub").innerHTML = `${fmtMem(h.mem_used_mb)} von ${fmtMem(h.mem_total_mb)} · Load ${h.load ? h.load.map(x => x.toFixed(2)).join(" ") : "–"}` +
     (g.containers ? `<br>Spielserver: ${g.running}/${g.containers} laufen · ${g.cpu_host} % CPU · ${fmtMem(g.mem_mb)}` +
       (g.rx_bps || g.tx_bps ? ` · Netz ↓ ${fmtRate(g.rx_bps)} ↑ ${fmtRate(g.tx_bps)}` : "") : "");
@@ -253,7 +291,7 @@ function loadHtml(l){
 /* ================= Lancache ================= */
 const fmtBytes = b => b == null ? "–" : b >= 1e12 ? (b/1e12).toFixed(2) + " TB" : b >= 1e9 ? (b/1e9).toFixed(1) + " GB" : b >= 1e6 ? (b/1e6).toFixed(0) + " MB" : Math.round(b/1e3) + " KB";
 const LINK_BPS = 125e6;   // 1 Gbit/s als 100 % für den Durchsatz-Balken
-const fmtRate = bps => bps >= 1e6 ? (bps/1e6).toFixed(1) + " MB/s" : bps >= 1e3 ? Math.round(bps/1e3) + " KB/s" : "0 KB/s";
+const fmtRate = bps => bps == null ? "–" : bps >= 1e9 ? (bps/1e9).toFixed(2) + " GB/s" : bps >= 1e6 ? (bps/1e6).toFixed(1) + " MB/s" : bps >= 1e4 ? Math.round(bps/1e3) + " KB/s" : bps >= 1e3 ? (bps/1e3).toFixed(1) + " KB/s" : Math.round(bps) + " B/s";
 let cacheData = null;
 const CACHE_NAMES = {steam: "Steam", epicgames: "Epic Games", origin: "EA App / Origin", blizzard: "Battle.net (Blizzard)",
   riot: "Riot Games", wsus: "Windows Update (WSUS)", windowsupdates: "Windows Update (WSUS)", uplay: "Ubisoft Connect",
@@ -317,7 +355,7 @@ async function refreshCache(){
   const cn = c.net || {}, live = cn.tx_bps != null ? cn.tx_bps : (c.rate_bps || 0);
   if (c.container){
     const pct = Math.min(100, live / LINK_BPS * 100);
-    $("#hlNet").textContent = fmtRate(live);
+    tween($("#hlNet"), live, v => fmtRate(v));
     $("#hlNetBar").style.width = Math.max(pct, live ? 2 : 0) + "%";
     $("#hlNetRow").title = `Lancache an Clients (Netzwerk des Containers, Balken = Anteil an 1 Gbit/s)` + (cn.rx_bps != null ? ` · aus dem Internet ${fmtRate(cn.rx_bps)}` : "");
     $("#hlCache").innerHTML = `Lancache: ${d.hit_ratio != null ? d.hit_ratio + " % aus dem Cache (24 h)" : "noch keine Daten"}`;
@@ -359,8 +397,9 @@ function spark(vals, color, opts = {}){
   let d = "", area = "", seg = [];
   const flush = () => {
     if (!seg.length) return;
-    d += "M" + seg.map(([i, v]) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("L");
-    area += `M${x(seg[0][0]).toFixed(1)},${h}L` + seg.map(([i, v]) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("L") + `L${x(seg[seg.length-1][0]).toFixed(1)},${h}Z`;
+    const pts = seg.map(([i, v]) => [x(i), y(v)]), c = smoothPath(pts);
+    d += c;
+    area += `M${pts[0][0].toFixed(1)},${h}L` + c.slice(1) + `L${pts[pts.length-1][0].toFixed(1)},${h}Z`;
     seg = [];
   };
   vals.forEach((v, i) => v == null ? flush() : seg.push([i, v])); flush();
@@ -378,8 +417,9 @@ function spark2(a, b, colA, colB, opts = {}){
     let d = "", area = "", seg = [];
     const flush = () => {
       if (!seg.length) return;
-      d += "M" + seg.map(([i, v]) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("L");
-      area += `M${x(seg[0][0]).toFixed(1)},${h}L` + seg.map(([i, v]) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("L") + `L${x(seg[seg.length-1][0]).toFixed(1)},${h}Z`;
+      const pts = seg.map(([i, v]) => [x(i), y(v)]), c = smoothPath(pts);
+      d += c;
+      area += `M${pts[0][0].toFixed(1)},${h}L` + c.slice(1) + `L${pts[pts.length-1][0].toFixed(1)},${h}Z`;
       seg = [];
     };
     vals.forEach((v, i) => v == null ? flush() : seg.push([i, v])); flush();
@@ -492,6 +532,8 @@ const VIEWS = ["dash","players","auto","server","scan","create","users","cache"]
 function applyGameClasses(s){
   const g = gameOf(s), meta = GAMES[g] || {};
   document.body.classList.toggle("g-other", g !== "cs2");
+  document.body.classList.toggle("g-wreckfest", g === "wreckfest");
+  wfLoadedFor = null;
   document.body.classList.toggle("no-console", !meta.console);
   document.body.classList.toggle("no-container", !(dockerOn && s.container));
 }
@@ -1394,7 +1436,8 @@ async function start(){
   refreshHost();
   refreshCache();
   refreshActivity();
-  dashTimer = setInterval(() => { refreshDash(); refreshHost(); refreshCache(); refreshActivity(); }, 5000);
+  let tick = 0;
+  dashTimer = setInterval(() => { tick++; refreshHost(); refreshCache(); if (tick % 2 === 0){ refreshDash(); refreshActivity(); } }, 2500);
 }
 async function showVersion(){
   try {
@@ -1645,7 +1688,7 @@ async function loadDnsCheck(){
   const rows = r.items.map(x => {
     const sid = (servers.find(s => s.container === x.container) || {}).id;
     const st = x.ok === true ? `<span style="color:var(--ok)">✓ über Lancache (${esc(x.resolves)})</span>`
-      : x.ok === false || (x.ok === null && !x.note) ? `<span style="color:var(--bad)">✗ lädt am Cache vorbei</span>`
+      : x.ok === false || (x.ok === null && !x.note) ? `<span style="color:var(--bad)">✗ ${esc(x.note || "lädt am Cache vorbei")}</span>`
       : `<span class="hint">${esc(x.note || "unbekannt")}</span>`;
     let fix = "";
     if (x.ok === false || (x.ok === null && !x.note)){
