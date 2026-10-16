@@ -871,7 +871,7 @@ async def import_players(sid: str):
 MATCH_PRESETS = {
     "wingman": {
         "label": "Wingman (2v2)", "players_per_team": 2, "game_type": 0, "game_mode": 2,
-        "maps": ["de_inferno", "de_nuke", "de_overpass", "de_vertigo", "de_palais"],
+        "maps": ["de_inferno", "de_nuke", "de_overpass", "de_vertigo", "de_ancient"],
         "cvars": {"mp_maxrounds": "16", "mp_overtime_enable": "1", "mp_overtime_maxrounds": "6",
                   "mp_roundtime": "1.5", "mp_roundtime_defuse": "1.5",
                   "matchzy_minimum_ready_required": "4"},

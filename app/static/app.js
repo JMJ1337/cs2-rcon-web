@@ -4,7 +4,7 @@ const $$ = s => [...document.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 const MAPS = ["de_dust2","de_mirage","de_inferno","de_nuke","de_ancient","de_anubis","de_train",
-  "de_overpass","de_vertigo","de_palais","de_whistle","cs_office","cs_italy","ar_baggage","ar_shoots","ar_pool_day"];
+  "de_overpass","de_vertigo","de_whistle","cs_office","cs_italy","ar_baggage","ar_shoots","ar_pool_day"];
 
 const QUICK = [
   ["Warmup beenden","mp_warmup_end","primary"], ["Warmup starten","mp_warmup_start"],

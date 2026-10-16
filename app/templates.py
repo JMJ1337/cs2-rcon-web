@@ -15,7 +15,7 @@ TEMPLATES = {
             ["rcon_pw", "RCON-Passwort", "password", "", ""],
             ["server_pw", "Server-Passwort (optional)", "text", "", ""],
             ["mode", "Modus", "select", "wingman", "competitive,wingman,casual,deathmatch"],
-            ["map", "Startmap", "text", "de_palais", ""],
+            ["map", "Startmap", "text", "de_inferno", ""],
             ["slots", "Max. Slots", "number", "20", "Obergrenze, sichtbare Slots setzt die Automatik"],
             ["dns", "DNS (Lancache, optional)", "text", "192.168.200.27", ""],
         ],
@@ -100,7 +100,7 @@ def build(game: str, v: dict, data_dir: str) -> dict:
             raise ValueError("Steam-Token und RCON-Passwort sind Pflicht")
         gt, gm = MODES.get(v.get("mode") or "wingman", (0, 2))
         env = [f"SRCDS_TOKEN={v['token']}", f"CS2_SERVERNAME={v.get('server_name') or name}",
-               f"CS2_GAMEALIAS={v.get('mode') or 'wingman'}", f"CS2_STARTMAP={v.get('map') or 'de_palais'}",
+               f"CS2_GAMEALIAS={v.get('mode') or 'wingman'}", f"CS2_STARTMAP={v.get('map') or 'de_inferno'}",
                f"CS2_MAXPLAYERS={int(v.get('slots') or 20)}", f"CS2_PORT={port}", f"TV_PORT={tv}",
                f"CS2_RCONPW={v['rcon_pw']}", f"CS2_PW={v.get('server_pw') or ''}", "CS2_MAPGROUP=mg_active",
                "CS2_BOT_QUOTA=0", "STEAMAPPVALIDATE=0", "CS2_CHEATS=0", "CS2_SERVER_HIBERNATE=0", "CS2_LAN=0",
