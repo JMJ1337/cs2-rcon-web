@@ -9,13 +9,14 @@ Weboberfläche für die Spielserver auf unserer LAN – als Docker-Container mit
 | **Factorio** | RCON | RCON (`/players`, `/save` …) | Spiel speichern |
 | **Satisfactory** | offizielle HTTPS-API (Port 7777) | `RunCommand` | Spiel speichern, Server beanspruchen |
 | **Valheim** | Steam-Query (A2S, Spielport + 1) | – (hat keine Remote-Konsole) | Neustart/Logs über Docker |
+| **Wreckfest** | Steam-Query (A2S, Query-Port) | – (Webkonsole des ich777-Images verlinkbar) | Neustart/Logs über Docker |
 
 Außerdem:
 - **Benutzerkonten** mit Rollen *Administrator*, *Spielleiter* (bedienen) und *Nur ansehen*. Sie liegen im Volume
   `cs2-rcon-data` und bleiben bei Updates erhalten. Erster Login: Benutzer `admin` + `ADMIN_PASSWORD`
   (funktioniert auch später noch als Notfall-Login).
 - **Docker-Steuerung:** Container starten/stoppen/neu starten, Logs, CPU/RAM – pro Server einen Container verknüpfen.
-- **Neue Server anlegen:** CS2, Factorio, Satisfactory, Valheim als Container mit Datenordner auf dem NAS
+- **Neue Server anlegen:** CS2, Factorio, Satisfactory, Valheim, Wreckfest als Container mit Datenordner auf dem NAS
   (Ordner wird angelegt und für den Container beschreibbar gemacht).
 - **Netzwerk-Scan:** findet CS2/Valheim (A2S), Satisfactory (UDP-Query) im LAN und Spiel-Container in Docker,
   automatisch alle 15 Minuten (einstellbar) – gefundene Server mit einem Klick übernehmen.

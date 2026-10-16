@@ -63,7 +63,18 @@ const SETTINGS = [
 let servers = [], current = null, tab = "overview", view = "dash";
 let GAMES = {}, dockerOn = false, me = null, ctTimer = null;
 const gameOf = s => (s && GAMES[s.game] ? s.game : "cs2");
-const gbadge = g => GAMES[g] ? `<span class="gbadge" style="background:${GAMES[g].color}">${esc(GAMES[g].short)}</span>` : "";
+// Eigene, schlichte Symbole je Spiel (keine offiziellen Logos)
+const ICONS = {
+  cs2: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>',
+  factorio: '<circle cx="12" cy="12" r="3.5"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/><circle cx="12" cy="12" r="6.5"/>',
+  satisfactory: '<path d="M3 21V11l5 3v-3l5 3V8h3V4h3v17z"/><path d="M3 21h18"/>',
+  valheim: '<path d="M6 21L17 6"/><path d="M14 3c3 0 6 3 6 6-2 0-3-1-4.5-2.5S14 5 14 3z"/>',
+  wreckfest: '<path d="M3 15l2-5c.4-1 1.2-1.5 2.2-1.5h6.3c.9 0 1.7.4 2.2 1.1L18 12l2.5.8c.8.3 1.5 1 1.5 1.9V15"/><path d="M2 15h20v2H2z"/><circle cx="7" cy="17.5" r="2"/><circle cx="17" cy="17.5" r="2"/><path d="M9 5l1.5 2M14 4l-1 3"/>',
+  _: '<rect x="3" y="7" width="18" height="10" rx="4"/><path d="M8 10v4M6 12h4"/><circle cx="16" cy="11" r="1"/><circle cx="18" cy="13" r="1"/>',
+};
+const gicon = (g, size=16) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[g] || ICONS._}</svg>`;
+const gbadge = g => GAMES[g] ? `<span class="gbadge" style="background:${GAMES[g].color}">${gicon(g, 12)} ${esc(GAMES[g].short)}</span>` : "";
+const collapsed = (() => { try { return JSON.parse(localStorage.getItem("gsmCollapsed") || "{}"); } catch { return {}; } })();
 let pollTimer = null, dashTimer = null;
 let settings = {modes: [], map_rules: []}, presets = {}, players = [], favs = [];
 let loadedSettings = {};
@@ -137,16 +148,37 @@ async function loadServers(){
 }
 function stateOf(id){ return overview.find(o => o.server.id === id) || {}; }
 function renderServerList(){
-  $("#serverList").innerHTML = servers.length ? servers.map(s => {
-    const st = stateOf(s.id);
-    const lim = st.visible_players > 0 ? st.visible_players : st.max_players;
-    const cnt = st.online ? `${st.humans ?? 0}${lim ? "/" + lim : ""}` : "";
-    return `<div class="srv ${current && current.id===s.id ? "active":""}" data-id="${esc(s.id)}">
-      <span class="dot ${st.online===true?"on":st.online===false?"off":""}"></span>
-      <div class="meta"><div class="n">${esc(s.name)}</div><div class="h">${GAMES[gameOf(s)] ? esc(GAMES[gameOf(s)].short) + " · " : ""}${esc(st.map || s.host+":"+s.port)}</div></div>
-      <span class="cnt">${esc(cnt)}</span></div>`;
-  }).join("") : `<div class="muted" style="padding:10px 16px">Keine Server angelegt.</div>`;
+  if (!servers.length){ $("#serverList").innerHTML = `<div class="muted" style="padding:10px 16px">Keine Server angelegt.</div>`; return; }
+  const order = Object.keys(GAMES).length ? Object.keys(GAMES) : ["cs2"];
+  const groups = order.map(g => [g, servers.filter(s => gameOf(s) === g)]).filter(([, l]) => l.length);
+  $("#serverList").innerHTML = groups.map(([g, list]) => {
+    const on = list.filter(s => stateOf(s.id).online).length;
+    const players = list.reduce((a, s) => a + (stateOf(s.id).online ? (stateOf(s.id).humans || 0) : 0), 0);
+    const open = !collapsed[g] || (current && gameOf(current) === g);
+    return `<div class="sgroup ${open ? "open" : ""}">
+      <button class="sghead" data-group="${g}" title="${esc(GAMES[g]?.label || g)} ein-/ausklappen">
+        <span class="gtile" style="background:${GAMES[g]?.color || "#888"}">${gicon(g, 18)}</span>
+        <span class="sgname">${esc(GAMES[g]?.short || g)}</span>
+        <span class="sgcount">${on}/${list.length}${players ? ` · ${players} ☺` : ""}</span>
+        <span class="chev">▾</span>
+      </button>
+      <div class="sgbody">${list.map(s => {
+        const st = stateOf(s.id);
+        const lim = st.visible_players > 0 ? st.visible_players : st.max_players;
+        const cnt = st.online ? `${st.humans ?? 0}${lim ? "/" + lim : ""}` : "";
+        return `<div class="srv ${current && current.id===s.id ? "active":""}" data-id="${esc(s.id)}">
+          <span class="dot ${st.online===true?"on":st.online===false?"off":""}"></span>
+          <div class="meta"><div class="n">${esc(s.name)}</div><div class="h">${esc(st.map || s.host+":"+s.port)}</div></div>
+          <span class="cnt">${esc(cnt)}</span></div>`;
+      }).join("")}</div></div>`;
+  }).join("");
   $$(".srv").forEach(el => el.onclick = () => selectServer(servers.find(s => s.id === el.dataset.id)));
+  $$(".sghead").forEach(b => b.onclick = () => {
+    const g = b.dataset.group;
+    collapsed[g] = b.parentElement.classList.contains("open");
+    try { localStorage.setItem("gsmCollapsed", JSON.stringify(collapsed)); } catch {}
+    b.parentElement.classList.toggle("open");
+  });
 }
 
 /* ================= Last ================= */
@@ -184,7 +216,9 @@ async function refreshDash(){
   const on = overview.filter(o => o.online).length;
   const pl = overview.reduce((a,o) => a + (o.online ? (o.humans||0) : 0), 0);
   $("#dashSub").textContent = `${on} von ${overview.length} online · ${pl} Spieler gesamt · aktualisiert ${new Date().toLocaleTimeString("de-DE")}`;
-  $("#dashGrid").innerHTML = overview.map(o => {
+  const order = Object.keys(GAMES);
+  const byGame = order.map(g => [g, overview.filter(o => gameOf(o.server) === g)]).filter(([, l]) => l.length);
+  $("#dashGrid").innerHTML = byGame.map(([g, items]) => `<div class="dsect"><h3 class="dhead"><span class="gtile" style="background:${GAMES[g].color}">${gicon(g, 16)}</span>${esc(GAMES[g].label)} <span class="hint">${items.filter(o => o.online).length}/${items.length} online</span></h3><div class="dash">` + items.map(o => {
     const s = o.server, slots = o.visible_players > 0 ? o.visible_players : (o.max_players || 0);
     const pct = slots ? Math.min(100, Math.round((o.humans||0) / slots * 100)) : 0;
     const mz = o.matchzy && o.matchzy.match ? `${esc(o.matchzy.match.team1||"")} vs ${esc(o.matchzy.match.team2||"")} · ${esc(o.matchzy.match.state||"")}` : (o.matchzy && o.matchzy.installed ? "kein Match geladen" : "–");
@@ -198,9 +232,9 @@ async function refreshDash(){
         <span>MatchZy</span><span>${mz}</span>
       </div>` : `
       <div class="kv">
-        <span>${gameOf(s) === "satisfactory" ? "Session" : "Welt"}</span><span>${esc(o.map || "–")}</span>
+        <span>${worldLabel(gameOf(s))}</span><span>${esc(o.map || "–")}</span>
         <span>Spieler</span><span>${o.humans ?? 0}${o.max_players ? " / " + o.max_players : ""}</span>
-        ${Object.entries(o.extra || {}).filter(([k]) => !["Session","Servername"].includes(k)).slice(0, 2).map(([k,v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join("")}
+        ${Object.entries(o.extra || {}).filter(([k]) => !["Session","Servername","Strecke"].includes(k)).slice(0, 2).map(([k,v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join("")}
       </div>`) + `
       <div class="bar"><i style="width:${pct}%"></i></div>
       ${loadHtml(o.load)}
@@ -208,7 +242,7 @@ async function refreshDash(){
       ${o.unclaimed ? `<span class="pill warn">Satisfactory: noch nicht beansprucht</span>` : ""}`
       : `<div class="hint">${esc(o.error || (o.online === false ? "offline" : "noch nicht abgefragt"))}</div>${loadHtml(o.load)}`}
     </div>`;
-  }).join("");
+  }).join("") + `</div></div>`).join("");
   $$(".dcard").forEach(el => el.onclick = () => selectServer(servers.find(s => s.id === el.dataset.id)));
 }
 
@@ -231,6 +265,7 @@ function selectServer(s){
   if ((g !== "cs2" && ["maps","match","settings"].includes(tab)) || (tab === "console" && !GAMES[g].console) || (tab === "container" && !(dockerOn && s.container))) tab = "overview";
   renderServerList();
   $("#svTitle").innerHTML = `${gbadge(gameOf(s))} ${esc(s.name)}`;
+  $("#btnWeb").classList.toggle("hidden", !s.web_url);
   $("#svSub").textContent = `${s.host}:${s.port}${s.notes ? " · " + s.notes : ""}${s.auto_slots === false ? " · Automatik aus" : ""}`;
   resetOverview();
   $("#consoleOut").innerHTML = "";
@@ -731,6 +766,7 @@ function openServerDialog(s){
   f.password.value = ""; f.notes.value = s?.notes || ""; f.auto_slots.checked = s ? s.auto_slots !== false : true;
   $("#dlgGame").innerHTML = Object.entries(GAMES).map(([k,g]) => `<option value="${k}">${esc(g.label)}</option>`).join("");
   f.game.value = gameOf(s);
+  f.web_url.value = s?.web_url || "";
   fillContainerSelect(s?.container || "");
   dlgGameChanged(!s);
   $("#pwHint").textContent = s ? "(leer lassen = unverändert)" : "";
@@ -743,7 +779,8 @@ $("#btnCancel").onclick = () => $("#dlgServer").close();
 function formData(){
   const f = $("#serverForm");
   return {name: f.name.value.trim(), host: f.host.value.trim(), port: parseInt(f.port.value, 10), password: f.password.value,
-          notes: f.notes.value.trim(), auto_slots: f.auto_slots.checked, game: f.game.value, container: f.container.value};
+          notes: f.notes.value.trim(), auto_slots: f.auto_slots.checked, game: f.game.value, container: f.container.value,
+          web_url: f.web_url.value.trim()};
 }
 $("#serverForm").addEventListener("submit", async e => {
   e.preventDefault();
@@ -787,11 +824,12 @@ $("#broadcastForm").addEventListener("submit", async e => {
 
 
 /* ================= Andere Spiele (Factorio, Satisfactory, Valheim) ================= */
+const worldLabel = g => ({satisfactory: "Session", wreckfest: "Strecke"})[g] || "Welt";
 function renderGeneric(st){
   const g = gameOf(current), meta = GAMES[g];
   $("#stOnline").textContent = "Online"; $("#stOnline").style.color = "var(--ok)";
   $("#stVersion").textContent = st.version ? "Version " + st.version : "";
-  $("#stMapLabel").textContent = g === "satisfactory" ? "Session" : "Welt";
+  $("#stMapLabel").textContent = worldLabel(g);
   $("#stMap").textContent = st.map || "–"; $("#stMapSub").textContent = st.hostname || "";
   $("#stMapImg").classList.add("hidden");
   $("#stMode").textContent = meta.label; $("#stRounds").textContent = "";
@@ -802,6 +840,7 @@ function renderGeneric(st){
   $("#gSaveRow").classList.toggle("hidden", !canSave);
   $("#gClaim").classList.toggle("hidden", !st.unclaimed);
   $("#gActHint").textContent = g === "valheim" ? "Valheim hat keine Remote-Konsole – Neustart und Logs über den Container-Tab." :
+    g === "wreckfest" ? "Wreckfest hat keine Remote-Konsole. Die Server-Konsole erreichst du über „Webkonsole ↗“ oben rechts (beim ich777-Image), Neustart und Logs über den Container-Tab." :
     g === "satisfactory" && st.privilege === "Client" ? "Ohne Admin-Passwort nur Lesezugriff – Passwort unter „Bearbeiten“ eintragen." : "";
   const list = st.players || [];
   $("#playerRows").innerHTML = list.length ? list.map(p => `<tr><td></td><td class="name">${esc(p.name)}</td><td colspan="2"></td><td class="mono">${esc(p.time || "")}</td><td colspan="3"></td></tr>`).join("")
@@ -1028,3 +1067,5 @@ showVersion();
   const me = await api("/api/me").catch(() => ({authenticated:false}));
   me.authenticated ? start() : showLogin();
 })();
+
+$("#btnWeb").onclick = () => { if (current && current.web_url) window.open(current.web_url, "_blank", "noopener"); };

@@ -53,6 +53,17 @@ TEMPLATES = {
             ["port", "Spielport (UDP, +1 = Query)", "number", "2456", ""],
         ],
     },
+    "wreckfest": {
+        "label": "Wreckfest", "image": "ghcr.io/ich777/steamcmd:wreckfest", "uid": 99, "gid": 100,
+        "data_default": "/mnt/wreckfest/{name}",
+        "fields": [
+            ["name", "Container-Name", "text", "wreckfest-{n}", ""],
+            ["port", "Spielport (UDP)", "number", "33540", ""],
+            ["query_port", "Query-Port auf dem Host (UDP)", "number", "27116", "intern 27016 – außen verschoben, damit es nicht mit CS2 kollidiert"],
+            ["steam_port", "Steam-Port auf dem Host (UDP)", "number", "27115", "intern 27015"],
+            ["web_port", "Webkonsole (TCP)", "number", "9028", "Server-Konsole im Browser"],
+        ],
+    },
 }
 
 MODES = {"competitive": (0, 1), "wingman": (0, 2), "casual": (0, 0), "deathmatch": (1, 2)}
@@ -129,8 +140,19 @@ def build(game: str, v: dict, data_dir: str) -> dict:
         host["CapAdd"] = ["SYS_NICE"]
         spec_extra = {}
         srv = {"port": port + 1, "password": ""}
+    elif game == "wreckfest":
+        port = _port(v.get("port"), "Spielport")
+        qport, sport = _port(v.get("query_port"), "Query-Port"), _port(v.get("steam_port"), "Steam-Port")
+        wport = _port(v.get("web_port"), "Webkonsole")
+        env = ["GAME_ID=361580", "VALIDATE=", "UID=99", "GID=100", "GAME_PARAMS="]
+        exposed.update({f"{port}/udp": {}, "27016/udp": {}, "27015/udp": {}, "8080/tcp": {}})
+        host["PortBindings"].update({f"{port}/udp": [{"HostPort": str(port)}], "27016/udp": [{"HostPort": str(qport)}],
+                                     "27015/udp": [{"HostPort": str(sport)}], "8080/tcp": [{"HostPort": str(wport)}]})
+        host["Binds"] += [f"{data_dir}/steamcmd:/serverdata/steamcmd", f"{data_dir}/serverfiles:/serverdata/serverfiles"]
+        spec_extra = {}
+        srv = {"port": qport, "password": "", "web_url": f"http://{{host}}:{wport}"}
     else:
         raise ValueError("Unbekanntes Spiel")
     spec = {"Image": t["image"], "Env": env, "ExposedPorts": exposed, "HostConfig": host, "Labels": labels, **spec_extra}
     dirs = [b.split(":")[0] for b in host["Binds"]]
-    return {"name": name, "image": t["image"], "spec": spec, "uid": t["uid"], "dirs": dirs, "server": srv}
+    return {"name": name, "image": t["image"], "spec": spec, "uid": t["uid"], "gid": t.get("gid", t["uid"]), "dirs": dirs, "server": srv}

@@ -213,6 +213,7 @@ class ServerIn(BaseModel):
     auto_slots: bool = True
     game: str = "cs2"
     container: str = ""
+    web_url: str = Field("", max_length=255)
 
 
 _store_lock = asyncio.Lock()
@@ -234,6 +235,7 @@ def public(s: dict) -> dict:
     out.setdefault("auto_slots", True)
     out.setdefault("game", "cs2")
     out.setdefault("container", "")
+    out.setdefault("web_url", "")
     return out | {"has_password": bool(s.get("password"))}
 
 
@@ -292,7 +294,7 @@ async def add_server(data: ServerIn):
         s = {"id": uuid.uuid4().hex[:10], "name": data.name, "host": data.host.strip(),
              "port": data.port, "password": data.password or "", "notes": data.notes,
              "auto_slots": data.auto_slots, "game": data.game if data.game in GAMES else "cs2",
-             "container": data.container.strip()}
+             "container": data.container.strip(), "web_url": data.web_url.strip()}
         servers.append(s)
         save_servers(servers)
     return public(s)
@@ -306,7 +308,7 @@ async def update_server(sid: str, data: ServerIn):
             if s["id"] == sid:
                 s.update(name=data.name, host=data.host.strip(), port=data.port, notes=data.notes,
                          auto_slots=data.auto_slots, game=data.game if data.game in GAMES else "cs2",
-                         container=data.container.strip())
+                         container=data.container.strip(), web_url=data.web_url.strip())
                 if data.password:
                     s["password"] = data.password
                 save_servers(servers)
@@ -477,6 +479,8 @@ async def collect_generic(s: dict) -> dict:
             st = await sfmod.status(sf_client(s))
         elif g == "valheim":
             st = await adapters.valheim_status(s["host"], int(s["port"]))
+        elif g == "wreckfest":
+            st = await adapters.wreckfest_status(s["host"], int(s["port"]))
         else:
             raise RconError("Unbekanntes Spiel")
     except (sfmod.SatisfactoryError, adapters.a2s.A2SError) as e:
@@ -1164,7 +1168,7 @@ async def _create_job(job: dict, data: CreateIn, host: str):
     try:
         b = templates.build(data.game, data.values, data.data_dir)
         _job_log(job, f"Ordner vorbereiten: {', '.join(b['dirs'])}")
-        own = f" && chown -R {b['uid']}:{b['uid']} /target" if b["uid"] else ""
+        own = f" && chown -R {b['uid']}:{b['gid']} /target" if b["uid"] else ""
         for d in b["dirs"]:
             await docker_api.run_helper([f"{d}:/target"], ["sh", "-c", f"mkdir -p /target{own} && echo ok"])
         _job_log(job, f"Image laden: {b['image']} (kann beim ersten Mal dauern)")
@@ -1184,7 +1188,8 @@ async def _create_job(job: dict, data: CreateIn, host: str):
         await docker_api.create_container(b["name"], b["spec"])
         srv = {"id": uuid.uuid4().hex[:10], "name": b["name"], "host": host, "port": b["server"]["port"],
                "password": b["server"].get("password", ""), "notes": "angelegt vom Spielservermanager",
-               "auto_slots": True, "game": data.game, "container": b["name"]}
+               "auto_slots": True, "game": data.game, "container": b["name"],
+               "web_url": b["server"].get("web_url", "").replace("{host}", host)}
         async with _store_lock:
             servers = load_servers()
             servers.append(srv)

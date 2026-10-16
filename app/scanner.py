@@ -12,15 +12,16 @@ from .games import a2s
 
 log = logging.getLogger("cs2rcon.scan")
 
-A2S_PORTS = [p for p in range(27015, 27031)] + [2457, 2459, 2461, 2463, 2465]
+A2S_PORTS = [p for p in range(27015, 27031)] + [27116, 27117, 2457, 2459, 2461, 2463, 2465]
 SF_PORTS = [7777, 7778, 7779]
 CONCURRENCY = int(os.getenv("SCAN_CONCURRENCY", "256"))
 
-APPIDS = {730: "cs2", 892970: "valheim", 896660: "valheim"}
+APPIDS = {730: "cs2", 892970: "valheim", 896660: "valheim", 228380: "wreckfest", 361580: "wreckfest",
+          1203190: "wreckfest", 3519390: "wreckfest"}
 
 IMAGE_HINTS = {
     "cs2": ["cs2", "counter-strike"], "factorio": ["factorio"],
-    "satisfactory": ["satisfactory"], "valheim": ["valheim"],
+    "satisfactory": ["satisfactory"], "valheim": ["valheim"], "wreckfest": ["wreckfest"],
 }
 
 state = {"running": False, "last": None, "subnets": [], "results": [], "error": None, "duration": None}
@@ -33,6 +34,8 @@ def guess_game_a2s(info: dict) -> str | None:
     folder = (info.get("folder") or "").lower()
     if "valheim" in folder:
         return "valheim"
+    if "wreckfest" in folder or "wreckfest" in (info.get("game") or "").lower():
+        return "wreckfest"
     if folder in ("csgo", "cs2") or "counter-strike" in (info.get("game") or "").lower():
         return "cs2"
     return None

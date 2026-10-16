@@ -40,6 +40,25 @@ async def factorio_status(c: RconClient) -> dict:
     }
 
 
+async def wreckfest_status(host: str, port: int) -> dict:
+    info = await a2s.info(host, port)
+    try:
+        pl = await a2s.players(host, port)
+    except a2s.A2SError:
+        pl = []
+    return {
+        "map": info.get("map") or "–", "humans": info["players"], "bots": info.get("bots") or 0,
+        "max_players": info["max_players"],
+        "players": [{"name": p["name"] or "(verbindet …)", "time": f"{p['time'] // 60} min"} for p in pl],
+        "version": info.get("version"), "hostname": info["name"],
+        "mode": {"key": "wreckfest", "label": "Wreckfest"},
+        "extra": {k: v for k, v in {"Servername": info["name"], "Strecke": info.get("map"),
+                                    "Bots": info.get("bots") or None, "Version": info.get("version"),
+                                    "Passwort": "ja" if info["password"] else "nein"}.items() if v},
+        "updated": time.time(),
+    }
+
+
 async def valheim_status(host: str, port: int) -> dict:
     info = await a2s.info(host, port)
     try:

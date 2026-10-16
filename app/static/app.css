@@ -190,3 +190,23 @@ body.viewer .opsonly{display:none!important}
 .loadrow .bar{height:5px}
 
 .ver{text-align:center;font-size:11px;font-family:var(--mono)}
+
+/* ---------- v6: Gruppen nach Spiel ---------- */
+.sgroup{margin:2px 0 6px}
+.sghead{width:100%;display:flex;align-items:center;gap:10px;padding:7px 8px;background:transparent;border:1px solid transparent;border-radius:8px;text-align:left}
+.sghead:hover{background:var(--panel2);border-color:var(--line)}
+.gtile{width:28px;height:28px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;color:#151515;flex:none}
+.sgname{flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sgcount{font-size:11px;color:var(--muted);font-family:var(--mono)}
+.chev{color:var(--muted);transition:transform .15s;font-size:12px}
+.sgroup:not(.open) .chev{transform:rotate(-90deg)}
+.sgroup:not(.open) .sgbody{display:none}
+.sgbody{padding-left:14px;border-left:1px solid var(--line);margin-left:22px}
+.gbadge{display:inline-flex;align-items:center;gap:4px;vertical-align:middle}
+.dsect{margin-bottom:22px}
+.dhead{display:flex;align-items:center;gap:10px;font-size:14px;text-transform:none;letter-spacing:0;color:var(--text);margin:0 0 10px}
+.dhead .gtile{width:26px;height:26px}
+
+aside{overflow-y:auto}
+#serverList{flex:none;overflow:visible}
+aside .foot{position:sticky;bottom:0;background:var(--panel);margin-top:auto}

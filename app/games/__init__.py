@@ -25,6 +25,12 @@ GAMES = {
         "password_label": "– (nicht nötig)", "console": False,
         "features": [],
     },
+    "wreckfest": {
+        "label": "Wreckfest", "short": "Wreckfest", "color": "#e5534b",
+        "port_label": "Query-Port (UDP, Standard 27016)", "default_port": 27016,
+        "password_label": "– (nicht nötig)", "console": False,
+        "features": ["webconsole"],
+    },
 }
 
 
