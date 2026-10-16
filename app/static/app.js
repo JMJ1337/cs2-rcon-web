@@ -299,7 +299,7 @@ function selectServer(s){
   $("#view-server").classList.remove("hidden");
   applyGameClasses(s);
   const g = gameOf(s);
-  if ((g !== "cs2" && ["maps","match","settings"].includes(tab)) || (tab === "console" && !GAMES[g].console) || (tab === "container" && !(dockerOn && s.container))) tab = "overview";
+  if ((g !== "cs2" && ["maps","match","settings"].includes(tab)) || (tab === "container" && !(dockerOn && s.container))) tab = "overview";
   renderServerList();
   $("#svTitle").innerHTML = `${gbadge(gameOf(s))} ${esc(s.name)}`;
   $("#btnWeb").classList.toggle("hidden", !s.web_url);
@@ -321,7 +321,7 @@ function setTab(t){
   if (t === "maps") renderFavs();
   if (t === "match") initMatch();
   if (t === "settings" && !Object.keys(loadedSettings).length) loadSettings();
-  if (t === "console") $("#consoleIn").focus();
+  if (t === "console"){ renderCmdRef(); if (GAMES[gameOf(current)].console) $("#consoleIn").focus(); }
 }
 function stopPoll(){ if (pollTimer){ clearInterval(pollTimer); pollTimer = null; } }
 
@@ -1015,7 +1015,7 @@ async function initCreate(){
     type === "select" ? `<select data-cf="${k}">${hint.split(",").map(o => `<option ${o===def?"selected":""}>${o}</option>`).join("")}</select>`
     : `<input data-cf="${k}" type="${type==="password"?"password":"text"}" value="${esc(fill(def, k))}" ${type==="number"?'inputmode="numeric"':""} autocomplete="off">`
   }${hint && type !== "select" ? `<div class="hint">${esc(hint)}</div>` : ""}</div>`).join("");
-  const upd = () => { const name = ($('[data-cf="name"]') || {}).value || ""; $("#createDataDir").value = t.data_default.replace("{base}", settings.games_base || "/mnt/grohlan").replace("{n}", n).replace("{name}", name); };
+  const upd = () => { const name = ($('[data-cf="name"]') || {}).value || ""; $("#createDataDir").value = t.data_default.replace("{base}", tpl.games_base || settings.games_base || "/mnt/grohlan").replace("{n}", n).replace("{name}", name); };
   upd(); $('[data-cf="name"]').addEventListener("input", upd);
   $("#createHost").value = (settings.public_url || "").replace(/^https?:\/\//, "").split(/[:/]/)[0] || location.hostname;
   $("#createHint").textContent = `Image: ${t.image} · Der Ordner wird auf dem Docker-Host angelegt und für UID ${t.uid} beschreibbar gemacht. Ports: automatisch die nächsten freien gewählt (${sug.used.length} Ports sind bereits belegt) – vor dem Anlegen wird nochmals auf Überschneidungen geprüft.`;
@@ -1114,6 +1114,7 @@ async function showVersion(){
     const d = v.date ? new Date(v.date).toLocaleString("de-DE", {day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit"}) : "";
     const txt = `Version ${v.version}${v.commit && v.commit !== "lokal" ? " (" + v.commit + ")" : ""}${d ? " · " + d : ""}`;
     $("#appVersion").textContent = txt; $("#loginVersion").textContent = txt;
+    if (typeof loadedVersion !== "undefined" && loadedVersion === null) loadedVersion = v.version + v.commit;
   } catch {}
 }
 showVersion();
@@ -1147,3 +1148,42 @@ function setJoin(j){
 }
 $("#btnJoin").onclick = () => { if (currentJoin && currentJoin.url) location.href = currentJoin.url; };
 $("#btnCopyAddr").onclick = () => { if (currentJoin) copyText(currentJoin.address); };
+
+/* ================= Befehlsreferenz ================= */
+function renderCmdRef(){
+  if (!current) return;
+  const g = gameOf(current), ref = COMMANDS[g] || {groups: {}}, remote = GAMES[g].console;
+  $("#consoleForm").classList.toggle("hidden", !remote);
+  $("#consoleOut").classList.toggle("hidden", !remote);
+  $("#consoleNoRemote").classList.toggle("hidden", remote);
+  $("#consoleNoRemote").textContent = remote ? "" : ref.note || "Keine Remote-Konsole.";
+  $(".cmdref").classList.toggle("readonly", !remote);
+  $("#cmdNote").textContent = remote ? (ref.note || "") + " Klick übernimmt den Befehl." : "Klick kopiert den Befehl.";
+  const f = $("#cmdFilter").value.trim().toLowerCase();
+  $("#cmdList").innerHTML = Object.entries(ref.groups).map(([grp, list]) => {
+    const items = list.filter(([c, d]) => !f || c.toLowerCase().includes(f) || d.toLowerCase().includes(f));
+    if (!items.length) return "";
+    return `<div class="cmdgroup"><h3>${esc(grp)}</h3>${items.map(([c, d]) => `<button class="cmd" data-cmd-ref="${esc(c)}"><code>${esc(c)}</code><span>${esc(d)}</span></button>`).join("")}</div>`;
+  }).join("") || `<div class="hint">Nichts gefunden.</div>`;
+  $$("[data-cmd-ref]").forEach(b => b.onclick = () => {
+    const c = b.dataset.cmdRef;
+    if (!remote) return copyText(c);
+    const inp = $("#consoleIn");
+    inp.value = c; inp.focus();
+    const m = c.match(/<[^>]+>/);   // ersten Platzhalter markieren
+    if (m) inp.setSelectionRange(m.index, m.index + m[0].length);
+  });
+}
+$("#cmdFilter").addEventListener("input", renderCmdRef);
+
+/* ================= Update-Hinweis ================= */
+let loadedVersion = null;
+setInterval(async () => {
+  try {
+    const v = await (await fetch("/api/version", {cache: "no-store"})).json();
+    const key = v.version + v.commit;
+    if (loadedVersion === null) loadedVersion = key;
+    else if (key !== loadedVersion) $("#updateBar").classList.remove("hidden");
+  } catch {}
+}, 60000);
+$("#btnReloadApp").onclick = () => location.reload();

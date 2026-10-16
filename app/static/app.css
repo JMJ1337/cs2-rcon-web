@@ -217,3 +217,16 @@ span.joinbtn{background:var(--panel2);color:var(--text);border:1px solid var(--l
 
 .tabs button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
 .cachecards{margin-bottom:10px}
+
+/* ---------- v10: Befehlsreferenz, Update-Hinweis ---------- */
+.consolewrap{display:grid;grid-template-columns:1fr 340px;gap:16px;align-items:start}
+.cmdref{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:14px;max-height:calc(100vh - 140px);overflow:auto;position:sticky;top:80px}
+.cmdgroup h3{margin:12px 0 4px}
+.cmd{display:block;width:100%;text-align:left;background:transparent;border:1px solid transparent;border-radius:6px;padding:5px 7px;white-space:normal}
+.cmd:hover{background:var(--panel2);border-color:var(--line)}
+.cmd code{font-family:var(--mono);font-size:12.5px;color:var(--accent)}
+.cmd span{display:block;font-size:12px;color:var(--muted)}
+.cmdref.readonly .cmd{cursor:copy}
+#updateBar{position:fixed;left:50%;transform:translateX(-50%);top:12px;z-index:60;background:var(--panel2);border:1px solid var(--accent);border-radius:8px;padding:8px 12px;box-shadow:0 6px 20px rgba(0,0,0,.4);display:flex;gap:10px;align-items:center}
+#updateBar.hidden{display:none}
+@media (max-width:1000px){ .consolewrap{grid-template-columns:1fr} .cmdref{position:static;max-height:none} }

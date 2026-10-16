@@ -1237,7 +1237,9 @@ _jobs: dict[str, dict] = {}
 
 @app.get("/api/templates", dependencies=auth)
 async def list_templates():
-    return {"templates": templates.TEMPLATES, "docker": docker_api.available()}
+    base = (automation.get_settings().get("games_base") or "/mnt/grohlan").rstrip("/")
+    tpl = {k: {**v, "data_default": v["data_default"].replace("{base}", base)} for k, v in templates.TEMPLATES.items()}
+    return {"templates": tpl, "docker": docker_api.available(), "games_base": base}
 
 
 async def _used_ports() -> dict[int, str]:

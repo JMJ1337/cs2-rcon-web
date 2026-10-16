@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=9">
+<link rel="stylesheet" href="/static/app.css?v=10">
 </head>
 <body>
 
@@ -186,7 +186,7 @@
           <button data-tab="overview" class="active">Übersicht</button>
           <button data-tab="maps" class="cs2only">Maps &amp; Workshop</button>
           <button data-tab="match" class="cs2only">Wettkampf</button>
-          <button data-tab="console" class="needconsole">Konsole</button>
+          <button data-tab="console">Konsole</button>
           <button data-tab="settings" class="cs2only">Einstellungen</button>
           <button data-tab="container" class="needcontainer">Container</button>
           <button id="btnJoin" class="primary hidden" title="Spiel starten und mit diesem Server verbinden">▶ Beitreten</button>
@@ -373,13 +373,24 @@
       </div>
 
       <!-- Konsole -->
-      <div class="content hidden" id="tab-console">
-        <div id="consoleOut"></div>
-        <form class="console-in" id="consoleForm">
-          <input id="consoleIn" placeholder="RCON-Befehl, z. B. status  (↑/↓ = Verlauf)" autocomplete="off" spellcheck="false">
-          <button class="primary" type="submit">Senden</button>
-          <button type="button" id="btnClear">Leeren</button>
-        </form>
+      <div class="content hidden" id="tab-console" style="max-width:none">
+        <div class="consolewrap">
+          <div class="consolemain">
+            <div class="hint hidden" id="consoleNoRemote" style="margin-bottom:10px"></div>
+            <div id="consoleOut"></div>
+            <form class="console-in" id="consoleForm">
+              <input id="consoleIn" placeholder="Befehl eingeben  (↑/↓ = Verlauf, rechts klicken = übernehmen)" autocomplete="off" spellcheck="false">
+              <button class="primary" type="submit">Senden</button>
+              <button type="button" id="btnClear">Leeren</button>
+            </form>
+          </div>
+          <aside class="cmdref">
+            <div class="row" style="justify-content:space-between;margin-bottom:6px"><h2 style="margin:0">Befehle</h2></div>
+            <input id="cmdFilter" placeholder="Befehle filtern …" style="margin-bottom:8px">
+            <div class="hint" id="cmdNote" style="margin-bottom:8px"></div>
+            <div id="cmdList"></div>
+          </aside>
+        </div>
       </div>
 
       <!-- Einstellungen -->
@@ -454,6 +465,8 @@
 </dialog>
 
 <div id="toast"></div>
-<script src="/static/app.js?v=9"></script>
+<div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
+<script src="/static/commands.js?v=10"></script>
+<script src="/static/app.js?v=10"></script>
 </body>
 </html>
