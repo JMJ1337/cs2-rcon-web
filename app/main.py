@@ -663,7 +663,7 @@ async def load_loop():
         await asyncio.sleep(5)
         hoststats.sample()
         n += 1
-        if n % 4 == 0 and docker_api.available():
+        if n % 2 == 0 and docker_api.available():
             await cache_stats.poll(automation.get_settings().get("cache_container") or "")
             if cache_stats.state["container"] and not cache_history.meta["bf_done"] and not cache_stats._bf_running:
                 asyncio.create_task(cache_stats.backfill())
@@ -859,6 +859,15 @@ async def lancache_dns() -> list[str] | None:
 
 
 DNS_CHECK_SH = "getent hosts lancache.steamcontent.com 2>/dev/null | head -1 || nslookup lancache.steamcontent.com 2>/dev/null | tail -2; echo '#'; grep nameserver /etc/resolv.conf | head -3"
+
+
+@app.get("/api/cache/log", dependencies=auth)
+async def cache_log(lines: int = 40):
+    """Letzte Zeilen des Lancache-access.log (Live-Ansicht)."""
+    try:
+        return {"container": cache_stats.state["container"], "log": await cache_stats.tail(lines)}
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
 
 
 @app.get("/api/cache/dns-check", dependencies=auth)

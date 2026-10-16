@@ -18,6 +18,9 @@ RE_LINE = re.compile(
     r'^\[(?P<svc>[^\]]*)\] (?P<ip>\S+) / \S+ - \S+ \[(?P<t>[^\]]+)\] "(?P<req>[^"]*)" (?P<st>\d{3}) (?P<b>\d+) '
     r'"[^"]*" "[^"]*" "(?P<cache>[^"]*)" "(?P<host>[^"]*)"')
 
+from collections import deque
+_recent: deque = deque()        # (Zeitstempel, Bytes, Treffer) der letzten 2 Minuten für den Live-Durchsatz
+
 state = {"container": None, "offset": 0, "buckets": {}, "disk": None, "error": None, "updated": None,
          "detected": False}
 
@@ -61,6 +64,8 @@ def ingest(text: str) -> int:
         hit = cache == "HIT"
         if hit or cache in ("MISS", "EXPIRED", "STALE", "UPDATING", "REVALIDATED", "BYPASS"):
             cache_history.live(svc, ip, ts, size, hit)
+        if ts > time.time() - 120:
+            _recent.append((ts, size, hit))
         b = _bucket(int(ts // 60))
         if cache == "HIT":
             b["hit_b"] += size; b["hit"] += 1; b["svc"][svc][0] += size
@@ -150,9 +155,12 @@ def summary() -> dict:
             "clients": sorted(({"ip": ip, "bytes": v} for ip, v in ips.items()), key=lambda x: -x["bytes"])[:5],
         }
 
-    last2 = [state["buckets"].get(now_min - i) for i in (1, 2)]
-    rate = sum((b["hit_b"] + b["miss_b"]) for b in last2 if b) / 120
-    hit_rate = sum(b["hit_b"] for b in last2 if b) / 120
+    cut = time.time() - 60
+    while _recent and _recent[0][0] < time.time() - 120:
+        _recent.popleft()
+    win = [x for x in _recent if x[0] >= cut]
+    rate = sum(x[1] for x in win) / 60
+    hit_rate = sum(x[1] for x in win if x[2]) / 60
     return {"container": state["container"], "error": state["error"], "updated": state["updated"],
             "disk": state["disk"], "rate_bps": round(rate), "hit_rate_bps": round(hit_rate),
             "last_hour": agg(60), "last_day": agg(KEEP_MIN)}
@@ -208,3 +216,9 @@ async def backfill() -> None:
         m["bf_error"] = str(e)
     finally:
         _bf_running = False
+
+
+async def tail(lines: int = 40) -> str:
+    if not state["container"]:
+        return ""
+    return await docker_api.exec_cmd(state["container"], ["tail", "-n", str(max(1, min(lines, 200))), LOG])

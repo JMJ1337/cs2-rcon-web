@@ -137,7 +137,7 @@ function showView(v){
   if (v === "dash"){ refreshDash(); refreshCache(); }
   if (v === "players") loadPlayers();
   if (v === "auto") renderAuto();
-  if (v === "cache"){ loadCacheHistory(); loadDnsCheck(); }
+  if (v === "cache"){ loadCacheLive(); loadCacheHistory(); loadDnsCheck(); }
 }
 
 /* ================= Serverliste ================= */
@@ -1505,7 +1505,29 @@ async function loadCacheHistory(){
       ${diskVals.length > 1 ? `<div class="panel" style="padding:12px 16px"><h2 style="margin-bottom:6px">Cache-Speicher belegt <span class="hint">(% je Tag)</span></h2>${spark(diskVals, "var(--accent)", {min: 100, h: 60})}</div>` : ""}
     </div>`;
 }
-setInterval(() => { if (view === "cache") loadCacheHistory(); }, 60000);
+setInterval(() => { if (view === "cache") loadCacheHistory(); }, 30000);
+setInterval(() => { if (view === "cache") loadCacheLive(); }, 5000);
+
+/* Live: Durchsatz + letzte Downloads aus dem access.log */
+async function loadCacheLive(){
+  let c, l;
+  try { [c, l] = await Promise.all([api("/api/cache"), api("/api/cache/log?lines=60")]); } catch { return; }
+  if (view !== "cache") return;
+  const rows = (l.log || "").trim().split("\n").reverse().map(line => {
+    const m = line.match(/^\[([^\]]*)\] (\S+) .*?\[([^\]]+)\] "(\S+) (\S+)[^"]*" (\d{3}) (\d+) .*"(HIT|MISS|EXPIRED|STALE|UPDATING|REVALIDATED|BYPASS|-)" "([^"]*)"/);
+    if (!m) return "";
+    const hit = m[8] === "HIT";
+    return `<tr><td class="mono hint">${esc(m[3].split(":").slice(1, 4).join(":").split(" ")[0])}</td><td><div class="row" style="gap:6px;flex-wrap:nowrap">${svcIcon(m[1], 13)}${esc(cacheName(m[1]))}</div></td>
+      <td class="mono">${esc(m[2])}</td><td class="mono">${fmtBytes(+m[7])}</td><td style="color:${hit ? "var(--ok)" : "var(--muted)"}">${hit ? "aus dem Cache" : esc(m[8] === "-" ? "–" : "aus dem Internet")}</td>
+      <td class="mono hint" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(m[9] + m[5])}">${esc(m[9])}</td></tr>`;
+  }).filter(Boolean).slice(0, 15).join("");
+  $("#cacheLive").innerHTML = `<div class="panel" style="padding:12px 16px;margin-bottom:14px">
+    <h2 style="margin-bottom:8px">Live <span class="hint">(aktualisiert alle 5 s)</span>
+      <span style="float:right" class="mono">${fmtRate(c.rate_bps || 0)} <span class="hint">· davon ${fmtRate(c.hit_rate_bps || 0)} aus dem Cache</span></span></h2>
+    <div class="bar" style="margin-bottom:10px"><i style="width:${Math.min(100, (c.rate_bps || 0) / LINK_BPS * 100)}%;background:#4f9dde"></i></div>
+    ${rows ? `<div style="overflow:auto;max-height:320px"><table class="cachetable"><thead><tr><th>Zeit</th><th>Dienst</th><th>Client</th><th>Größe</th><th></th><th>Server</th></tr></thead><tbody>${rows}</tbody></table></div>`
+      : `<div class="hint">Gerade keine Downloads im access.log.</div>`}</div>`;
+}
 
 /* Laufen die Downloads der Spielserver-Container über den Lancache? */
 async function loadDnsCheck(){
