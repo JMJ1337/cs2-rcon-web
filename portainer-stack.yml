@@ -25,7 +25,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     labels:
       com.groh-pa.description: "Spielservermanager"
-      com.groh-pa.build: "42bd8a9"   # wird nach jedem Image-Build automatisch aktualisiert (Auto-Update)
+      com.groh-pa.build: "f7b949b"   # wird nach jedem Image-Build automatisch aktualisiert (Auto-Update)
 
 volumes:
   rcon-data:
