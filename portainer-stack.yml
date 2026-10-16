@@ -20,7 +20,7 @@ services:
       - rcon-data:/data
     labels:
       com.groh-pa.description: "CS2 RCON Weboberfläche"
-      com.groh-pa.build: "init"   # wird nach jedem Image-Build automatisch aktualisiert (Auto-Update)
+      com.groh-pa.build: "9868dde"   # wird nach jedem Image-Build automatisch aktualisiert (Auto-Update)
 
 volumes:
   rcon-data:
