@@ -261,37 +261,66 @@ function smoothPath(pts){
 async function refreshHost(){
   let h;
   try { h = await api("/api/host"); } catch { return; }
-  const cpu = h.cpu, memPct = h.mem_total_mb ? Math.round(h.mem_used_mb / h.mem_total_mb * 100) : null;
-  tween($("#hlCpu"), cpu, v => v == null ? "–" : v.toFixed(0) + " %");
-  $("#hlCpuBar").style.width = (cpu || 0) + "%"; $("#hlCpuBar").className = lvl(cpu || 0);
-  tween($("#hlMem"), memPct, v => v == null ? "–" : Math.round(v) + " %");
-  $("#hlMemBar").style.width = (memPct || 0) + "%"; $("#hlMemBar").className = lvl(memPct || 0);
   $("#hlHost").textContent = h.cores ? h.cores + " Kerne" : "";
   const g = h.games || {};
-  const rx = g.rx_bps || 0, tx = g.tx_bps || 0;
-  const bw = v => v > 0 ? Math.max(2, Math.min(100, v / LINK_BPS * 100)) : 0;
-  $("#hlNetDownBar").style.width = bw(rx) + "%";
-  $("#hlNetUpBar").style.width = bw(tx) + "%";
-  tween($("#hlNetDown"), rx, v => "↓ " + fmtRate(v));
-  tween($("#hlNetUp"), tx, v => "↑ " + fmtRate(v));
-  $("#hlNetTotRow").title = `Netzwerk aller Container: ↓ ${fmtRate(rx)} · ↑ ${fmtRate(tx)} (Balken = Anteil an 1 Gbit/s)`;
   $("#hlSub").innerHTML = `${fmtMem(h.mem_used_mb)} von ${fmtMem(h.mem_total_mb)} · Load ${h.load ? h.load.map(x => x.toFixed(2)).join(" ") : "–"}` +
     (g.containers ? `<br>Spielserver: ${g.running}/${g.containers} laufen · ${g.cpu_host} % CPU · ${fmtMem(g.mem_mb)}` +
-      (g.rx_bps || g.tx_bps ? ` · Netz ↓ ${fmtRate(g.rx_bps)} ↑ ${fmtRate(g.tx_bps)}` : "") : "");
+      "" : "");
 }
 function loadHtml(l){
   if (!l) return "";
   if (l.error) return `<div class="loadrow"><span>Container</span><span class="hint">${esc(/no such container/i.test(l.error) ? "nicht gefunden – unter „Bearbeiten“ neu zuordnen" : l.error)}</span><span></span></div>`;
   if (l.state !== "running") return `<div class="loadrow"><span>Container</span><span style="color:var(--bad)">${esc(CSTATE[l.state] || l.state || "?")}</span><span></span></div>`;
   const c = l.cpu_host || 0;
-  return `<div class="loadrow" title="CPU bezogen auf den ganzen Host (${l.cpu ?? "?"} % eines Kerns)"><span>Last</span>
-    <div class="bar"><i class="${lvl(c)}" style="width:${Math.min(100, c)}%"></i></div>
-    <span><b>${c.toFixed(1)} %</b> CPU · <b>${fmtMem(l.mem_mb)}</b></span></div>
-    <div class="loadrow" title="Netzwerk des Containers (empfangen / gesendet)"><span>Netz</span>
+  const nb = v => v > 0 ? Math.max(2, Math.min(100, v / LINK_BPS * 100)) : 0;
+  return `<div class="loadrow" title="CPU bezogen auf den ganzen Host"><span>Last</span>
+    <div class="bar"><i class="lr-cpu ${lvl(c)}" style="width:${Math.min(100, c)}%"></i></div>
+    <span><b class="lr-cpuv">${c.toFixed(1)} %</b> CPU · <b class="lr-mem">${fmtMem(l.mem_mb)}</b></span></div>
+    <div class="loadrow" title="Netzwerk des Containers: blau = Download, orange = Upload"><span>Netz</span>
     ${l.net_host ? `<span class="hint">Host-Netzwerk – pro Server nicht messbar</span><span></span>` :
-      `<div class="bar"><i style="width:${Math.min(100, ((l.rx_bps || 0) + (l.tx_bps || 0)) / LINK_BPS * 100)}%;background:#4f9dde"></i></div>
-       <span>↓ <b>${l.rx_bps != null ? fmtRate(l.rx_bps) : "–"}</b> · ↑ <b>${l.tx_bps != null ? fmtRate(l.tx_bps) : "–"}</b></span>`}</div>`;
+      `<div class="bar dbar"><i class="lr-rx" style="width:${nb(l.rx_bps)}%"></i><i class="lr-tx" style="width:${nb(l.tx_bps)}%"></i></div>
+       <span><b class="lr-rxv" style="color:${C_DOWN}">↓ ${l.rx_bps != null ? fmtRate(l.rx_bps) : "–"}</b> <b class="lr-txv" style="color:${C_UP}">↑ ${l.tx_bps != null ? fmtRate(l.tx_bps) : "–"}</b></span>`}</div>`;
 }
+// Sekundenwerte direkt in die vorhandenen Zeilen schreiben (weich animiert, ohne Neuaufbau)
+function updateLoadRow(el, d){
+  if (!el || !d) return;
+  const nb = v => v > 0 ? Math.max(2, Math.min(100, v / LINK_BPS * 100)) : 0;
+  const q = c => el.querySelector(c);
+  if (q(".lr-cpu") && d.cpu_host != null){ q(".lr-cpu").style.width = Math.min(100, d.cpu_host) + "%"; q(".lr-cpu").className = "lr-cpu " + lvl(d.cpu_host); tween(q(".lr-cpuv"), d.cpu_host, v => v.toFixed(1) + " %"); }
+  if (q(".lr-mem") && d.mem_mb != null) q(".lr-mem").textContent = fmtMem(d.mem_mb);
+  if (q(".lr-rx") && d.rx_bps != null){ q(".lr-rx").style.width = nb(d.rx_bps) + "%"; tween(q(".lr-rxv"), d.rx_bps, v => "↓ " + fmtRate(v)); }
+  if (q(".lr-tx") && d.tx_bps != null){ q(".lr-tx").style.width = nb(d.tx_bps) + "%"; tween(q(".lr-txv"), d.tx_bps, v => "↑ " + fmtRate(v)); }
+}
+let liveBusy = false, lastLive = null;
+async function liveTick(){
+  if (liveBusy || document.hidden) return;
+  liveBusy = true;
+  try {
+    const L = await api("/api/live");
+    lastLive = L;
+    const memPct = L.mem_total_mb ? L.mem_used_mb / L.mem_total_mb * 100 : null;
+    if (L.cpu != null){ $("#hlCpuBar").style.width = L.cpu + "%"; $("#hlCpuBar").className = lvl(L.cpu); tween($("#hlCpu"), L.cpu, v => v.toFixed(0) + " %"); }
+    if (memPct != null){ $("#hlMemBar").style.width = memPct + "%"; $("#hlMemBar").className = lvl(memPct); tween($("#hlMem"), memPct, v => Math.round(v) + " %"); }
+    const n = L.net || {}, bw = v => v > 0 ? Math.max(2, Math.min(100, v / LINK_BPS * 100)) : 0;
+    if (n.rx_bps != null){
+      $("#hlNetDownBar").style.width = bw(n.rx_bps) + "%"; $("#hlNetUpBar").style.width = bw(n.tx_bps) + "%";
+      tween($("#hlNetDown"), n.rx_bps, v => "↓ " + fmtRate(v)); tween($("#hlNetUp"), n.tx_bps, v => "↑ " + fmtRate(v));
+      $("#hlNetTotRow").title = n.source === "host" ? "Netzwerkkarten des Docker-Hosts" : "Summe der Container (Host-Netz nicht eingebunden)";
+    }
+    if (L.cache && L.cache.tx_bps != null && !$("#hlNetRow").classList.contains("hidden")){
+      $("#hlNetBar").style.width = bw(L.cache.tx_bps) + "%"; tween($("#hlNet"), L.cache.tx_bps, v => fmtRate(v));
+    }
+    if (view === "dash") for (const [sid, d] of Object.entries(L.servers || {})) updateLoadRow(document.querySelector(`[data-ld="${sid}"]`), d);
+  } catch {} finally { liveBusy = false; }
+}
+setInterval(liveTick, 1000);
+// Live-Diagramme (Bereich „Live“) alle 2 s nachzeichnen
+setInterval(async () => {
+  if (document.hidden || view !== "dash" || metricsRange > 10) return;
+  await loadMetrics(true);
+  $("#hostPanel").innerHTML = hostPanelHtml();
+  $$("[data-mw]").forEach(el => { const sid = el.dataset.mw, s = servers.find(x => x.id === sid); el.innerHTML = metricsHtml(sid, GAMES[gameOf(s)]?.color || "var(--accent)"); });
+}, 2000);
 
 /* ================= Lancache ================= */
 const fmtBytes = b => b == null ? "–" : b >= 1e12 ? (b/1e12).toFixed(2) + " TB" : b >= 1e9 ? (b/1e9).toFixed(1) + " GB" : b >= 1e6 ? (b/1e6).toFixed(0) + " MB" : Math.round(b/1e3) + " KB";
@@ -373,8 +402,7 @@ async function refreshCache(){
   const cn = c.net || {}, live = cn.tx_bps != null ? cn.tx_bps : (c.rate_bps || 0);
   if (c.container){
     const pct = Math.min(100, live / LINK_BPS * 100);
-    tween($("#hlNet"), live, v => fmtRate(v));
-    $("#hlNetBar").style.width = Math.max(pct, live ? 2 : 0) + "%";
+    if (!lastLive) { tween($("#hlNet"), live, v => fmtRate(v)); $("#hlNetBar").style.width = Math.max(pct, live ? 2 : 0) + "%"; }
     $("#hlNetRow").title = `Lancache an Clients (Netzwerk des Containers, Balken = Anteil an 1 Gbit/s)` + (cn.rx_bps != null ? ` · aus dem Internet ${fmtRate(cn.rx_bps)}` : "");
     $("#hlCache").innerHTML = `Lancache: ${d.hit_ratio != null ? d.hit_ratio + " % aus dem Cache (24 h)" : "noch keine Daten"}`;
   }
@@ -400,9 +428,9 @@ async function refreshCache(){
 }
 
 /* ================= Verlaufs-Metriken ================= */
-let metricsData = {}, metricsRange = (() => { try { return +localStorage.getItem("gsmRange") || 360; } catch { return 360; } })(), metricsAt = 0;
+let metricsData = {}, metricsRange = (() => { try { return +localStorage.getItem("gsmRange") || 5; } catch { return 5; } })(), metricsAt = 0;
 async function loadMetrics(force){
-  if (!force && Date.now() - metricsAt < 30000) return;
+  if (!force && Date.now() - metricsAt < (metricsRange <= 10 ? 2000 : 30000)) return;
   try { metricsData = await api(`/api/metrics?minutes=${metricsRange}`); metricsAt = Date.now(); } catch {}
 }
 function spark(vals, color, opts = {}){
@@ -459,7 +487,7 @@ function netPanelCell(m, label){
     ${spark2(rx, tx, C_DOWN, C_UP, {min: 100000, h: 64})}
     <div class="hint" style="font-size:11px">${netLegend()} · Ø ↓ ${fmtRate(avg(rN))} · ↑ ${fmtRate(avg(tN))} · max ↓ ${fmtRate(Math.max(0, ...rN))} · ↑ ${fmtRate(Math.max(0, ...tN))}</div></div>`;
 }
-const rangeLabel = m => m >= 1440 ? "24 h" : m >= 60 ? (m / 60) + " h" : m + " min";
+const rangeLabel = m => m >= 1440 ? "24 h" : m >= 60 ? (m / 60) + " h" : m <= 10 ? "live " + Math.round(m) + " min" : m + " min";
 function hostPanelHtml(){
   const m = metricsData._host;
   if (!m || !m.samples) return "";
@@ -528,12 +556,12 @@ async function refreshDash(){
         ${Object.entries(o.extra || {}).filter(([k]) => !["Session","Servername","Strecke"].includes(k)).slice(0, 2).map(([k,v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join("")}
       </div>`) + `</div>
       <div class="bar"><i style="width:${pct}%"></i></div>
-      ${loadHtml(o.load)}
+      <div class="ldwrap" data-ld="${esc(s.id)}">${loadHtml(o.load && lastLive && lastLive.servers[s.id] ? {...o.load, ...lastLive.servers[s.id]} : o.load)}</div>
       ${installHtml(o.install)}
-      ${metricsHtml(s.id, GAMES[gameOf(s)]?.color || "var(--accent)")}
+      <div class="mwrap" data-mw="${esc(s.id)}">${metricsHtml(s.id, GAMES[gameOf(s)]?.color || "var(--accent)")}</div>
       ${o.auto && o.auto.capped ? `<span class="pill warn">Slots begrenzt auf ${o.max_players} – SLOTS im Stack erhöhen</span>` : ""}
       ${o.unclaimed ? `<span class="pill warn">Satisfactory: noch nicht beansprucht</span>` : ""}`
-      : `${ledOf(o).cls === "warn" ? `<div class="pill warn" style="justify-self:start">Container läuft – Spiel startet oder aktualisiert noch</div>` : ""}<div class="hint">${esc(o.error || (o.online === false ? "offline" : "noch nicht abgefragt"))}</div>${loadHtml(o.load)}${installHtml(o.install)}${metricsHtml(s.id, GAMES[gameOf(s)]?.color || "var(--accent)")}`}
+      : `${ledOf(o).cls === "warn" ? `<div class="pill warn" style="justify-self:start">Container läuft – Spiel startet oder aktualisiert noch</div>` : ""}<div class="hint">${esc(o.error || (o.online === false ? "offline" : "noch nicht abgefragt"))}</div><div class="ldwrap" data-ld="${esc(s.id)}">${loadHtml(o.load)}</div>${installHtml(o.install)}<div class="mwrap" data-mw="${esc(s.id)}">${metricsHtml(s.id, GAMES[gameOf(s)]?.color || "var(--accent)")}</div>`}
     </div>`;
   }).join("") + `</div></div>`).join("");
   $$(".dcard").forEach(el => el.onclick = e => {
@@ -557,6 +585,7 @@ function applyGameClasses(s){
 function selectServer(s){
   if (!s) return showView("dash");
   current = s; view = "server";
+  try { resetStatusFields("wird abgefragt …"); $("#playerRows").innerHTML = ""; } catch {}
   $$(".nav [data-view]").forEach(b => b.classList.remove("active"));
   VIEWS.filter(x => x !== "server").forEach(x => $("#view-"+x).classList.add("hidden"));
   $("#view-server").classList.remove("hidden");
@@ -635,8 +664,20 @@ async function refreshStatus(){
     $("#stOnline").textContent = lo.cls === "warn" ? "Startet …" : "Offline";
     $("#stOnline").style.color = lo.cls === "warn" ? "var(--warn)" : "var(--bad)";
     $("#stVersion").textContent = lo.tip;
+    resetStatusFields(err.message);
     $("#stUpdated").textContent = err.message; $("#playerRows").innerHTML = "";
   }
+}
+// alte Werte eines anderen Servers nicht stehen lassen
+function resetStatusFields(msg){
+  if (!current) return;
+  const g = gameOf(current);
+  $("#stMapLabel").textContent = worldLabel(g);
+  $("#stMap").textContent = "–"; $("#stMapSub").textContent = ""; $("#stMapImg").classList.add("hidden");
+  $("#stMode").textContent = GAMES[g]?.label || ""; $("#stRounds").textContent = "";
+  $("#stPlayers").textContent = "–"; $("#stAuto").textContent = "";
+  $("#gExtra").innerHTML = `<span class="hint">${esc(msg || "keine Daten")}</span><span></span>`;
+  $("#gActHint").textContent = "";
 }
 function pingClass(p){ return p < 40 ? "ping-good" : p < 90 ? "ping-mid" : "ping-bad"; }
 function renderPlayers(list){
@@ -1454,7 +1495,7 @@ async function start(){
   refreshCache();
   refreshActivity();
   let tick = 0;
-  dashTimer = setInterval(() => { tick++; refreshHost(); refreshCache(); if (tick % 2 === 0){ refreshDash(); refreshActivity(); } }, 2500);
+  dashTimer = setInterval(() => { tick++; refreshCache(); if (tick % 2 === 0){ refreshDash(); refreshActivity(); } if (tick % 4 === 0) refreshHost(); }, 2500);
 }
 async function showVersion(){
   try {

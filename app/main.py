@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import automation, cache_history, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
+from . import automation, cache_history, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
 from .games import minecraft as mcmod
@@ -49,7 +49,7 @@ COOKIE = "cs2rcon_session"
 @asynccontextmanager
 async def lifespan(_app):
     tasks = [asyncio.create_task(watcher()), asyncio.create_task(scan_loop()),
-             asyncio.create_task(load_loop())] if WATCH_ENABLED else []
+             asyncio.create_task(load_loop()), asyncio.create_task(live_loop())] if WATCH_ENABLED else []
     yield
     for t in tasks:
         t.cancel()
@@ -277,6 +277,31 @@ def sf_client(s: dict) -> sfmod.SatisfactoryClient:
         c = sfmod.SatisfactoryClient(s["host"], int(s["port"]), s.get("password", ""))
         _sf_clients[s["id"]] = c
     return c
+
+
+_ts_tried: dict[str, float] = {}
+
+
+async def _ts_password_from_logs(s: dict) -> None:
+    """serveradmin-Passwort + Admin-Token aus dem Log des TeamSpeak-Containers übernehmen (nur beim ersten Start geloggt)."""
+    if time.time() - _ts_tried.get(s["id"], 0) < 600:
+        return
+    _ts_tried[s["id"]] = time.time()
+    try:
+        lg = await docker_api._req("GET", f"/containers/{s['container']}/logs", params={"stdout": "1", "stderr": "1", "tail": "all"}, timeout=30)
+        info = await docker_api.inspect(s["container"])
+        text = lg.content.decode("utf-8", "replace") if info.get("Config", {}).get("Tty") else docker_api._demux(lg.content)
+    except docker_api.DockerError:
+        return
+    pw = re.findall(r'loginname=\s*"serveradmin",\s*password=\s*"([^"]+)"', text)
+    tok = re.findall(r"token=([A-Za-z0-9+]+)", text)
+    if pw:
+        notes = s.get("notes") or ""
+        if tok and "Admin-Token" not in notes:
+            notes = (notes + "\n" if notes else "") + f"Admin-Token (Berechtigungsschlüssel): {tok[-1]}"
+        await _set_server_fields(s["id"], password=pw[-1], notes=notes)
+        s["password"] = pw[-1]
+        s["notes"] = notes
 
 
 def ts_query(s: dict):
@@ -620,7 +645,15 @@ async def collect_generic(s: dict) -> dict:
         elif g == "minecraft":
             st = await mcmod.status(s["host"], int(s.get("game_port") or s["port"]))
         elif g == "teamspeak":
-            st = await tsmod.status(ts_query(s))
+            if not s.get("password") and s.get("container") and docker_api.available():
+                await _ts_password_from_logs(s)
+            try:
+                st = await tsmod.status(ts_query(s))
+            except tsmod.TeamSpeakError as e:
+                if "permission" in str(e) or "id 520" in str(e) or "id 2568" in str(e):
+                    raise tsmod.TeamSpeakError("ServerQuery-Login fehlt/falsch – unter „Bearbeiten“ das serveradmin-Passwort eintragen "
+                                               "(steht beim allerersten Start im Container-Log)") from e
+                raise
         elif g == "wreckfest":
             if s.get("container") and docker_api.available():
                 st = await adapters.wreckfest_container_status(s["container"])
@@ -674,34 +707,47 @@ _loads: dict[str, dict] = {}   # Containername -> {cpu, cores, mem_mb, state}
 
 
 async def _container_load(name: str):
+    """Status per inspect, Last/Netz aus dem Live-Stream (livestats)."""
     try:
         info = await docker_api.inspect(name)
         running = info.get("State", {}).get("Running")
-        st = await docker_api.stats(name) if running else {"cpu": 0, "mem_mb": 0, "mem_limit_mb": None}
-        cores = hoststats.state.get("cores") or 1
-        now = time.time()
-        prev = _loads.get(name) or {}
-        rx_bps = tx_bps = None
-        if st.get("net_rx") is not None and prev.get("_rx") is not None and now > prev.get("updated", now):
-            dt = now - prev["updated"]
-            rx_bps = max(0, round((st["net_rx"] - prev["_rx"]) / dt))
-            tx_bps = max(0, round((st["net_tx"] - prev["_tx"]) / dt))
-        _loads[name] = {"state": info.get("State", {}).get("Status"), "cpu": st["cpu"],
-                        "cpu_host": round(st["cpu"] / cores, 1) if st["cpu"] is not None else None,
-                        "mem_mb": st["mem_mb"], "updated": now,
+        d = livestats.data.get(name) or {}
+        fresh = running and d.get("running") and time.time() - d.get("t", 0) < 6
+        _loads[name] = {"state": info.get("State", {}).get("Status"),
+                        "cpu": d.get("cpu") if fresh else (0 if not running else None),
+                        "cpu_host": d.get("cpu_host") if fresh else (0 if not running else None),
+                        "mem_mb": d.get("mem_mb") if fresh else (0 if not running else None),
+                        "updated": time.time(),
                         "net_host": (info.get("HostConfig") or {}).get("NetworkMode") == "host",
-                        "rx_bps": rx_bps, "tx_bps": tx_bps, "_rx": st.get("net_rx"), "_tx": st.get("net_tx")}
+                        "rx_bps": round(d["rx_bps"]) if fresh and d.get("rx_bps") is not None else None,
+                        "tx_bps": round(d["tx_bps"]) if fresh and d.get("tx_bps") is not None else None}
     except docker_api.DockerError as e:
         _loads[name] = {"state": "unbekannt", "error": str(e), "updated": time.time()}
 
 
+async def live_loop():
+    """Sekundentakt: Host-CPU/RAM/Netz, Live-Streams der Container nachführen."""
+    n = 0
+    while True:
+        try:
+            hoststats.sample()
+            livestats.sample_host()
+            if n % 5 == 0 and docker_api.available():
+                names = {s["container"] for s in load_servers() if s.get("container")}
+                if cache_stats.state.get("container"):
+                    names.add(cache_stats.state["container"])
+                livestats.ensure(names)
+        except Exception:  # noqa: BLE001
+            log.exception("Live-Messung")
+        n += 1
+        await asyncio.sleep(1)
+
+
 async def load_loop():
     """Host-Last alle 2,5 s, Container-Last/Netz und Lancache alle 5 s."""
-    hoststats.sample()
     n = 0
     while True:
         await asyncio.sleep(2.5)
-        hoststats.sample()
         n += 1
         if n % 2 == 0 and docker_api.available():
             await cache_stats.poll(automation.get_settings().get("cache_container") or "")
@@ -726,9 +772,10 @@ async def load_loop():
                     _loads.pop(k, None)
         h = hoststats.state
         lc = cache_stats.state.get("container")
-        nets = [v for v in _loads.values() if v.get("state") == "running" and v.get("rx_bps") is not None]
+        lh = livestats.host
         metrics.record_host(h.get("cpu"), h.get("mem_used_mb"), h.get("mem_total_mb"),
-                            sum(v["rx_bps"] for v in nets) if nets else None, sum(v["tx_bps"] or 0 for v in nets) if nets else None)
+                            round(lh["rx_bps"]) if lh.get("rx_bps") is not None else None,
+                            round(lh["tx_bps"]) if lh.get("tx_bps") is not None else None)
         if n % 2 == 0:
             if lc and _loads.get(lc):
                 metrics.record("_cache", {}, _loads[lc])
@@ -872,11 +919,43 @@ async def activity_dismiss(container: str):
 
 @app.get("/api/metrics", dependencies=auth)
 async def server_metrics(minutes: int = 360):
+    if minutes <= 10:      # Live-Ansicht aus dem Sekundenpuffer
+        sec = max(60, minutes * 60)
+        out = {}
+        for s_ in load_servers():
+            c = s_.get("container") or ""
+            ser = livestats.series(c, sec) if c in livestats.rings else {"cpu": [], "mem": [], "rx": [], "tx": [], "samples": 0}
+            m = metrics.summary(s_["id"], 60)
+            hum = (_state.get(s_["id"]) or {}).get("humans") if (_state.get(s_["id"]) or {}).get("online") else 0
+            out[s_["id"]] = {**m, **{k: ser[k] for k in ("cpu", "mem", "rx", "tx")}, "players": [hum or 0] * len(ser["cpu"] or [0]),
+                             "minutes": sec / 60, "samples": max(m.get("samples") or 0, ser["samples"])}
+        out["_host"] = {**livestats.series("_host", sec)}
+        lc = cache_stats.state.get("container")
+        if lc and lc in livestats.rings:
+            out["_cache"] = livestats.series(lc, sec)
+        return out
     minutes = max(30, min(minutes, 24 * 60))
     out = {s["id"]: metrics.summary(s["id"], minutes) for s in load_servers()}
     out["_host"] = metrics.summary("_host", minutes)
     out["_cache"] = metrics.summary("_cache", minutes)
     return out
+
+
+@app.get("/api/live", dependencies=auth)
+async def live_values():
+    """Kompakte Sekundenwerte für die Anzeigen (Seitenleiste, Karten)."""
+    h = hoststats.state
+    now = time.time()
+    srv = {}
+    for s_ in load_servers():
+        d = livestats.data.get(s_.get("container") or "")
+        if d and now - d.get("t", 0) < 6:
+            srv[s_["id"]] = {k: d.get(k) for k in ("cpu_host", "cpu", "mem_mb", "rx_bps", "tx_bps", "running")}
+    lc = cache_stats.state.get("container")
+    cd = livestats.data.get(lc or "") or {}
+    return {"t": now, "cpu": h.get("cpu"), "mem_used_mb": h.get("mem_used_mb"), "mem_total_mb": h.get("mem_total_mb"),
+            "net": {k: livestats.host.get(k) for k in ("rx_bps", "tx_bps", "source")},
+            "cache": {"rx_bps": cd.get("rx_bps"), "tx_bps": cd.get("tx_bps")} if cd else None, "servers": srv}
 
 
 @app.get("/api/cache", dependencies=auth)
@@ -1020,13 +1099,14 @@ async def cache_history_api(range: str = "30d"):
 @app.get("/api/host", dependencies=auth)
 async def host_load():
     h = dict(hoststats.state)
-    if h.get("updated") is None or time.time() - h["updated"] > 8:
+    if h.get("updated") is None:
         h = dict(hoststats.sample())
     games = [v for v in _loads.values() if v.get("cpu") is not None]
     h["games"] = {"containers": len(_loads), "running": sum(1 for v in _loads.values() if v.get("state") == "running"),
                   "cpu_host": round(sum(v.get("cpu_host") or 0 for v in games), 1),
                   "mem_mb": sum(v.get("mem_mb") or 0 for v in games),
                   "rx_bps": sum(v.get("rx_bps") or 0 for v in games), "tx_bps": sum(v.get("tx_bps") or 0 for v in games)}
+    h["net"] = {k: livestats.host.get(k) for k in ("rx_bps", "tx_bps", "source", "ifaces")}
     return h
 
 

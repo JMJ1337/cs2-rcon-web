@@ -312,3 +312,6 @@ span.joinbtn{background:var(--panel2);color:var(--text);border:1px solid var(--l
 .netbar i.down{background:#4f9dde}.netbar i.up{background:#f0a04b}
 .spark path{transition:d .9s cubic-bezier(.4,0,.2,1)}
 body:not(.g-wreckfest) #wfPanel{display:none!important}
+.dbar{display:flex;flex-direction:column;gap:1px}
+.dbar i{height:50%!important}
+.dbar i.lr-rx{background:#4f9dde}.dbar i.lr-tx{background:#f0a04b}

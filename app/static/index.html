@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=25">
+<link rel="stylesheet" href="/static/app.css?v=26">
 </head>
 <body>
 
@@ -63,7 +63,7 @@
     <!-- Dashboard -->
     <section id="view-dash">
       <div class="topbar"><div><div class="title">Übersicht aller Server</div><div class="sub" id="dashSub">wird geladen …</div></div>
-        <div style="margin-left:auto" class="row"><span class="hint">Verlauf</span><div class="seg" id="rangeSeg"><button data-range="60">1 h</button><button data-range="360">6 h</button><button data-range="1440">24 h</button></div></div></div>
+        <div style="margin-left:auto" class="row"><span class="hint">Verlauf</span><div class="seg" id="rangeSeg"><button data-range="5">Live</button><button data-range="60">1 h</button><button data-range="360">6 h</button><button data-range="1440">24 h</button></div></div></div>
       <div class="content" style="max-width:none">
         <div id="hostPanel"></div>
         <div id="cachePanel"></div>
@@ -512,6 +512,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=25"></script>
+<script src="/static/app.js?v=26"></script>
 </body>
 </html>
