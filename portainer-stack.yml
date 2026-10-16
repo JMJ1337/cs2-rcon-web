@@ -27,7 +27,7 @@ services:
       - /proc:/host/proc:ro
     labels:
       com.groh-pa.description: "Spielservermanager"
-      com.groh-pa.build: "a4dd21a"   # wird nach jedem Image-Build automatisch aktualisiert (Auto-Update)
+      com.groh-pa.build: "8952ece"   # wird nach jedem Image-Build automatisch aktualisiert (Auto-Update)
 
 volumes:
   rcon-data:
