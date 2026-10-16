@@ -214,6 +214,8 @@ class ServerIn(BaseModel):
     game: str = "cs2"
     container: str = ""
     web_url: str = Field("", max_length=255)
+    game_port: int | None = Field(None, ge=1, le=65535)   # Port zum Beitreten, falls abweichend
+    name_from_game: bool = True                            # Namen automatisch aus dem Spiel übernehmen
 
 
 _store_lock = asyncio.Lock()
@@ -236,6 +238,8 @@ def public(s: dict) -> dict:
     out.setdefault("game", "cs2")
     out.setdefault("container", "")
     out.setdefault("web_url", "")
+    out.setdefault("game_port", None)
+    out.setdefault("name_from_game", True)
     return out | {"has_password": bool(s.get("password"))}
 
 
@@ -294,7 +298,8 @@ async def add_server(data: ServerIn):
         s = {"id": uuid.uuid4().hex[:10], "name": data.name, "host": data.host.strip(),
              "port": data.port, "password": data.password or "", "notes": data.notes,
              "auto_slots": data.auto_slots, "game": data.game if data.game in GAMES else "cs2",
-             "container": data.container.strip(), "web_url": data.web_url.strip()}
+             "container": data.container.strip(), "web_url": data.web_url.strip(),
+             "game_port": data.game_port, "name_from_game": data.name_from_game}
         servers.append(s)
         save_servers(servers)
     return public(s)
@@ -308,7 +313,8 @@ async def update_server(sid: str, data: ServerIn):
             if s["id"] == sid:
                 s.update(name=data.name, host=data.host.strip(), port=data.port, notes=data.notes,
                          auto_slots=data.auto_slots, game=data.game if data.game in GAMES else "cs2",
-                         container=data.container.strip(), web_url=data.web_url.strip())
+                         container=data.container.strip(), web_url=data.web_url.strip(),
+                         game_port=data.game_port, name_from_game=data.name_from_game)
                 if data.password:
                     s["password"] = data.password
                 save_servers(servers)
@@ -417,6 +423,61 @@ async def _matchzy_info(s: dict) -> dict:
     return info
 
 
+# ---------------------------------------------------------------- Beitreten / Namen aus dem Spiel
+def _join_host(s: dict) -> str:
+    h = s["host"]
+    if h in ("127.0.0.1", "localhost", "::1", "0.0.0.0"):
+        return _docker_host_ip()
+    return h
+
+
+def join_info(s: dict, password: str | None = None) -> dict:
+    """Adresse + Steam-Link zum direkten Beitreten."""
+    g, host, port = game_of(s), _join_host(s), int(s["port"])
+    gp = s.get("game_port")
+    if g == "cs2":
+        p = gp or port
+        url = f"steam://connect/{host}:{p}" + (f"/{password}" if password else "")
+        return {"address": f"{host}:{p}", "url": url, "hint": "Startet CS2 und verbindet direkt."}
+    if g == "factorio":
+        p = gp or 34197
+        return {"address": f"{host}:{p}", "url": f"steam://run/427520//--mp-connect%20{host}:{p}/",
+                "hint": "Startet Factorio über Steam und verbindet direkt."}
+    if g == "valheim":
+        p = gp or (port - 1)
+        return {"address": f"{host}:{p}", "url": f"steam://run/892970//+connect%20{host}:{p}/",
+                "hint": "Startet Valheim und verbindet – Passwort im Spiel eingeben."}
+    if g == "wreckfest":
+        return {"address": f"{host}:{port}", "url": f"steam://connect/{host}:{port}",
+                "hint": "Falls der Link nicht greift: Steam → Server → Favoriten → Adresse hinzufügen."}
+    if g == "satisfactory":
+        p = gp or port
+        return {"address": f"{host}:{p}", "url": None,
+                "hint": "Im Spiel: Server-Manager → Server hinzufügen → diese Adresse eintragen."}
+    return {"address": f"{host}:{port}", "url": None, "hint": ""}
+
+
+_renaming: set[str] = set()
+
+
+async def _sync_name(s: dict, name: str | None):
+    """Server in der Liste so nennen wie im Spiel."""
+    name = (name or "").strip()[:64]
+    if not name or not s.get("name_from_game", True) or name == s.get("name") or s["id"] in _renaming:
+        return
+    _renaming.add(s["id"])
+    try:
+        async with _store_lock:
+            servers = load_servers()
+            for x in servers:
+                if x["id"] == s["id"]:
+                    x["name"] = name
+            save_servers(servers)
+        s["name"] = name
+    finally:
+        _renaming.discard(s["id"])
+
+
 async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = False) -> dict:
     """Status + wichtige Cvars lesen, optional Spieleranzahl automatisch setzen."""
     if game_of(s) != "cs2":
@@ -458,6 +519,7 @@ async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = 
         "visible_players": visible, "maxrounds": cv["mp_maxrounds"],
         "password_set": bool(cv["sv_password"]), "bot_quota": cv["bot_quota"],
         "auto": {"enabled": auto_on, "target": target, "reason": reason, "capped": capped, "applied": applied},
+        "join": join_info(s, cv["sv_password"] or None),
         "workshop": ws,
         "updated": time.time(),
     }
@@ -467,6 +529,7 @@ async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = 
         result["matchzy"] = _state[s["id"]]["matchzy"]
     prev = _state.get(s["id"], {})
     _state[s["id"]] = {**{k: v for k, v in prev.items() if k.startswith("_")}, **result}
+    await _sync_name(s, st.get("hostname"))
     return result
 
 
@@ -485,7 +548,12 @@ async def collect_generic(s: dict) -> dict:
             raise RconError("Unbekanntes Spiel")
     except (sfmod.SatisfactoryError, adapters.a2s.A2SError) as e:
         raise RconError(str(e)) from e
-    result = {"online": True, "game": g, **st}
+    if g == "satisfactory" and not st.get("hostname"):
+        q = await scanner.satisfactory_query(s["host"], int(s["port"]))
+        if q:
+            st["hostname"] = q["name"]
+    result = {"online": True, "game": g, **st, "join": join_info(s)}
+    await _sync_name(s, st.get("hostname"))
     prev = _state.get(s["id"], {})
     _state[s["id"]] = {**{k: v for k, v in prev.items() if k.startswith("_")}, **result}
     return result
@@ -1189,7 +1257,8 @@ async def _create_job(job: dict, data: CreateIn, host: str):
         srv = {"id": uuid.uuid4().hex[:10], "name": b["name"], "host": host, "port": b["server"]["port"],
                "password": b["server"].get("password", ""), "notes": "angelegt vom Spielservermanager",
                "auto_slots": True, "game": data.game, "container": b["name"],
-               "web_url": b["server"].get("web_url", "").replace("{host}", host)}
+               "web_url": b["server"].get("web_url", "").replace("{host}", host),
+               "game_port": b["server"].get("game_port"), "name_from_game": True}
         async with _store_lock:
             servers = load_servers()
             servers.append(srv)

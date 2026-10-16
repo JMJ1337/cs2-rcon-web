@@ -223,7 +223,7 @@ async function refreshDash(){
     const pct = slots ? Math.min(100, Math.round((o.humans||0) / slots * 100)) : 0;
     const mz = o.matchzy && o.matchzy.match ? `${esc(o.matchzy.match.team1||"")} vs ${esc(o.matchzy.match.team2||"")} · ${esc(o.matchzy.match.state||"")}` : (o.matchzy && o.matchzy.installed ? "kein Match geladen" : "–");
     return `<div class="dcard" data-id="${esc(s.id)}">
-      <div class="top"><span class="dot ${o.online===true?"on":o.online===false?"off":""}"></span>${gbadge(gameOf(s))}<b>${esc(s.name)}</b><span class="hint mono">${esc(s.host)}:${esc(s.port)}</span></div>
+      <div class="top"><span class="dot ${o.online===true?"on":o.online===false?"off":""}"></span>${gbadge(gameOf(s))}<b>${esc(s.name)}</b>${o.online && o.join ? (o.join.url ? `<a class="joinbtn" href="${esc(o.join.url)}" title="Beitreten: ${esc(o.join.address)}" data-stop>▶ Beitreten</a>` : `<span class="joinbtn" data-copy="${esc(o.join.address)}" title="${esc(o.join.hint)}">⧉ ${esc(o.join.address)}</span>`) : `<span class="hint mono">${esc(s.host)}:${esc(s.port)}</span>`}</div>
       ${o.online ? (gameOf(s) === "cs2" ? `
       <div class="kv">
         <span>Map</span><span title="${esc(o.map)}">${esc((o.workshop && o.workshop.title) || o.map || "?")}</span>
@@ -243,7 +243,12 @@ async function refreshDash(){
       : `<div class="hint">${esc(o.error || (o.online === false ? "offline" : "noch nicht abgefragt"))}</div>${loadHtml(o.load)}`}
     </div>`;
   }).join("") + `</div></div>`).join("");
-  $$(".dcard").forEach(el => el.onclick = () => selectServer(servers.find(s => s.id === el.dataset.id)));
+  $$(".dcard").forEach(el => el.onclick = e => {
+    if (e.target.closest("[data-stop]")) return;
+    const c = e.target.closest("[data-copy]");
+    if (c) return copyText(c.dataset.copy);
+    selectServer(servers.find(s => s.id === el.dataset.id));
+  });
 }
 
 /* ================= Server-Ansicht ================= */
@@ -266,6 +271,7 @@ function selectServer(s){
   renderServerList();
   $("#svTitle").innerHTML = `${gbadge(gameOf(s))} ${esc(s.name)}`;
   $("#btnWeb").classList.toggle("hidden", !s.web_url);
+  setJoin(stateOf(s.id).join);
   $("#svSub").textContent = `${s.host}:${s.port}${s.notes ? " · " + s.notes : ""}${s.auto_slots === false ? " · Automatik aus" : ""}`;
   resetOverview();
   $("#consoleOut").innerHTML = "";
@@ -301,6 +307,8 @@ async function refreshStatus(){
     const st = await api(`/api/servers/${id}/status`);
     if (!current || current.id !== id) return;
     lastStatus = st;
+    setJoin(st.join);
+    if (st.hostname && current.name_from_game !== false && st.hostname !== current.name){ current.name = st.hostname; $("#svTitle").innerHTML = `${gbadge(gameOf(current))} ${esc(current.name)}`; }
     if (gameOf(current) !== "cs2") return renderGeneric(st);
     $("#stMapLabel").textContent = "Map";
     $("#stOnline").textContent = st.hibernating ? "Online (idle)" : "Online";
@@ -767,6 +775,8 @@ function openServerDialog(s){
   $("#dlgGame").innerHTML = Object.entries(GAMES).map(([k,g]) => `<option value="${k}">${esc(g.label)}</option>`).join("");
   f.game.value = gameOf(s);
   f.web_url.value = s?.web_url || "";
+  f.name_from_game.checked = s ? s.name_from_game !== false : true;
+  f.game_port.value = s?.game_port || "";
   fillContainerSelect(s?.container || "");
   dlgGameChanged(!s);
   $("#pwHint").textContent = s ? "(leer lassen = unverändert)" : "";
@@ -780,7 +790,8 @@ function formData(){
   const f = $("#serverForm");
   return {name: f.name.value.trim(), host: f.host.value.trim(), port: parseInt(f.port.value, 10), password: f.password.value,
           notes: f.notes.value.trim(), auto_slots: f.auto_slots.checked, game: f.game.value, container: f.container.value,
-          web_url: f.web_url.value.trim()};
+          web_url: f.web_url.value.trim(), name_from_game: f.name_from_game.checked,
+          game_port: f.game_port.value ? parseInt(f.game_port.value, 10) : null};
 }
 $("#serverForm").addEventListener("submit", async e => {
   e.preventDefault();
@@ -1069,3 +1080,27 @@ showVersion();
 })();
 
 $("#btnWeb").onclick = () => { if (current && current.web_url) window.open(current.web_url, "_blank", "noopener"); };
+
+/* ================= Beitreten ================= */
+function copyText(t){
+  const done = () => toast(`Kopiert: ${t}`);
+  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(t).then(done).catch(() => fallbackCopy(t, done));
+  fallbackCopy(t, done);
+}
+function fallbackCopy(t, done){
+  const ta = document.createElement("textarea"); ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand("copy"); done(); } catch { prompt("Adresse kopieren:", t); }
+  ta.remove();
+}
+let currentJoin = null;
+function setJoin(j){
+  currentJoin = j || null;
+  $("#btnJoin").classList.toggle("hidden", !(j && j.url));
+  $("#btnCopyAddr").classList.toggle("hidden", !j);
+  $("#joinAddr").textContent = j ? j.address : "";
+  $("#btnJoin").title = j ? (j.hint || "Beitreten") : "";
+  $("#btnCopyAddr").title = j ? "Adresse kopieren" + (j.url ? "" : " – " + j.hint) : "";
+}
+$("#btnJoin").onclick = () => { if (currentJoin && currentJoin.url) location.href = currentJoin.url; };
+$("#btnCopyAddr").onclick = () => { if (currentJoin) copyText(currentJoin.address); };

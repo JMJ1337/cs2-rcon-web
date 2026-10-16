@@ -12,6 +12,9 @@ Weboberfläche für die Spielserver auf unserer LAN – als Docker-Container mit
 | **Wreckfest** | Steam-Query (A2S, Query-Port) | – (Webkonsole des ich777-Images verlinkbar) | Neustart/Logs über Docker |
 
 Außerdem:
+- **Beitreten:** Knopf „▶ Beitreten“ startet das Spiel über Steam und verbindet direkt (CS2/Wreckfest per `steam://connect`,
+  Factorio/Valheim per Steam-Startparameter). Satisfactory hat keinen Link – dort Adresse kopieren.
+- **Namen wie im Spiel:** Die Server heißen in der Liste automatisch so wie im Spiel (abschaltbar je Server).
 - **Benutzerkonten** mit Rollen *Administrator*, *Spielleiter* (bedienen) und *Nur ansehen*. Sie liegen im Volume
   `cs2-rcon-data` und bleiben bei Updates erhalten. Erster Login: Benutzer `admin` + `ADMIN_PASSWORD`
   (funktioniert auch später noch als Notfall-Login).

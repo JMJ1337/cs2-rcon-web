@@ -210,3 +210,9 @@ body.viewer .opsonly{display:none!important}
 aside{overflow-y:auto}
 #serverList{flex:none;overflow:visible}
 aside .foot{position:sticky;bottom:0;background:var(--panel);margin-top:auto}
+
+.joinbtn{margin-left:auto;font-size:12px;padding:3px 9px;border-radius:6px;background:var(--accent);color:var(--accent-ink);font-weight:600;text-decoration:none;white-space:nowrap;cursor:pointer}
+span.joinbtn{background:var(--panel2);color:var(--text);border:1px solid var(--line);font-family:var(--mono);font-weight:400}
+.dcard .top b{flex:1}
+
+.tabs button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}

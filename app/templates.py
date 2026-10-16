@@ -118,7 +118,7 @@ def build(game: str, v: dict, data_dir: str) -> dict:
         pub(port, "udp"); pub(rport, "tcp")
         host["Binds"].append(f"{data_dir}:/factorio")
         spec_extra = {}
-        srv = {"port": rport, "password": ""}  # Passwort wird nach dem Start aus config/rconpw gelesen
+        srv = {"port": rport, "password": "", "game_port": port}  # Passwort wird nach dem Start aus config/rconpw gelesen
     elif game == "satisfactory":
         port, mport = _port(v.get("port"), "Spielport"), _port(v.get("msg_port"), "Messaging-Port")
         env = [f"MAXPLAYERS={int(v.get('max_players') or 8)}", "PUID=1000", "PGID=1000", "STEAMBETA=false",

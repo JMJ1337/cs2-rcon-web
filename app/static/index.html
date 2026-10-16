@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=7">
+<link rel="stylesheet" href="/static/app.css?v=8">
 </head>
 <body>
 
@@ -185,6 +185,8 @@
           <button data-tab="console" class="needconsole">Konsole</button>
           <button data-tab="settings" class="cs2only">Einstellungen</button>
           <button data-tab="container" class="needcontainer">Container</button>
+          <button id="btnJoin" class="primary hidden" title="Spiel starten und mit diesem Server verbinden">▶ Beitreten</button>
+          <button id="btnCopyAddr" class="hidden" title="Adresse kopieren">⧉ <span id="joinAddr"></span></button>
           <button id="btnWeb" class="hidden" title="Weboberfläche/Webkonsole des Servers öffnen">Webkonsole ↗</button>
           <button id="btnEdit" class="adminonly">Bearbeiten</button>
         </div>
@@ -393,13 +395,15 @@
   <form method="dialog" id="serverForm">
     <h2 id="dlgTitle">Server hinzufügen</h2>
     <div><label>Spiel</label><select name="game" id="dlgGame"></select></div>
-    <div><label>Name</label><input name="name" required maxlength="64" placeholder="z. B. CS1"></div>
+    <div><label>Name</label><input name="name" required maxlength="64" placeholder="z. B. CS1">
+      <label style="display:flex;gap:8px;align-items:center;margin-top:4px"><input type="checkbox" name="name_from_game" checked style="width:auto"> Namen automatisch vom Server im Spiel übernehmen</label></div>
     <div class="row">
       <div style="flex:3"><label>IP / Hostname</label><input name="host" required placeholder="192.168.200.27"></div>
       <div style="flex:1"><label id="dlgPortLabel">Port</label><input name="port" type="number" min="1" max="65535" value="27015" required></div>
     </div>
     <div><label><span id="dlgPwLabel">RCON-Passwort</span> <span id="pwHint"></span></label><input name="password" type="password" autocomplete="new-password"></div>
     <div><label>Docker-Container (optional, für Start/Stop/Logs)</label><select name="container" id="dlgContainer"><option value="">– keiner –</option></select></div>
+    <div><label>Port zum Beitreten (optional, falls abweichend)</label><input name="game_port" type="number" min="1" max="65535" placeholder="leer = automatisch"></div>
     <div><label>Weboberfläche / Webkonsole (optional)</label><input name="web_url" maxlength="255" placeholder="z. B. http://192.168.200.27:9028"></div>
     <div><label>Notiz</label><input name="notes" maxlength="200"></div>
     <label style="display:flex;gap:8px;align-items:center;color:var(--text)" id="dlgAutoRow"><input type="checkbox" name="auto_slots" checked style="width:auto"> Spieleranzahl automatisch nach Modus/Map setzen</label>
@@ -446,6 +450,6 @@
 </dialog>
 
 <div id="toast"></div>
-<script src="/static/app.js?v=7"></script>
+<script src="/static/app.js?v=8"></script>
 </body>
 </html>

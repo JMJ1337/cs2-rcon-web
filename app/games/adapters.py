@@ -24,6 +24,13 @@ async def factorio_status(c: RconClient) -> dict:
             maxp = None  # 0 = unbegrenzt
     except Exception:  # noqa: BLE001
         pass
+    name = None
+    try:
+        out = (await c.execute("/config get name")).strip()
+        if out and "unknown" not in out.lower() and "error" not in out.lower() and "/config" not in out and len(out) < 100:
+            name = out.split(":", 1)[1].strip() if ":" in out else out
+    except Exception:  # noqa: BLE001
+        pass
     evo = ""
     try:
         out = await c.execute("/evolution")
@@ -33,7 +40,7 @@ async def factorio_status(c: RconClient) -> dict:
         pass
     return {
         "map": "Factorio-Welt", "humans": len(players), "bots": 0, "max_players": maxp,
-        "players": players, "version": version or None, "hostname": None,
+        "players": players, "version": version or None, "hostname": name,
         "mode": {"key": "factorio", "label": "Factorio"},
         "extra": {k: v for k, v in {"Spielzeit": gametime, "Evolution": evo, "Version": version}.items() if v},
         "updated": time.time(),
