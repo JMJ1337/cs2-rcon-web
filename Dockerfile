@@ -10,6 +10,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 
+# Version/Build-Datum (setzt die GitHub Action beim Bauen)
+ARG APP_VERSION=dev
+ARG APP_COMMIT=lokal
+ARG BUILD_DATE=
+ENV APP_VERSION=${APP_VERSION} APP_COMMIT=${APP_COMMIT} BUILD_DATE=${BUILD_DATE}
+
 RUN useradd -r -u 1000 rcon && mkdir -p /data && chown rcon /data
 USER rcon
 VOLUME ["/data"]

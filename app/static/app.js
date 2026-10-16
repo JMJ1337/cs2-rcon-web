@@ -1015,6 +1015,15 @@ async function start(){
   refreshHost();
   dashTimer = setInterval(() => { refreshDash(); refreshHost(); }, 5000);
 }
+async function showVersion(){
+  try {
+    const v = await (await fetch("/api/version")).json();
+    const d = v.date ? new Date(v.date).toLocaleString("de-DE", {day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit"}) : "";
+    const txt = `Version ${v.version}${v.commit && v.commit !== "lokal" ? " (" + v.commit + ")" : ""}${d ? " · " + d : ""}`;
+    $("#appVersion").textContent = txt; $("#loginVersion").textContent = txt;
+  } catch {}
+}
+showVersion();
 (async () => {
   const me = await api("/api/me").catch(() => ({authenticated:false}));
   me.authenticated ? start() : showLogin();

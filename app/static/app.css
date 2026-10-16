@@ -188,3 +188,5 @@ body.viewer .opsonly{display:none!important}
 .loadrow{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;font-size:12px;color:var(--muted)}
 .loadrow b{font-family:var(--mono);font-weight:500;color:var(--text)}
 .loadrow .bar{height:5px}
+
+.ver{text-align:center;font-size:11px;font-family:var(--mono)}

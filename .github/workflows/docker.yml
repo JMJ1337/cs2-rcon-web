@@ -48,6 +48,10 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
 
+      - name: Build-Datum
+        id: date
+        run: echo "now=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Bauen & pushen
         uses: docker/build-push-action@v6
         with:
@@ -56,6 +60,10 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=1.${{ github.run_number }}
+            APP_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.date.outputs.now }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

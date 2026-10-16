@@ -129,6 +129,12 @@ async def logout(response: Response):
     return {"ok": True}
 
 
+@app.get("/api/version")
+async def version():
+    return {"version": os.getenv("APP_VERSION", "dev"), "commit": os.getenv("APP_COMMIT", "lokal")[:7],
+            "date": os.getenv("BUILD_DATE") or None}
+
+
 @app.get("/api/me")
 async def me(request: Request):
     u = token_user(request.cookies.get(COOKIE))
