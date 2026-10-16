@@ -1544,6 +1544,7 @@ DIAG_SH = r"""
 echo '=== Prozesse'; ps -eo pid,etime,pcpu,rss,args 2>/dev/null | cut -c1-220 | head -40
 echo '=== UDP-Sockets (lokale Ports)'; for h in $(cat /proc/net/udp /proc/net/udp6 2>/dev/null | awk 'NR>1 && $2 ~ /:/{split($2,a,":"); print a[2]}' | sort -u); do printf "%d " 0x$h; done; echo
 echo '=== TCP-Listen'; for h in $(cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk '$4=="0A"{split($2,a,":"); print a[2]}' | sort -u); do printf "%d " 0x$h; done; echo
+echo '=== TCP-Verbindungen (Ziel-IP:Port Anzahl)'; cat /proc/net/tcp 2>/dev/null | awk 'NR>1 && $4=="01"{print "#TCP " $3}' | sort | uniq -c | sort -rn | head -12
 echo '=== Datenträger'; df -h /serverdata/serverfiles 2>/dev/null | tail -1
 for c in /serverdata/serverfiles/server_config.cfg /serverdata/serverfiles/server/server_config.cfg; do
   [ -f "$c" ] && { echo "=== $c"; grep -v '^[[:space:]]*#' "$c" | grep -v '^[[:space:]]*$' | grep -iv 'password' | head -80; }
@@ -1566,7 +1567,13 @@ async def container_diag(sid: str):
     """Fest vorgegebene Diagnose (Prozesse, Ports, Konfiguration) – nur Admins, keine freien Befehle."""
     name = _container_of(sid)
     try:
-        return {"output": await docker_api.exec_cmd(name, ["sh", "-c", DIAG_SH])}
+        out = await docker_api.exec_cmd(name, ["sh", "-c", DIAG_SH])
+
+        def conv(m):
+            h, p = m.group(2).split(":")
+            ip = ".".join(str(int(h[k:k + 2], 16)) for k in (6, 4, 2, 0))
+            return f"{ip}:{int(p, 16)} x{m.group(1)}"
+        return {"output": re.sub(r"^\s*(\d+) #TCP ([0-9A-Fa-f]{8}:[0-9A-Fa-f]{4})\s*$", conv, out, flags=re.M)}
     except docker_api.DockerError as e:
         raise HTTPException(502, str(e))
 
