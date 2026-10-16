@@ -71,6 +71,7 @@ const ICONS = {
   valheim: '<path d="M6 21L17 6"/><path d="M14 3c3 0 6 3 6 6-2 0-3-1-4.5-2.5S14 5 14 3z"/>',
   cache: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
   wreckfest: '<path d="M3 15l2-5c.4-1 1.2-1.5 2.2-1.5h6.3c.9 0 1.7.4 2.2 1.1L18 12l2.5.8c.8.3 1.5 1 1.5 1.9V15"/><path d="M2 15h20v2H2z"/><circle cx="7" cy="17.5" r="2"/><circle cx="17" cy="17.5" r="2"/><path d="M9 5l1.5 2M14 4l-1 3"/>',
+  prefill: '<path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 19h16"/>',
   minecraft: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>',
   teamspeak: '<path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="13" width="4" height="7" rx="1.5"/><rect x="17" y="13" width="4" height="7" rx="1.5"/>',
   tf2: '<circle cx="12" cy="12" r="8.5"/><path d="M8 8.5h8M12 8.5V17"/><path d="M9.5 13h4"/>',
@@ -1638,6 +1639,13 @@ async function refreshActivity(){
   (a.items || []).forEach(it => {
     const p = it.progress;
     if (!p) return;   // links nur Fortschritt anzeigen, keine Fehlermeldungen
+    if (it.prefill){
+      parts.push(`<div class="act" data-act-prefill="1" title="SteamPrefill öffnen">
+        <div class="t">${gicon("prefill", 14)}<span class="n">${esc(it.name)}</span></div>
+        <div class="bar"><i style="width:${Math.min(100, p.pct)}%"></i></div>
+        <div class="s">${p.pct.toFixed(0)} %${p.rate != null ? " · " + fmtRate(p.rate) : ""}${p.apps_total ? ` · Spiel ${Math.min(p.apps_done + 1, p.apps_total)}/${p.apps_total}` : ""}</div></div>`);
+      return;
+    }
     parts.push(`<div class="act" data-act-sid="${esc(it.server_id)}" title="${esc(it.container)}">
       <div class="t">${gicon(it.game, 14)}<span class="n">${esc(it.name)}</span></div>
       <div class="bar"><i style="width:${Math.min(100, p.pct)}%"></i></div><div class="s">${esc(progressText(p))}</div></div>`);
@@ -1655,6 +1663,7 @@ async function refreshActivity(){
     refreshActivity();
   });
   $$("[data-act-job]").forEach(el => el.onclick = () => showView("create"));
+  $$("[data-act-prefill]").forEach(el => el.onclick = () => showView("prefill"));
 }
 
 /* ================= Lancache-Verlauf (bis 1 Jahr) ================= */
@@ -1829,7 +1838,13 @@ async function loadPrefill(){
     if (pfLastPrompt !== pr){ $("#pfInput").value = ""; $("#pfInput").focus(); }
   }
   pfLastPrompt = pr;
-  $("#pfState").textContent = run ? "läuft …" : "";
+  $("#pfState").textContent = run ? "läuft …" + (d.rate != null ? " · " + fmtRate(d.rate) : "") : "";
+  const ap = d.apps_progress || [];
+  $("#pfAppsProg").innerHTML = ap.length ? `<table class="cachetable"><thead><tr><th>Spiel</th><th style="width:40%">Fortschritt</th><th>Status</th><th></th></tr></thead><tbody>${ap.map(a => `<tr>
+      <td><b>${esc(a.name)}</b></td>
+      <td><div class="bar"><i style="width:${Math.min(100, a.pct)}%;background:${a.state === "Fehler" ? "var(--bad)" : a.state === "läuft" ? "var(--ct)" : "var(--ok)"}"></i></div></td>
+      <td class="mono">${a.state === "läuft" ? a.pct.toFixed(0) + " %" : esc(a.state)}</td><td class="hint">${esc(a.info || "")}</td></tr>`).join("")}</tbody></table>`
+    : `<div class="hint">Noch kein Lauf in diesem Container.</div>`;
   $("#pfProgWrap").classList.toggle("hidden", !(run && d.progress));
   if (d.progress) $("#pfProg").style.width = Math.min(100, d.progress.pct) + "%";
   const el = $("#pfLog"), atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;

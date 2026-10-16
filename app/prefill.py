@@ -147,9 +147,9 @@ def prompt_of(text: str) -> str | None:
     """Wartet SteamPrefill gerade auf eine Eingabe?"""
     tail = [x for x in text.strip().splitlines() if x.strip()][-3:]
     last = " ".join(tail).lower()
-    if re.search(r"(username|benutzername)\s*:?\s*$", last):
+    if re.search(r"(account name|username|benutzername)\s*:?\s*$", last):
         return "user"
-    if re.search(r"password\s*:?\s*$", last):
+    if re.search(r"password.*:\s*$", last):
         return "password"
     if re.search(r"(steam ?guard|2fa|two.factor|auth(entication)? code|code from|enter the code)", last):
         return "code"
@@ -193,3 +193,32 @@ def due(schedule: str, last: str) -> bool:
     now = time.localtime()
     today = time.strftime("%Y-%m-%d", now)
     return time.strftime("%H:%M", now) >= schedule and last != today
+
+
+def parse_progress(text: str) -> dict:
+    """Fortschritt je Spiel aus der SteamPrefill-Ausgabe."""
+    apps, cur = [], None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        m = re.search(r"\]\s*Starting (.+?)\s*$", line)
+        if m:
+            cur = {"name": m.group(1), "state": "läuft", "pct": 0.0, "info": ""}
+            apps.append(cur)
+            continue
+        if cur is None:
+            continue
+        m = re.match(r"^Downloading\.*:?\s*(\d{1,3}(?:[.,]\d+)?)\s*%", line)
+        if m:
+            cur["pct"] = float(m.group(1).replace(",", "."))
+            continue
+        if re.search(r"up to date|already been prefilled|nothing to download", line, re.I):
+            cur.update(state="aktuell", pct=100.0, info=line[:120]); cur = None
+            continue
+        if re.search(r"\b(Finished|Completed|Done)\b", line):
+            cur.update(state="fertig", pct=100.0, info=re.sub(r"^\[[^\]]*\]\s*", "", line)[:120]); cur = None
+            continue
+        if re.search(r"(error|failed|exception|unable)", line, re.I):
+            cur.update(state="Fehler", info=line[:160])
+    return {"apps": apps, "current": next((a for a in reversed(apps) if a["state"] == "läuft"), None)}

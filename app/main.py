@@ -743,6 +743,7 @@ async def live_loop():
                 names = {s["container"] for s in load_servers() if s.get("container")}
                 if cache_stats.state.get("container"):
                     names.add(cache_stats.state["container"])
+                names.add(prefill.NAME)
                 livestats.ensure(names)
         except Exception:  # noqa: BLE001
             log.exception("Live-Messung")
@@ -924,6 +925,19 @@ async def activity():
         if st and (st.get("progress") or st.get("errors")):
             items.append({"server_id": s["id"], "name": s["name"], "game": game_of(s), "container": c,
                           "progress": st.get("progress"), "errors": st.get("errors") or []})
+    try:
+        pst = await prefill.container_state()
+        if pst and pst.get("running"):
+            pp = prefill.parse_progress(await prefill.log(1500))
+            cur = pp["current"]
+            d = livestats.data.get(prefill.NAME) or {}
+            done = sum(1 for a in pp["apps"] if a["state"] in ("fertig", "aktuell"))
+            items.append({"server_id": None, "name": "SteamPrefill" + (f": {cur['name']}" if cur else ""), "game": "prefill",
+                          "container": prefill.NAME, "errors": [], "prefill": True,
+                          "progress": {"label": "Vorladen", "pct": cur["pct"] if cur else 0.0, "rate": d.get("rx_bps"),
+                                       "apps_done": done, "apps_total": len(pp["apps"])}})
+    except docker_api.DockerError:
+        pass
     jobs = [{"id": j["id"], "game": j["game"], "step": j["step"], "error": j["error"], "done": j["done"],
              "server_id": j["server_id"], "title": j.get("title")} for j in _jobs.values() if not j["done"] or j["error"]]
     return {"items": items, "jobs": jobs[-5:]}
@@ -2077,7 +2091,9 @@ async def prefill_state(tail: int = 300):
         if m:
             prog = {"pct": float(m.group(1).replace(",", ".")), "line": line.strip()[:160]}
             break
-    return {"settings": prefill.settings(), "container": st, "config_dir": prefill.config_dir(), "files": files,
+    pp = prefill.parse_progress(lg) if lg else {"apps": [], "current": None}
+    return {"settings": prefill.settings(), "container": st, "apps_progress": pp["apps"],
+            "rate": (livestats.data.get(prefill.NAME) or {}).get("rx_bps") if st and st.get("running") else None, "config_dir": prefill.config_dir(), "files": files,
             "logged_in": any(f.lower().startswith("account") or f.endswith(".dat") or "token" in f.lower() for f in files),
             "log": lg, "prompt": prefill.prompt_of(lg) if st and st.get("running") else None, "progress": prog,
             "job": prefill.job, "dns": await lancache_dns()}
