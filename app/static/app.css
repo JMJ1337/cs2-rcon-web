@@ -120,7 +120,7 @@ pre.out{background:#0a0c0f;border:1px solid var(--line);border-radius:7px;paddin
 .card .s{font-size:12px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .card.thumb{display:flex;gap:10px;align-items:center}
 .card.thumb img{width:64px;height:36px;object-fit:cover;border-radius:4px;flex:none;background:var(--bg)}
-.dash{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+.dash{display:grid;grid-template-columns:repeat(auto-fill,minmax(365px,1fr));gap:18px}
 .dcard{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;cursor:pointer;display:grid;gap:8px}
 .dcard:hover{border-color:#3a4150}
 .dcard .top{display:flex;align-items:center;gap:8px}
@@ -291,3 +291,15 @@ span.joinbtn{background:var(--panel2);color:var(--text);border:1px solid var(--l
 .svcorig .svctile{display:none}
 .svcorig.fail img{display:none}
 .svcorig.fail .svctile{display:inline-flex}
+.dcard{padding:18px;gap:10px;font-size:15px}
+.dcard .top b{font-size:17px}
+.dcard .kv{font-size:14px;gap:4px 14px;align-content:start}
+.dbody{display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:start}
+.mthumb{width:150px;aspect-ratio:16/9;border-radius:7px;overflow:hidden;background:var(--bg);border:1px solid var(--line)}
+.mthumb img{width:100%;height:100%;object-fit:cover;display:block}
+.glogo{display:inline-flex;align-items:center;flex:none}
+.glogo img{height:24px;width:auto;border-radius:4px;display:block}
+.glogo .gbadge{display:none}
+.glogo.fail img{display:none}
+.glogo.fail .gbadge{display:inline-flex}
+@media (max-width:520px){.dash{grid-template-columns:1fr}.mthumb{width:110px}}

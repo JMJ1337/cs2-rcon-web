@@ -98,6 +98,17 @@ def reset_backfill():
     meta.update(bf_pos=0, bf_lines=0, bf_error=None, since=None)
 
 
+def add_net(rx_bytes: float, tx_bytes: float) -> None:
+    """Netzwerk des Lancache-Containers (rx = aus dem Internet geholt, tx = an Clients ausgeliefert)."""
+    global _dirty
+    load()
+    hour = int(time.time() // 3600)
+    b = _h.setdefault(hour, {"hb": 0, "mb": 0, "hr": 0, "mr": 0, "svc": {}})
+    b["rx"] = b.get("rx", 0) + int(rx_bytes)
+    b["tx"] = b.get("tx", 0) + int(tx_bytes)
+    _dirty = True
+
+
 def record_disk(disk):
     if disk:
         _disk[int(time.time() // 86400)] = {"used": disk["used"], "total": disk["total"]}
@@ -144,19 +155,23 @@ def series(rng: str) -> dict:
     peak_h, peak_v = None, 0
     h = first
     while h <= now_h:
-        hb = mb = 0
+        hb = mb = rx = tx = 0
+        has_net = False
         for x in range(h, min(h + step, now_h + 1)):
             b = _h.get(x)
             if not b:
                 continue
             hb += b["hb"]; mb += b["mb"]
+            if "rx" in b:
+                has_net = True
+                rx += b["rx"]; tx += b["tx"]
             tot["req"] += b["hr"] + b["mr"]
             for s, (a, m) in b["svc"].items():
                 svc[s][0] += a; svc[s][1] += m
             if b["hb"] + b["mb"] > peak_v:
                 peak_v, peak_h = b["hb"] + b["mb"], x
         tot["hit"] += hb; tot["miss"] += mb
-        pts.append({"t": h * 3600, "hit": hb, "miss": mb})
+        pts.append({"t": h * 3600, "hit": hb, "miss": mb, "rx": rx if has_net else None, "tx": tx if has_net else None})
         h += step
     ips = defaultdict(int)
     for day, d in _ips.items():

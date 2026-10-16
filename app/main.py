@@ -459,10 +459,11 @@ def join_info(s: dict, password: str | None = None) -> dict:
         return {"address": f"{host}:{p}", "url": f"steam://run/892970//+connect%20{host}:{p}/",
                 "hint": "Startet Valheim und verbindet – Passwort im Spiel eingeben."}
     if g == "wreckfest":
-        # Wreckfest verbindet über den Spielport (UDP 33540); der Abfrage-Port antwortet bei Wreckfest nicht
+        # Wreckfest beantwortet keine Steam-Serverabfragen -> steam://connect scheitert ("App-ID ungültig").
+        # Daher Spiel starten und im Server-Browser des Spiels nach dem Namen suchen.
         p = gp or 33540
-        return {"address": f"{host}:{p}", "url": f"steam://connect/{host}:{p}" + (f"/{password}" if password else ""),
-                "hint": "Startet Wreckfest über Steam und verbindet direkt. Alternativ im Spiel: Mehrspieler → Server-Browser."
+        return {"address": f"{host}:{p}", "url": "steam://run/228380",
+                "hint": "Startet Wreckfest – dann Mehrspieler → Server-Browser und nach dem Servernamen suchen."
                         + (f" Passwort: {password}" if password else "")}
     if g == "satisfactory":
         p = gp or port
@@ -670,6 +671,9 @@ async def load_loop():
             cache_history.maybe_save()
         if n % 2 == 0 and docker_api.available():
             names = sorted({s["container"] for s in load_servers() if s.get("container")})
+            lc = cache_stats.state.get("container")
+            if lc and lc not in names:
+                names.append(lc)
             if names:
                 await asyncio.gather(*(_container_load(x) for x in names))
                 await asyncio.gather(*(install_watch.poll(x) for x in names
@@ -678,8 +682,16 @@ async def load_loop():
                 if k not in names:
                     _loads.pop(k, None)
         h = hoststats.state
-        metrics.record_host(h.get("cpu"), h.get("mem_used_mb"), h.get("mem_total_mb"))
+        lc = cache_stats.state.get("container")
+        nets = [v for v in _loads.values() if v.get("state") == "running" and v.get("rx_bps") is not None]
+        metrics.record_host(h.get("cpu"), h.get("mem_used_mb"), h.get("mem_total_mb"),
+                            sum(v["rx_bps"] for v in nets) if nets else None, sum(v["tx_bps"] or 0 for v in nets) if nets else None)
         if n % 2 == 0:
+            if lc and _loads.get(lc):
+                metrics.record("_cache", {}, _loads[lc])
+                ld = _loads[lc]
+                if ld.get("rx_bps") is not None:
+                    cache_history.add_net((ld["rx_bps"] or 0) * 10, (ld["tx_bps"] or 0) * 10)
             servers = load_servers()
             for s in servers:
                 metrics.record(s["id"], _state.get(s["id"], {}), _loads.get(s.get("container") or ""))
@@ -820,6 +832,7 @@ async def server_metrics(minutes: int = 360):
     minutes = max(30, min(minutes, 24 * 60))
     out = {s["id"]: metrics.summary(s["id"], minutes) for s in load_servers()}
     out["_host"] = metrics.summary("_host", minutes)
+    out["_cache"] = metrics.summary("_cache", minutes)
     return out
 
 
@@ -830,6 +843,8 @@ async def cache_metrics():
     if cache_stats.state["updated"] is None:
         await cache_stats.poll(automation.get_settings().get("cache_container") or "")
     out = cache_stats.summary()
+    ld = _loads.get(out.get("container") or "") or {}
+    out["net"] = {"rx_bps": ld.get("rx_bps"), "tx_bps": ld.get("tx_bps"), "host_mode": ld.get("net_host")}
     hosts = {x["host"] for x in load_servers()}
     for k in ("last_hour", "last_day"):
         if out.get(k, {}).get("clients"):

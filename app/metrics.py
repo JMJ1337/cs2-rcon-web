@@ -56,7 +56,7 @@ def record(sid: str, state: dict, load: dict | None) -> None:
         del s[k]
 
 
-def record_host(cpu, mem_used_mb, mem_total_mb) -> None:
+def record_host(cpu, mem_used_mb, mem_total_mb, rx=None, tx=None) -> None:
     """Gesamtlast des Hosts als eigene Reihe '_host' (cpu = %, mem = % belegt)."""
     _load()
     if cpu is None or not mem_total_mb:
@@ -66,18 +66,23 @@ def record_host(cpu, mem_used_mb, mem_total_mb) -> None:
     mem_pct = round(mem_used_mb / mem_total_mb * 100, 1)
     p = s.get(minute)
     if p is None:
-        s[minute] = {"pl": 0, "on": 1, "n": 1, "cpu": cpu, "mem": mem_pct, "cpu_max": cpu}
+        p = s[minute] = {"pl": 0, "on": 1, "n": 1, "cpu": cpu, "mem": mem_pct, "cpu_max": cpu}
     else:
         p["n"] += 1
         p["cpu"] = round((p["cpu"] * (p["n"] - 1) + cpu) / p["n"], 1)
         p["cpu_max"] = max(p.get("cpu_max", cpu), cpu)
         p["mem"] = mem_pct
+    if rx is not None:
+        nn = p.get("nn", 0) + 1
+        p["rx"] = round(((p.get("rx") or 0) * (nn - 1) + rx) / nn)
+        p["tx"] = round(((p.get("tx") or 0) * (nn - 1) + (tx or 0)) / nn)
+        p["nn"] = nn
     for k in [k for k in s if k < minute - KEEP]:
         del s[k]
 
 
 def forget(valid_ids: set[str]) -> None:
-    valid_ids = set(valid_ids) | {"_host"}
+    valid_ids = set(valid_ids) | {"_host", "_cache"}
     for sid in [k for k in _series if k not in valid_ids]:
         del _series[sid]
 

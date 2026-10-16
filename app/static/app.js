@@ -74,6 +74,29 @@ const ICONS = {
   _: '<rect x="3" y="7" width="18" height="10" rx="4"/><path d="M8 10v4M6 12h4"/><circle cx="16" cy="11" r="1"/><circle cx="18" cy="13" r="1"/>',
 };
 const gicon = (g, size=16) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[g] || ICONS._}</svg>`;
+// Originalbilder der Spiele (live von Steam geladen; offline -> eigenes Symbol)
+const STEAM_APPS = {cs2: 730, factorio: 427520, satisfactory: 526870, valheim: 892970, wreckfest: 228380};
+const steamImg = (g, file) => STEAM_APPS[g] ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${STEAM_APPS[g]}/${file}` : "";
+function gameLogo(g){
+  const src = steamImg(g, "capsule_sm_120.jpg");
+  return src ? `<span class="glogo"><img src="${src}" alt="${esc(GAMES[g]?.label || g)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add('fail')">${gbadge(g)}</span>` : gbadge(g);
+}
+function mapThumb(o, g){
+  let src = "", title = "";
+  if (g === "cs2"){
+    if (o.workshop && o.workshop.preview) { src = o.workshop.preview; title = o.workshop.title; }
+    else if (o.map) {
+      const base = String(o.map).split("/").pop().replace(/\.vpk$/, "").toLowerCase();
+      if (/^[a-z0-9_]+$/.test(base)) src = `https://raw.githubusercontent.com/MurkyYT/cs2-map-icons/main/images/thumbs/${base}_1_png.png`;
+      title = o.map;
+    }
+  }
+  const fallback = steamImg(g, "header.jpg");
+  if (!src) src = fallback;
+  if (!src) return "";
+  return `<div class="mthumb" title="${esc(title || GAMES[g]?.label || "")}"><img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer"
+    onerror="if(this.dataset.fb!=='1'&&'${fallback}'){this.dataset.fb='1';this.src='${fallback}'}else{this.parentNode.remove()}"></div>`;
+}
 const gbadge = g => GAMES[g] ? `<span class="gbadge" style="background:${GAMES[g].color}">${gicon(g, 12)} ${esc(GAMES[g].short)}</span>` : "";
 const collapsed = (() => { try { return JSON.parse(localStorage.getItem("gsmCollapsed") || "{}"); } catch { return {}; } })();
 let pollTimer = null, dashTimer = null;
@@ -290,11 +313,12 @@ async function refreshCache(){
   const c = cacheData, h = c.last_hour || {}, d = c.last_day || {};
   $("#hlCache").classList.toggle("hidden", !c.container);
   $("#hlNetRow").classList.toggle("hidden", !c.container);
+  const cn = c.net || {}, live = cn.tx_bps != null ? cn.tx_bps : (c.rate_bps || 0);
   if (c.container){
-    const pct = Math.min(100, (c.rate_bps || 0) / LINK_BPS * 100);
-    $("#hlNet").textContent = fmtRate(c.rate_bps || 0);
-    $("#hlNetBar").style.width = Math.max(pct, c.rate_bps ? 2 : 0) + "%";
-    $("#hlNetRow").title = `Lancache-Durchsatz (Balken = Anteil an 1 Gbit/s) · davon ${fmtRate(c.hit_rate_bps || 0)} aus dem Cache`;
+    const pct = Math.min(100, live / LINK_BPS * 100);
+    $("#hlNet").textContent = fmtRate(live);
+    $("#hlNetBar").style.width = Math.max(pct, live ? 2 : 0) + "%";
+    $("#hlNetRow").title = `Lancache an Clients (Netzwerk des Containers, Balken = Anteil an 1 Gbit/s)` + (cn.rx_bps != null ? ` · aus dem Internet ${fmtRate(cn.rx_bps)}` : "");
     $("#hlCache").innerHTML = `Lancache: ${d.hit_ratio != null ? d.hit_ratio + " % aus dem Cache (24 h)" : "noch keine Daten"}`;
   }
   if (view !== "dash") return;
@@ -309,7 +333,7 @@ async function refreshCache(){
       ${savedCard(d.hit_bytes, "24 h")}
       <div class="card"><div class="k">Aus dem Cache (24 h)</div><div class="v" style="color:var(--ok)">${fmtBytes(d.hit_bytes)}</div><div class="s">${d.hit_ratio != null ? d.hit_ratio + " % Trefferquote" : "noch keine Downloads"}</div></div>
       <div class="card"><div class="k">Aus dem Internet (24 h)</div><div class="v">${fmtBytes(d.miss_bytes)}</div><div class="s">${(d.requests || 0).toLocaleString("de-DE")} Anfragen</div></div>
-      <div class="card"><div class="k">Durchsatz jetzt</div><div class="v">${fmtRate(c.rate_bps || 0)}</div><div class="s">davon ${fmtRate(c.hit_rate_bps || 0)} aus dem Cache · letzte Std. ${fmtBytes((h.hit_bytes||0)+(h.miss_bytes||0))}</div></div>
+      <div class="card"><div class="k">Durchsatz jetzt</div><div class="v">↑ ${fmtRate(live)}</div><div class="s">${cn.rx_bps != null ? `↓ ${fmtRate(cn.rx_bps)} aus dem Internet · ` : ""}letzte Std. ${fmtBytes((h.hit_bytes||0)+(h.miss_bytes||0))}</div></div>
       <div class="card"><div class="k">Cache-Speicher</div><div class="v">${disk != null ? disk + " %" : "–"}</div>
         ${c.disk ? `<div class="bar" style="margin-top:6px"><i class="${lvl(disk)}" style="width:${disk}%"></i></div><div class="s">${fmtBytes(c.disk.used)} von ${fmtBytes(c.disk.total)}</div>` : ""}</div>
     </div>
@@ -342,6 +366,41 @@ function spark(vals, color, opts = {}){
   return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
     <path d="${area}" fill="${color}" opacity=".18"/><path d="${d}" fill="none" stroke="${color}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`;
 }
+// zwei Reihen in einem Diagramm (z. B. Download/Upload) in verschiedenen Farben
+function spark2(a, b, colA, colB, opts = {}){
+  const w = 200, h = opts.h || 34, pad = 2;
+  const nums = [...a, ...b].filter(v => v != null);
+  if (!nums.length) return spark([], colA, opts);
+  const max = Math.max(opts.min || 1, ...nums), n = Math.max(a.length, b.length);
+  const x = i => (i / Math.max(1, n - 1)) * w, y = v => h - pad - (v / max) * (h - pad * 2);
+  const path = vals => {
+    let d = "", area = "", seg = [];
+    const flush = () => {
+      if (!seg.length) return;
+      d += "M" + seg.map(([i, v]) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("L");
+      area += `M${x(seg[0][0]).toFixed(1)},${h}L` + seg.map(([i, v]) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("L") + `L${x(seg[seg.length-1][0]).toFixed(1)},${h}Z`;
+      seg = [];
+    };
+    vals.forEach((v, i) => v == null ? flush() : seg.push([i, v])); flush();
+    return [d, area];
+  };
+  const [da, aa] = path(a), [db, ab] = path(b);
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
+    <path d="${aa}" fill="${colA}" opacity=".15"/><path d="${ab}" fill="${colB}" opacity=".15"/>
+    <path d="${da}" fill="none" stroke="${colA}" stroke-width="1.6" vector-effect="non-scaling-stroke"/>
+    <path d="${db}" fill="none" stroke="${colB}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`;
+}
+const C_DOWN = "#4f9dde", C_UP = "#f0a04b";
+function netLegend(){ return `<span class="lgd" style="background:${C_DOWN}"></span>Download <span class="lgd" style="background:${C_UP}"></span>Upload`; }
+function netPanelCell(m, label){
+  const rx = m.rx || [], tx = m.tx || [];
+  const rN = rx.filter(v => v != null), tN = tx.filter(v => v != null);
+  if (!rN.length && !tN.length) return "";
+  const avg = a => a.length ? a.reduce((p, q) => p + q, 0) / a.length : 0;
+  return `<div><div class="mlab"><span>${label}</span><b><span style="color:${C_DOWN}">↓ ${fmtRate(rN[rN.length-1] || 0)}</span> · <span style="color:${C_UP}">↑ ${fmtRate(tN[tN.length-1] || 0)}</span></b></div>
+    ${spark2(rx, tx, C_DOWN, C_UP, {min: 100000, h: 64})}
+    <div class="hint" style="font-size:11px">${netLegend()} · Ø ↓ ${fmtRate(avg(rN))} · ↑ ${fmtRate(avg(tN))} · max ↓ ${fmtRate(Math.max(0, ...rN))} · ↑ ${fmtRate(Math.max(0, ...tN))}</div></div>`;
+}
 const rangeLabel = m => m >= 1440 ? "24 h" : m >= 60 ? (m / 60) + " h" : m + " min";
 function hostPanelHtml(){
   const m = metricsData._host;
@@ -353,14 +412,15 @@ function hostPanelHtml(){
     <div class="panel"><div class="hostpanel">
       <div><div class="mlab"><span>CPU</span><b>Ø ${avg(cpuN)} % · max ${mx(cpuN)} %</b></div>${spark(m.cpu, "var(--ct)", {min: 100})}</div>
       <div><div class="mlab"><span>RAM belegt</span><b>jetzt ${memN.length ? memN[memN.length-1] : "–"} % · max ${mx(memN)} %</b></div>${spark(m.mem, "#a78bfa", {min: 100})}</div>
+      ${netPanelCell(m, "Netzwerk gesamt")}
+      ${metricsData._cache && metricsData._cache.samples ? netPanelCell(metricsData._cache, "Lancache") : ""}
     </div></div></div>`;
 }
 function netCell(m){
-  const tot = (m.rx || []).map((v, i) => v == null && (m.tx || [])[i] == null ? null : (v || 0) + ((m.tx || [])[i] || 0));
-  const nums = tot.filter(v => v != null);
-  if (!nums.length) return "";
-  const avg = nums.reduce((a, b) => a + b, 0) / nums.length;
-  return `<div class="mcell" title="Netzwerk (empfangen + gesendet)"><div class="mlab"><span>Netz</span><b>Ø ${fmtRate(avg)} · max ${fmtRate(Math.max(...nums))}</b></div>${spark(tot, "#4f9dde", {min: 20000})}</div>`;
+  const rx = m.rx || [], tx = m.tx || [];
+  const rN = rx.filter(v => v != null), tN = tx.filter(v => v != null);
+  if (!rN.length && !tN.length) return "";
+  return `<div class="mcell" title="Netzwerk: blau = Download, orange = Upload"><div class="mlab"><span>Netz</span><b><span style="color:${C_DOWN}">↓${fmtRate(rN[rN.length-1] || 0)}</span> <span style="color:${C_UP}">↑${fmtRate(tN[tN.length-1] || 0)}</span></b></div>${spark2(rx, tx, C_DOWN, C_UP, {min: 20000})}</div>`;
 }
 function metricsHtml(sid, color){
   const m = metricsData[sid];
@@ -396,8 +456,8 @@ async function refreshDash(){
     const pct = slots ? Math.min(100, Math.round((o.humans||0) / slots * 100)) : 0;
     const mz = o.matchzy && o.matchzy.match ? `${esc(o.matchzy.match.team1||"")} vs ${esc(o.matchzy.match.team2||"")} · ${esc(o.matchzy.match.state||"")}` : (o.matchzy && o.matchzy.installed ? "kein Match geladen" : "–");
     return `<div class="dcard" data-id="${esc(s.id)}">
-      <div class="top">${led(o)}${gbadge(gameOf(s))}<b>${esc(s.name)}</b>${o.online && o.join ? (o.join.url ? `<a class="joinbtn" href="${esc(o.join.url)}" title="Beitreten: ${esc(o.join.address)}" data-stop>▶ Beitreten</a>` : `<span class="joinbtn" data-copy="${esc(o.join.address)}" title="${esc(o.join.hint)}">⧉ ${esc(o.join.address)}</span>`) : `<span class="hint mono">${esc(s.host)}:${esc(s.port)}</span>`}</div>
-      ${o.online ? (gameOf(s) === "cs2" ? `
+      <div class="top">${gameLogo(gameOf(s))}${led(o)}<b>${esc(s.name)}</b>${o.online && o.join ? (o.join.url ? `<a class="joinbtn" href="${esc(o.join.url)}" title="Beitreten: ${esc(o.join.address)}" data-stop>▶ Beitreten</a>` : `<span class="joinbtn" data-copy="${esc(o.join.address)}" title="${esc(o.join.hint)}">⧉ ${esc(o.join.address)}</span>`) : `<span class="hint mono">${esc(s.host)}:${esc(s.port)}</span>`}</div>
+      ${o.online ? `<div class="dbody">${mapThumb(o, gameOf(s))}` + (gameOf(s) === "cs2" ? `
       <div class="kv">
         <span>Map</span><span title="${esc(o.map)}">${esc((o.workshop && o.workshop.title) || o.map || "?")}</span>
         <span>Modus</span><span>${esc(o.mode ? o.mode.label : "?")}</span>
@@ -408,7 +468,7 @@ async function refreshDash(){
         <span>${worldLabel(gameOf(s))}</span><span>${esc(o.map || "–")}</span>
         <span>Spieler</span><span>${o.humans ?? 0}${o.max_players ? " / " + o.max_players : ""}</span>
         ${Object.entries(o.extra || {}).filter(([k]) => !["Session","Servername","Strecke"].includes(k)).slice(0, 2).map(([k,v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join("")}
-      </div>`) + `
+      </div>`) + `</div>
       <div class="bar"><i style="width:${pct}%"></i></div>
       ${loadHtml(o.load)}
       ${installHtml(o.install)}
@@ -1498,6 +1558,10 @@ async function loadCacheHistory(){
     <div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:8px">Ausgeliefert je ${c.step_h < 24 ? c.step_h + " Stunde(n)" : c.step_h === 24 ? "Tag" : "Woche"}
       <span class="hint"><span class="lgd" style="background:var(--ok)"></span> aus dem Cache (gespart) <span class="lgd" style="background:#8a7a66"></span> aus dem Internet</span></h2>
       ${total ? cacheChart(c.points, c.step_h) : `<div class="hint">Für diesen Zeitraum liegen noch keine Daten vor.</div>`}</div>
+    ${c.points.some(p => p.rx != null) ? `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:8px">Netzwerk des Lancache-Containers
+      <span class="hint">${netLegend()} (Download = aus dem Internet, Upload = an Clients; erst ab heute gemessen)</span></h2>
+      ${spark2(c.points.map(p => p.rx), c.points.map(p => p.tx), C_DOWN, C_UP, {min: 1e6, h: 120})}
+      <div class="row hint" style="justify-content:space-between;margin-top:4px"><span>↓ gesamt ${fmtBytes(c.points.reduce((a, p) => a + (p.rx || 0), 0))}</span><span>↑ gesamt ${fmtBytes(c.points.reduce((a, p) => a + (p.tx || 0), 0))}</span></div></div>` : ""}
     ${c.services.length ? `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:6px">Was wurde gecacht? <span class="hint">(${CACHE_RANGES[c.range]}, nach Dienst)</span></h2>
       <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Dienst</th><th>aus dem Cache</th><th>aus dem Internet</th><th>gesamt</th><th>Trefferquote</th><th></th></tr></thead><tbody>${svcRows(c.services)}</tbody></table></div></div>` : ""}
     <div class="cgrid">
@@ -1509,9 +1573,13 @@ setInterval(() => { if (view === "cache") loadCacheHistory(); }, 30000);
 setInterval(() => { if (view === "cache") loadCacheLive(); }, 5000);
 
 /* Live: Durchsatz + letzte Downloads aus dem access.log */
+let cacheLiveMetrics = null, cacheLiveAt = 0;
 async function loadCacheLive(){
   let c, l;
   try { [c, l] = await Promise.all([api("/api/cache"), api("/api/cache/log?lines=60")]); } catch { return; }
+  if (Date.now() - cacheLiveAt > 30000){
+    try { cacheLiveMetrics = (await api("/api/metrics?minutes=60"))._cache; cacheLiveAt = Date.now(); } catch {}
+  }
   if (view !== "cache") return;
   const rows = (l.log || "").trim().split("\n").reverse().map(line => {
     const m = line.match(/^\[([^\]]*)\] (\S+) .*?\[([^\]]+)\] "(\S+) (\S+)[^"]*" (\d{3}) (\d+) .*"(HIT|MISS|EXPIRED|STALE|UPDATING|REVALIDATED|BYPASS|-)" "([^"]*)"/);
@@ -1522,9 +1590,10 @@ async function loadCacheLive(){
       <td class="mono hint" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(m[9] + m[5])}">${esc(m[9])}</td></tr>`;
   }).filter(Boolean).slice(0, 15).join("");
   $("#cacheLive").innerHTML = `<div class="panel" style="padding:12px 16px;margin-bottom:14px">
-    <h2 style="margin-bottom:8px">Live <span class="hint">(aktualisiert alle 5 s)</span>
-      <span style="float:right" class="mono">${fmtRate(c.rate_bps || 0)} <span class="hint">· davon ${fmtRate(c.hit_rate_bps || 0)} aus dem Cache</span></span></h2>
-    <div class="bar" style="margin-bottom:10px"><i style="width:${Math.min(100, (c.rate_bps || 0) / LINK_BPS * 100)}%;background:#4f9dde"></i></div>
+    <h2 style="margin-bottom:8px">Live <span class="hint">(aktualisiert alle 5 s · Netzwerk des Lancache-Containers)</span>
+      <span style="float:right" class="mono"><span style="color:${C_UP}">↑ ${fmtRate((c.net || {}).tx_bps || 0)}</span> an Clients · <span style="color:${C_DOWN}">↓ ${fmtRate((c.net || {}).rx_bps || 0)}</span> aus dem Internet</span></h2>
+    ${(() => { const m = cacheLiveMetrics; return m && m.samples ? `<div class="mlab"><span>letzte ${rangeLabel(m.minutes)} · ${netLegend()}</span><b></b></div>${spark2(m.rx, m.tx, C_DOWN, C_UP, {min: 100000, h: 70})}` : ""; })()}
+    <div class="hint" style="margin:6px 0 8px">Laut Log: ${fmtRate(c.rate_bps || 0)} (davon ${fmtRate(c.hit_rate_bps || 0)} aus dem Cache) – das Log schreibt einen Download erst, wenn er fertig ist.</div>
     ${rows ? `<div style="overflow:auto;max-height:320px"><table class="cachetable"><thead><tr><th>Zeit</th><th>Dienst</th><th>Client</th><th>Größe</th><th></th><th>Server</th></tr></thead><tbody>${rows}</tbody></table></div>`
       : `<div class="hint">Gerade keine Downloads im access.log.</div>`}</div>`;
 }
