@@ -1,0 +1,47 @@
+# GROH CS2 Server mit MatchZy – EIN Server pro Stack
+# Für jeden weiteren Server: neuen Stack mit diesem Inhalt anlegen,
+# nur die Environment variables ändern (SRV_NR, Ports, Name, Token ...).
+# Portainer: Stacks → Add stack → Repository → Compose path: cs2-server/docker-compose.yml
+# Variablen-Vorlage: cs2-server/stack.env
+# Installation liegt auf dem NAS: /mnt/cs/server<SRV_NR>  (NFS-Mount 192.168.200.13:/volume1/Grohlan/cs)
+
+services:
+  cs2:
+    image: xbird/cs2-matchzy:latest
+    container_name: cs2-dedicated-CS${SRV_NR}
+    restart: unless-stopped
+    dns:
+      - 192.168.200.27        # Lancache-DNS: Updates kommen nur einmal aus dem Internet
+    stdin_open: true          # Konsole: docker attach --sig-proxy=false cs2-dedicated-CS<Nr>
+    tty: true
+    environment:
+      SRCDS_TOKEN: "${TOKEN}"
+      CS2_SERVERNAME: "${NAME}"
+      CS2_GAMEALIAS: "${MODUS:-wingman}"
+      CS2_STARTMAP: "${MAP:-de_palais}"
+      CS2_MAXPLAYERS: "${SLOTS:-5}"
+      CS2_PORT: "${GAME_PORT}"
+      TV_PORT: "${TV_PORT}"
+      CS2_RCONPW: "${RCON_PW}"
+      CS2_PW: "${SERVER_PW}"
+      CS2_MAPGROUP: "mg_active"
+      CS2_BOT_QUOTA: "${BOTS:-0}"
+      STEAMAPPVALIDATE: "0"
+      CS2_CHEATS: "0"
+      CS2_SERVER_HIBERNATE: "0"
+      CS2_LAN: "0"
+      TV_ENABLE: "0"
+      TV_AUTORECORD: "0"
+      TV_MAXRATE: "0"
+      TV_DELAY: "5"
+      CS2_LOG: "on"
+      CS2_LOG_MONEY: "0"
+      CS2_LOG_DETAIL: "0"
+      CS2_LOG_ITEMS: "0"
+      usercon: "1"
+    ports:
+      - "${GAME_PORT}:${GAME_PORT}/tcp"   # TCP = RCON (für die RCON-Weboberfläche)
+      - "${GAME_PORT}:${GAME_PORT}/udp"
+      - "${TV_PORT}:${TV_PORT}/udp"
+    volumes:
+      - /mnt/cs/server${SRV_NR}:/home/steam/cs2-dedicated/
