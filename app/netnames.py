@@ -85,6 +85,11 @@ async def _container_ips() -> dict[str, str]:
             for net in ((c.get("NetworkSettings") or {}).get("Networks") or {}).values():
                 if net.get("IPAddress"):
                     out[net["IPAddress"]] = nm
+        r = await docker_api._req("GET", "/networks")
+        for n in r.json():
+            for cfg in ((n.get("IPAM") or {}).get("Config") or []):
+                if cfg.get("Gateway"):
+                    out[cfg["Gateway"]] = "@gw"
     except docker_api.DockerError:
         return _containers
     _containers, _containers_at = out, time.time()
@@ -96,7 +101,7 @@ async def name_of(ip: str, host_ips: set[str] | None = None) -> str | None:
         return "Docker-Host (Spielserver/Container)"
     cips = await _container_ips()
     if ip in cips:
-        return f"Container {cips[ip]}"
+        return "Docker-Container auf dem Server" if cips[ip] == "@gw" else f"Container {cips[ip]}"
     hit = _cache.get(ip)
     if hit and time.time() - hit[0] < (TTL_OK if hit[1] else TTL_FAIL):
         return hit[1]
