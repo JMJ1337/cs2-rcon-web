@@ -212,3 +212,24 @@ async def remove_container(name: str) -> None:
 
 async def remove_volume(name: str) -> None:
     await _req("DELETE", f"/volumes/{name}", timeout=60)
+
+
+async def recreate(name: str, mutate) -> None:
+    """Container mit geänderter Konfiguration neu erstellen (Binds/Daten bleiben). mutate(cfg, hostconfig) ändert in-place."""
+    info = await inspect(name)
+    cfg, hc = dict(info["Config"]), dict(info["HostConfig"])
+    mutate(cfg, hc)
+    spec = {k: cfg.get(k) for k in ("Image", "Env", "Cmd", "Entrypoint", "ExposedPorts", "Labels", "WorkingDir",
+                                     "User", "Tty", "OpenStdin", "StopSignal", "Volumes") if cfg.get(k) is not None}
+    spec["HostConfig"] = hc
+    tmp = f"{name}-alt-{int(__import__('time').time())}"
+    if info.get("State", {}).get("Running"):
+        await _req("POST", f"/containers/{name}/stop", params={"t": "30"}, timeout=60)
+    await _req("POST", f"/containers/{name}/rename", params={"name": tmp})
+    try:
+        await create_container(name, spec)
+    except DockerError:
+        await _req("POST", f"/containers/{tmp}/rename", params={"name": name})
+        await _req("POST", f"/containers/{name}/start", timeout=60)
+        raise
+    await _req("DELETE", f"/containers/{tmp}", params={"force": "1"}, timeout=60)

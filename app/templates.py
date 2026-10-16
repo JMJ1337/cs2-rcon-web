@@ -58,9 +58,13 @@ TEMPLATES = {
         "data_default": "{base}/wreckfest/{name}",
         "fields": [
             ["name", "Container-Name", "text", "wreckfest-{n}", ""],
+            ["server_name", "Servername", "text", "GROH LAN Wreckfest #{n}", "so erscheint er im Server-Browser"],
+            ["password", "Server-Passwort (optional)", "text", "", ""],
+            ["max_players", "Max. Spieler", "number", "24", ""],
+            ["admin_steam_ids", "Admin-SteamIDs (SteamID64, kommagetrennt, optional)", "text", "", "werden automatisch Admin"],
             ["port", "Spielport (UDP)", "number", "33540", ""],
-            ["query_port", "Query-Port auf dem Host (UDP)", "number", "27116", "intern 27016 – außen verschoben, damit es nicht mit CS2 kollidiert"],
-            ["steam_port", "Steam-Port auf dem Host (UDP)", "number", "27115", "intern 27015"],
+            ["query_port", "Query-Port (UDP)", "number", "26900", "LAN-Suche findet Wreckfest nur auf 26900–26905 (27015–27020 belegt CS2)"],
+            ["steam_port", "Steam-Port (UDP)", "number", "27115", ""],
             ["web_port", "Webkonsole (TCP)", "number", "9028", "Server-Konsole im Browser"],
         ],
     },
@@ -88,7 +92,7 @@ PORT_PLAN = {
     "satisfactory": [("port", 7777, 1, 1), ("msg_port", 8888, 1, 1)],
     "valheim": [("port", 2456, 2, 2)],                       # Spielport + Query-Port (+1)
     "tf2": [("port", 27045, 1, 1), ("tv_port", 27055, 1, 1)],
-    "wreckfest": [("port", 33540, 1, 1), ("steam_port", 27115, 2, 2), ("web_port", 9028, 1, 1)],  # Steam + Query (+1)
+    "wreckfest": [("port", 33540, 1, 1), ("query_port", 26900, 1, 1), ("steam_port", 27115, 1, 1), ("web_port", 9028, 1, 1)],
 }
 
 
@@ -102,8 +106,6 @@ def suggest_ports(game: str, used: set[int]) -> dict:
         for i in range(span):
             taken.add(p + i)
         out[field] = p
-    if game == "wreckfest":
-        out["query_port"] = out["steam_port"] + 1
     return out
 
 
@@ -208,12 +210,17 @@ def build(game: str, v: dict, data_dir: str) -> dict:
         qport, sport = _port(v.get("query_port"), "Query-Port"), _port(v.get("steam_port"), "Steam-Port")
         wport = _port(v.get("web_port"), "Webkonsole")
         env = ["GAME_ID=361580", "VALIDATE=", "UID=99", "GID=100", "GAME_PARAMS="]
-        exposed.update({f"{port}/udp": {}, "27016/udp": {}, "27015/udp": {}, "8080/tcp": {}})
-        host["PortBindings"].update({f"{port}/udp": [{"HostPort": str(port)}], "27016/udp": [{"HostPort": str(qport)}],
-                                     "27015/udp": [{"HostPort": str(sport)}], "8080/tcp": [{"HostPort": str(wport)}]})
+        # Ports innen = außen, damit die Werte in server_config.cfg stimmen (werden nach der Installation eingetragen)
+        pub(port, "udp"); pub(qport, "udp"); pub(sport, "udp")
+        exposed["8080/tcp"] = {}
+        host["PortBindings"]["8080/tcp"] = [{"HostPort": str(wport)}]
         host["Binds"] += [f"{data_dir}/steamcmd:/serverdata/steamcmd", f"{data_dir}/serverfiles:/serverdata/serverfiles"]
         spec_extra = {}
-        srv = {"port": qport, "password": "", "web_url": f"http://{{host}}:{wport}", "game_port": port}
+        srv = {"port": qport, "password": "", "web_url": f"http://{{host}}:{wport}", "game_port": port,
+               "wf_config": {"game_port": port, "query_port": qport, "steam_port": sport,
+                             "server_name": v.get("server_name") or name, "password": v.get("password") or "",
+                             "max_players": str(int(v.get("max_players") or 24)),
+                             "admin_steam_ids": re.sub(r"[^0-9,]", "", v.get("admin_steam_ids") or "")}}
     else:
         raise ValueError("Unbekanntes Spiel")
     spec = {"Image": t["image"], "Env": env, "ExposedPorts": exposed, "HostConfig": host, "Labels": labels, **spec_extra}

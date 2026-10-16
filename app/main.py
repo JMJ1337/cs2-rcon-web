@@ -101,7 +101,7 @@ def require_auth(request: Request):
         raise HTTPException(403, "Nur Ansicht – keine Berechtigung für Änderungen")
     admin_only = (path.startswith(ADMIN_PATHS) and not (path == "/api/settings" and method == "GET")) or \
         (method in ("POST", "PUT", "DELETE") and re.fullmatch(r"/api/servers(/[\w-]+)?", path)) or \
-        re.fullmatch(r"/api/servers/[\w-]+/(delete(-preview)?|container/(diag|use-lancache))", path)
+        re.fullmatch(r"/api/servers/[\w-]+/(delete(-preview)?|container/(diag|use-lancache)|wreckfest/.*)", path)
     if admin_only and level < 3:
         raise HTTPException(403, "Nur für Administratoren")
     request.state.user = u
@@ -1722,6 +1722,9 @@ async def _create_job(job: dict, data: CreateIn, host: str):
                         break
                 except sfmod.SatisfactoryError:
                     continue
+        if data.game == "wreckfest" and b["server"].get("wf_config"):
+            _job_log(job, "Wreckfest: Servername, Passwort und Ports werden nach der Installation automatisch eingetragen")
+            asyncio.create_task(_wf_after_install(b["name"], b["server"]["wf_config"]))
         job["done"] = True
         _job_log(job, "Fertig")
     except (ValueError, docker_api.DockerError) as e:
@@ -1732,6 +1735,155 @@ async def _create_job(job: dict, data: CreateIn, host: str):
         log.exception("Anlegen fehlgeschlagen")
         job["error"] = str(e) or e.__class__.__name__
         job["done"] = True
+
+
+# ---------------------------------------------------------------- Wreckfest: server_config.cfg
+WF_CFG = "/serverdata/serverfiles/server_config.cfg"
+WF_KEYS = {"server_name": "Servername", "welcome_message": "Begrüßung", "password": "Passwort", "max_players": "Max. Spieler",
+           "admin_steam_ids": "Admin-SteamIDs", "op_steam_ids": "Moderator-SteamIDs", "gamemode": "Spielmodus",
+           "track": "Strecke", "laps": "Runden", "bots": "Bots", "ai_difficulty": "KI-Stärke", "car_class_restriction": "Fahrzeugklasse",
+           "vehicle_damage": "Schaden", "lobby_countdown": "Lobby-Countdown", "game_port": "Spielport",
+           "query_port": "Query-Port", "steam_port": "Steam-Port"}
+WF_QUOTED = {"server_name", "welcome_message"}
+
+
+async def _wf_read(container: str) -> str | None:
+    out = await docker_api.exec_cmd(container, ["sh", "-c", f"[ -f {WF_CFG} ] && cat {WF_CFG} || echo __NOFILE__"])
+    return None if "__NOFILE__" in out else out
+
+
+def _wf_values(text: str) -> dict:
+    vals = {}
+    for line in text.splitlines():
+        m = re.match(r"^\s*([a-z_]+)\s*=\s*(.*?)\s*$", line)
+        if m and m.group(1) in WF_KEYS:
+            vals[m.group(1)] = m.group(2).strip('"')
+    return vals
+
+
+def _wf_apply(text: str, changes: dict) -> str:
+    lines = text.splitlines()
+    for k, v in changes.items():
+        v = re.sub(r'[\r\n"]', "", str(v)).strip()
+        new = f'{k}="{v}"' if k in WF_QUOTED else f"{k}={v}"
+        for i, line in enumerate(lines):
+            if re.match(rf"^\s*#?\s*{k}\s*=", line) and (not line.lstrip().startswith("#") or k in ("admin_steam_ids", "op_steam_ids")):
+                lines[i] = new
+                break
+        else:
+            lines.append(new)
+    return "\n".join(lines) + "\n"
+
+
+async def _wf_write(container: str, changes: dict) -> None:
+    import base64
+    text = await _wf_read(container)
+    if text is None:
+        raise HTTPException(409, "server_config.cfg gibt es noch nicht – Server installiert sich noch")
+    data = base64.b64encode(_wf_apply(text, changes).encode()).decode()
+    out = await docker_api.exec_cmd(container, ["sh", "-c", f"echo {data} | base64 -d > {WF_CFG}.new && "
+                                                             f"chown 99:100 {WF_CFG}.new 2>/dev/null; mv {WF_CFG}.new {WF_CFG} && echo OK"])
+    if "OK" not in out:
+        raise HTTPException(502, f"Konnte Konfiguration nicht schreiben: {out.strip()[:200]}")
+
+
+async def _wf_after_install(container: str, cfg: dict) -> None:
+    """Nach der ersten Installation Ports/Name/Passwort in server_config.cfg eintragen und neu starten."""
+    clean = {k: v for k, v in cfg.items() if v not in (None, "") or k == "password"}
+    for _ in range(360):            # bis zu 3 h
+        await asyncio.sleep(30)
+        try:
+            if await _wf_read(container) is not None:
+                await asyncio.sleep(20)
+                await _wf_write(container, clean)
+                await docker_api.action(container, "restart")
+                log.info("%s: Wreckfest-Konfiguration eingetragen", container)
+                return
+        except (docker_api.DockerError, HTTPException):
+            continue
+
+
+def _wf_server(sid: str) -> dict:
+    s = get_server(sid)
+    if game_of(s) != "wreckfest" or not s.get("container"):
+        raise HTTPException(400, "Nur für Wreckfest-Server mit zugeordnetem Container")
+    return s
+
+
+@app.get("/api/servers/{sid}/wreckfest/config", dependencies=auth)
+async def wf_config_get(sid: str):
+    s = _wf_server(sid)
+    try:
+        text = await _wf_read(s["container"])
+        info = await docker_api.inspect(s["container"])
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    vals = _wf_values(text or "")
+    q = vals.get("query_port", "")
+    binds = (info.get("HostConfig") or {}).get("PortBindings") or {}
+    q_host = ((binds.get(f"{q}/udp") or [{}])[0] or {}).get("HostPort")
+    lan_ok = q.isdigit() and (26900 <= int(q) <= 26905 or (27015 <= int(q) <= 27020)) and q_host == q
+    return {"exists": text is not None, "values": vals, "labels": WF_KEYS, "lan_ok": lan_ok,
+            "managed": (info.get("Config", {}).get("Labels") or {}).get("gsm.managed") == "1"}
+
+
+class WfConfigIn(BaseModel):
+    values: dict[str, str]
+    restart: bool = True
+
+
+@app.put("/api/servers/{sid}/wreckfest/config", dependencies=auth)
+async def wf_config_put(sid: str, data: WfConfigIn):
+    s = _wf_server(sid)
+    changes = {k: v for k, v in data.values.items() if k in WF_KEYS and k not in ("game_port", "query_port", "steam_port")}
+    if "admin_steam_ids" in changes:
+        changes["admin_steam_ids"] = re.sub(r"[^0-9,]", "", changes["admin_steam_ids"])
+    try:
+        await _wf_write(s["container"], changes)
+        if data.restart:
+            await docker_api.action(s["container"], "restart")
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    return {"ok": True}
+
+
+@app.post("/api/servers/{sid}/wreckfest/lan", dependencies=auth)
+async def wf_lan_fix(sid: str):
+    """Query-Port in den LAN-Suchbereich 26900–26905 legen, Ports innen = außen, Container neu erstellen."""
+    s = _wf_server(sid)
+    name = s["container"]
+    try:
+        info = await docker_api.inspect(name)
+        if (info.get("Config", {}).get("Labels") or {}).get("gsm.managed") != "1":
+            raise HTTPException(400, "Nur für Container, die dieses Tool angelegt hat")
+        text = await _wf_read(name)
+        if text is None:
+            raise HTTPException(409, "server_config.cfg gibt es noch nicht – Server installiert sich noch")
+        vals = _wf_values(text)
+        used = await docker_api.used_host_ports()
+        own = {int(b["HostPort"]) for lst in ((info.get("HostConfig") or {}).get("PortBindings") or {}).values()
+               for b in (lst or []) if str(b.get("HostPort", "")).isdigit()}
+        free = lambda p: p not in used or p in own  # noqa: E731
+        q = next((p for p in range(26900, 26906) if free(p)), None)
+        if q is None:
+            raise HTTPException(409, "Alle LAN-Query-Ports 26900–26905 sind belegt")
+        gport = int(vals.get("game_port") or s.get("game_port") or 33540)
+        sport = next(p for p in range(27115, 27200) if free(p) and p != q)
+        await _wf_write(name, {"query_port": q, "steam_port": sport, "game_port": gport})
+
+        def mutate(cfg, hc):
+            web = (hc.get("PortBindings") or {}).get("8080/tcp")
+            hc["PortBindings"] = {f"{gport}/udp": [{"HostPort": str(gport)}], f"{q}/udp": [{"HostPort": str(q)}],
+                                  f"{sport}/udp": [{"HostPort": str(sport)}]}
+            cfg["ExposedPorts"] = {f"{gport}/udp": {}, f"{q}/udp": {}, f"{sport}/udp": {}}
+            if web:
+                hc["PortBindings"]["8080/tcp"] = web
+                cfg["ExposedPorts"]["8080/tcp"] = {}
+        await docker_api.recreate(name, mutate)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    await _set_server_fields(sid, port=q, game_port=gport)
+    return {"ok": True, "query_port": q, "steam_port": sport, "game_port": gport}
 
 
 @app.post("/api/create", dependencies=auth)

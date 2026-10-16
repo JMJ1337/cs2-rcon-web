@@ -303,3 +303,5 @@ span.joinbtn{background:var(--panel2);color:var(--text);border:1px solid var(--l
 .glogo.fail img{display:none}
 .glogo.fail .gbadge{display:inline-flex}
 @media (max-width:520px){.dash{grid-template-columns:1fr}.mthumb{width:110px}}
+.wfgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 14px}
+.wfgrid label{font-size:12px;color:var(--muted)}

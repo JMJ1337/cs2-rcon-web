@@ -150,7 +150,7 @@ $("#btnLogout").onclick = async () => { await api("/api/logout", {method:"POST"}
 /* ================= Navigation ================= */
 $$(".nav [data-view]").forEach(b => b.onclick = () => showView(b.dataset.view));
 function showView(v){
-  view = v;
+  view = v; wfLoadedFor = null;
   if (v !== "server"){ current = null; stopPoll(); stopCt(); }
   $$(".nav [data-view]").forEach(b => b.classList.toggle("active", b.dataset.view === v));
   VIEWS.forEach(x => $("#view-"+x).classList.toggle("hidden", x !== v));
@@ -1137,12 +1137,48 @@ function renderGeneric(st){
   $("#gActHint").textContent = g === "valheim" ? "Valheim hat keine Remote-Konsole – Neustart und Logs über den Container-Tab." :
     g === "wreckfest" ? "Wreckfest hat keine Remote-Konsole. Die Server-Konsole erreichst du über „Webkonsole ↗“ oben rechts (beim ich777-Image), Neustart und Logs über den Container-Tab." :
     g === "satisfactory" && st.privilege === "Client" ? "Ohne Admin-Passwort nur Lesezugriff – Passwort unter „Bearbeiten“ eintragen." : "";
+  if (g === "wreckfest") loadWfConfig(); else $("#wfPanel").classList.add("hidden");
   const list = st.players || [];
   $("#playerRows").innerHTML = list.length ? list.map(p => `<tr><td></td><td class="name">${esc(p.name)}</td><td colspan="2"></td><td class="mono">${esc(p.time || "")}</td><td colspan="3"></td></tr>`).join("")
     : `<tr><td colspan="8" class="muted">${st.humans ? `${st.humans} Spieler online (Namen liefert dieses Spiel nicht)` : "Keine Spieler verbunden."}</td></tr>`;
   $("#stUpdated").textContent = "aktualisiert " + new Date().toLocaleTimeString("de-DE");
   renderHistory();
 }
+/* Wreckfest: server_config.cfg bearbeiten + LAN-Sichtbarkeit */
+let wfLoadedFor = null;
+const WF_FIELDS = [["server_name","Servername"],["password","Passwort (leer = keins)"],["max_players","Max. Spieler"],["welcome_message","Begrüßung"],
+  ["gamemode","Spielmodus"],["track","Strecke (leer = Rotation)"],["laps","Runden"],["bots","Bots"],
+  ["admin_steam_ids","Admin-SteamIDs (SteamID64, kommagetrennt)"],["op_steam_ids","Moderator-SteamIDs"]];
+async function loadWfConfig(force){
+  if (!me || me.role !== "admin") return;
+  if (!force && wfLoadedFor === current.id) return;
+  wfLoadedFor = current.id;
+  let r;
+  try { r = await api(`/api/servers/${current.id}/wreckfest/config`); } catch (e) { $("#wfPanel").classList.add("hidden"); return; }
+  $("#wfPanel").classList.remove("hidden");
+  if (!r.exists){ $("#wfFields").innerHTML = `<div class="hint">Server installiert sich noch – Einstellungen erscheinen danach.</div>`; $("#wfLan").innerHTML = ""; return; }
+  const v = r.values;
+  $("#wfFields").innerHTML = WF_FIELDS.map(([k, l]) => `<div><label>${esc(l)}</label><input data-wf="${k}" value="${esc(v[k] ?? "")}" ${k === "gamemode" ? 'list="wfModes"' : ""}></div>`).join("");
+  $("#wfLan").innerHTML = r.lan_ok
+    ? `<span class="pill ok">LAN-Suche: Query-Port ${esc(v.query_port)} – im Spiel unter „LAN“ sichtbar</span> <span class="hint">Spielport ${esc(v.game_port || "")}</span>`
+    : `<div class="pill warn" style="margin-bottom:6px">Im LAN-Reiter von Wreckfest nicht sichtbar (Query-Port ${esc(v.query_port || "?")})</div>
+       <div class="hint" style="margin-bottom:6px">Wreckfest wird in der LAN-Suche nur auf den Query-Ports 26900–26905 bzw. 27015–27020 gefunden – letztere belegen die CS2-Server.</div>
+       ${r.managed ? `<button class="primary" id="btnWfLan">LAN-Sichtbarkeit einrichten (Container wird neu erstellt)</button>` : `<span class="hint">Container nicht vom Tool angelegt – query_port in server_config.cfg und Port-Freigabe selbst anpassen.</span>`}`;
+  const lb = $("#btnWfLan");
+  if (lb) lb.onclick = async () => {
+    if (!confirm("Wreckfest-Container wird gestoppt und mit neuen Ports neu erstellt (Daten bleiben). Fortfahren?")) return;
+    lb.disabled = true; lb.textContent = "wird eingerichtet …";
+    try { const x = await api(`/api/servers/${current.id}/wreckfest/lan`, {method: "POST"}); toast(`LAN-Suche eingerichtet: Query-Port ${x.query_port}`); await loadServers(); }
+    catch (e) { toast(e.message, true); }
+    loadWfConfig(true);
+  };
+}
+$("#btnWfSave").onclick = async () => {
+  const values = {};
+  $$("[data-wf]").forEach(i => values[i.dataset.wf] = i.value.trim());
+  try { await api(`/api/servers/${current.id}/wreckfest/config`, {method: "PUT", body: {values, restart: true}}); toast("Gespeichert – Wreckfest startet neu"); }
+  catch (e) { toast(e.message, true); }
+};
 $("#btnGSave").onclick = async () => {
   try { const r = await api(`/api/servers/${current.id}/save`, {body:{name: $("#gSaveName").value.trim()}}); toast(r.output || "Gespeichert"); $("#gSaveName").value = ""; }
   catch(err){ toast(err.message, true); }
