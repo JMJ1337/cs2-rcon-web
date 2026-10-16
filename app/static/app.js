@@ -61,6 +61,9 @@ const SETTINGS = [
 ];
 
 let servers = [], current = null, tab = "overview", view = "dash";
+let GAMES = {}, dockerOn = false, me = null, ctTimer = null;
+const gameOf = s => (s && GAMES[s.game] ? s.game : "cs2");
+const gbadge = g => GAMES[g] ? `<span class="gbadge" style="background:${GAMES[g].color}">${esc(GAMES[g].short)}</span>` : "";
 let pollTimer = null, dashTimer = null;
 let settings = {modes: [], map_rules: []}, presets = {}, players = [], favs = [];
 let loadedSettings = {};
@@ -103,7 +106,7 @@ const fmtDate = t => new Date(t*1000).toLocaleString("de-DE", {day:"2-digit",mon
 function showLogin(){ stopPoll(); clearInterval(dashTimer); $("#app").classList.add("hidden"); $("#login").classList.remove("hidden"); $("#loginPw").focus(); }
 $("#loginForm").addEventListener("submit", async e => {
   e.preventDefault(); $("#loginErr").textContent = "";
-  try { await api("/api/login", {body:{password: $("#loginPw").value}}); $("#loginPw").value = ""; start(); }
+  try { await api("/api/login", {body:{username: $("#loginUser").value.trim() || "admin", password: $("#loginPw").value}}); $("#loginPw").value = ""; start(); }
   catch(err){ $("#loginErr").textContent = err.message; }
 });
 $("#btnLogout").onclick = async () => { await api("/api/logout", {method:"POST"}); showLogin(); };
@@ -112,9 +115,12 @@ $("#btnLogout").onclick = async () => { await api("/api/logout", {method:"POST"}
 $$(".nav [data-view]").forEach(b => b.onclick = () => showView(b.dataset.view));
 function showView(v){
   view = v;
-  if (v !== "server"){ current = null; stopPoll(); }
+  if (v !== "server"){ current = null; stopPoll(); stopCt(); }
   $$(".nav [data-view]").forEach(b => b.classList.toggle("active", b.dataset.view === v));
-  ["dash","players","auto","server"].forEach(x => $("#view-"+x).classList.toggle("hidden", x !== v));
+  VIEWS.forEach(x => $("#view-"+x).classList.toggle("hidden", x !== v));
+  if (v === "scan") loadScan();
+  if (v === "create") initCreate();
+  if (v === "users") loadUsers();
   renderServerList();
   if (v === "dash") refreshDash();
   if (v === "players") loadPlayers();
@@ -133,10 +139,11 @@ function stateOf(id){ return overview.find(o => o.server.id === id) || {}; }
 function renderServerList(){
   $("#serverList").innerHTML = servers.length ? servers.map(s => {
     const st = stateOf(s.id);
-    const cnt = st.online ? `${st.humans ?? 0}/${st.visible_players > 0 ? st.visible_players : (st.max_players ?? "?")}` : "";
+    const lim = st.visible_players > 0 ? st.visible_players : st.max_players;
+    const cnt = st.online ? `${st.humans ?? 0}${lim ? "/" + lim : ""}` : "";
     return `<div class="srv ${current && current.id===s.id ? "active":""}" data-id="${esc(s.id)}">
       <span class="dot ${st.online===true?"on":st.online===false?"off":""}"></span>
-      <div class="meta"><div class="n">${esc(s.name)}</div><div class="h">${esc(st.map || s.host+":"+s.port)}</div></div>
+      <div class="meta"><div class="n">${esc(s.name)}</div><div class="h">${GAMES[gameOf(s)] ? esc(GAMES[gameOf(s)].short) + " · " : ""}${esc(st.map || s.host+":"+s.port)}</div></div>
       <span class="cnt">${esc(cnt)}</span></div>`;
   }).join("") : `<div class="muted" style="padding:10px 16px">Keine Server angelegt.</div>`;
   $$(".srv").forEach(el => el.onclick = () => selectServer(servers.find(s => s.id === el.dataset.id)));
@@ -156,16 +163,22 @@ async function refreshDash(){
     const pct = slots ? Math.min(100, Math.round((o.humans||0) / slots * 100)) : 0;
     const mz = o.matchzy && o.matchzy.match ? `${esc(o.matchzy.match.team1||"")} vs ${esc(o.matchzy.match.team2||"")} · ${esc(o.matchzy.match.state||"")}` : (o.matchzy && o.matchzy.installed ? "kein Match geladen" : "–");
     return `<div class="dcard" data-id="${esc(s.id)}">
-      <div class="top"><span class="dot ${o.online===true?"on":o.online===false?"off":""}"></span><b>${esc(s.name)}</b><span class="hint mono">${esc(s.host)}:${esc(s.port)}</span></div>
-      ${o.online ? `
+      <div class="top"><span class="dot ${o.online===true?"on":o.online===false?"off":""}"></span>${gbadge(gameOf(s))}<b>${esc(s.name)}</b><span class="hint mono">${esc(s.host)}:${esc(s.port)}</span></div>
+      ${o.online ? (gameOf(s) === "cs2" ? `
       <div class="kv">
         <span>Map</span><span title="${esc(o.map)}">${esc((o.workshop && o.workshop.title) || o.map || "?")}</span>
         <span>Modus</span><span>${esc(o.mode ? o.mode.label : "?")}</span>
         <span>Spieler</span><span>${o.humans ?? 0} / ${slots || "?"}${o.bots ? ` (+${o.bots} Bots)` : ""}</span>
         <span>MatchZy</span><span>${mz}</span>
-      </div>
+      </div>` : `
+      <div class="kv">
+        <span>${gameOf(s) === "satisfactory" ? "Session" : "Welt"}</span><span>${esc(o.map || "–")}</span>
+        <span>Spieler</span><span>${o.humans ?? 0}${o.max_players ? " / " + o.max_players : ""}</span>
+        ${Object.entries(o.extra || {}).filter(([k]) => !["Session","Servername"].includes(k)).slice(0, 2).map(([k,v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join("")}
+      </div>`) + `
       <div class="bar"><i style="width:${pct}%"></i></div>
-      ${o.auto && o.auto.capped ? `<span class="pill warn">Slots begrenzt auf ${o.max_players} – SLOTS im Stack erhöhen</span>` : ""}`
+      ${o.auto && o.auto.capped ? `<span class="pill warn">Slots begrenzt auf ${o.max_players} – SLOTS im Stack erhöhen</span>` : ""}
+      ${o.unclaimed ? `<span class="pill warn">Satisfactory: noch nicht beansprucht</span>` : ""}`
       : `<div class="hint">${esc(o.error || (o.online === false ? "offline" : "noch nicht abgefragt"))}</div>`}
     </div>`;
   }).join("");
@@ -173,14 +186,24 @@ async function refreshDash(){
 }
 
 /* ================= Server-Ansicht ================= */
+const VIEWS = ["dash","players","auto","server","scan","create","users"];
+function applyGameClasses(s){
+  const g = gameOf(s), meta = GAMES[g] || {};
+  document.body.classList.toggle("g-other", g !== "cs2");
+  document.body.classList.toggle("no-console", !meta.console);
+  document.body.classList.toggle("no-container", !(dockerOn && s.container));
+}
 function selectServer(s){
   if (!s) return showView("dash");
   current = s; view = "server";
   $$(".nav [data-view]").forEach(b => b.classList.remove("active"));
-  ["dash","players","auto"].forEach(x => $("#view-"+x).classList.add("hidden"));
+  VIEWS.filter(x => x !== "server").forEach(x => $("#view-"+x).classList.add("hidden"));
   $("#view-server").classList.remove("hidden");
+  applyGameClasses(s);
+  const g = gameOf(s);
+  if ((g !== "cs2" && ["maps","match","settings"].includes(tab)) || (tab === "console" && !GAMES[g].console) || (tab === "container" && !(dockerOn && s.container))) tab = "overview";
   renderServerList();
-  $("#svTitle").textContent = s.name;
+  $("#svTitle").innerHTML = `${gbadge(gameOf(s))} ${esc(s.name)}`;
   $("#svSub").textContent = `${s.host}:${s.port}${s.notes ? " · " + s.notes : ""}${s.auto_slots === false ? " · Automatik aus" : ""}`;
   resetOverview();
   $("#consoleOut").innerHTML = "";
@@ -191,8 +214,9 @@ $$("#tabs [data-tab]").forEach(b => b.onclick = () => setTab(b.dataset.tab));
 function setTab(t){
   tab = t;
   $$("#tabs [data-tab]").forEach(b => b.classList.toggle("active", b.dataset.tab===t));
-  ["overview","maps","match","console","settings"].forEach(x => $("#tab-"+x).classList.toggle("hidden", x!==t));
-  stopPoll();
+  ["overview","maps","match","console","settings","container"].forEach(x => $("#tab-"+x).classList.toggle("hidden", x!==t));
+  stopPoll(); stopCt();
+  if (t === "container"){ refreshContainer(); ctTimer = setInterval(refreshContainer, 5000); }
   if (t === "overview"){ refreshStatus(); pollTimer = setInterval(refreshStatus, 5000); }
   if (t === "maps") renderFavs();
   if (t === "match") initMatch();
@@ -215,6 +239,8 @@ async function refreshStatus(){
     const st = await api(`/api/servers/${id}/status`);
     if (!current || current.id !== id) return;
     lastStatus = st;
+    if (gameOf(current) !== "cs2") return renderGeneric(st);
+    $("#stMapLabel").textContent = "Map";
     $("#stOnline").textContent = st.hibernating ? "Online (idle)" : "Online";
     $("#stOnline").style.color = "var(--ok)";
     $("#stVersion").textContent = st.version ? "Version " + st.version.split(" ")[0] : "";
@@ -642,6 +668,8 @@ function renderAuto(){
   $("#setPublicUrl").value = settings.public_url || "";
   $("#setPublicUrl").placeholder = "leer = " + location.origin;
   $("#setInterval").value = settings.watch_interval || 10;
+  $("#setScanInterval").value = settings.scan_interval ?? 15;
+  $("#setScanSubnets").value = settings.scan_subnets || "";
   $$("[data-mdel]").forEach(b => b.onclick = () => { readAuto(); settings.modes.splice(+b.dataset.mdel, 1); renderAuto(); });
   $$("[data-rdel]").forEach(b => b.onclick = () => { readAuto(); settings.map_rules.splice(+b.dataset.rdel, 1); renderAuto(); });
 }
@@ -656,7 +684,8 @@ $("#btnAutoSave").onclick = async () => {
   readAuto();
   try {
     settings = await api("/api/settings", {method:"PUT", body:{modes: settings.modes, map_rules: settings.map_rules,
-      public_url: $("#setPublicUrl").value.trim(), watch_interval: parseInt($("#setInterval").value, 10) || 10}});
+      public_url: $("#setPublicUrl").value.trim(), watch_interval: parseInt($("#setInterval").value, 10) || 10,
+      scan_interval: Math.max(0, parseInt($("#setScanInterval").value, 10) || 0), scan_subnets: $("#setScanSubnets").value.trim()}});
     renderAuto(); refreshModeSelects(); toast("Gespeichert – wird beim nächsten Prüfen angewendet");
   } catch(err){ toast(err.message, true); }
 };
@@ -673,6 +702,10 @@ function openServerDialog(s){
   $("#dlgTitle").textContent = s ? "Server bearbeiten" : "Server hinzufügen";
   f.name.value = s?.name || ""; f.host.value = s?.host || ""; f.port.value = s?.port || 27015;
   f.password.value = ""; f.notes.value = s?.notes || ""; f.auto_slots.checked = s ? s.auto_slots !== false : true;
+  $("#dlgGame").innerHTML = Object.entries(GAMES).map(([k,g]) => `<option value="${k}">${esc(g.label)}</option>`).join("");
+  f.game.value = gameOf(s);
+  fillContainerSelect(s?.container || "");
+  dlgGameChanged(!s);
   $("#pwHint").textContent = s ? "(leer lassen = unverändert)" : "";
   $("#btnDelete").classList.toggle("hidden", !s);
   $("#dlgServer").showModal();
@@ -683,7 +716,7 @@ $("#btnCancel").onclick = () => $("#dlgServer").close();
 function formData(){
   const f = $("#serverForm");
   return {name: f.name.value.trim(), host: f.host.value.trim(), port: parseInt(f.port.value, 10), password: f.password.value,
-          notes: f.notes.value.trim(), auto_slots: f.auto_slots.checked};
+          notes: f.notes.value.trim(), auto_slots: f.auto_slots.checked, game: f.game.value, container: f.container.value};
 }
 $("#serverForm").addEventListener("submit", async e => {
   e.preventDefault();
@@ -725,10 +758,226 @@ $("#broadcastForm").addEventListener("submit", async e => {
   } catch(err){ $("#bcResult").innerHTML = `<span style="color:var(--bad)">${esc(err.message)}</span>`; }
 });
 
+
+/* ================= Andere Spiele (Factorio, Satisfactory, Valheim) ================= */
+function renderGeneric(st){
+  const g = gameOf(current), meta = GAMES[g];
+  $("#stOnline").textContent = "Online"; $("#stOnline").style.color = "var(--ok)";
+  $("#stVersion").textContent = st.version ? "Version " + st.version : "";
+  $("#stMapLabel").textContent = g === "satisfactory" ? "Session" : "Welt";
+  $("#stMap").textContent = st.map || "–"; $("#stMapSub").textContent = st.hostname || "";
+  $("#stMapImg").classList.add("hidden");
+  $("#stMode").textContent = meta.label; $("#stRounds").textContent = "";
+  $("#stPlayers").textContent = `${st.humans ?? 0}${st.max_players ? " / " + st.max_players : ""}`;
+  $("#stAuto").textContent = ""; $("#stAuto").style.color = "";
+  $("#gExtra").innerHTML = Object.entries(st.extra || {}).map(([k,v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join("") || `<span class="hint">Keine weiteren Infos</span><span></span>`;
+  const canSave = meta.features.includes("save");
+  $("#gSaveRow").classList.toggle("hidden", !canSave);
+  $("#gClaim").classList.toggle("hidden", !st.unclaimed);
+  $("#gActHint").textContent = g === "valheim" ? "Valheim hat keine Remote-Konsole – Neustart und Logs über den Container-Tab." :
+    g === "satisfactory" && st.privilege === "Client" ? "Ohne Admin-Passwort nur Lesezugriff – Passwort unter „Bearbeiten“ eintragen." : "";
+  const list = st.players || [];
+  $("#playerRows").innerHTML = list.length ? list.map(p => `<tr><td></td><td class="name">${esc(p.name)}</td><td colspan="2"></td><td class="mono">${esc(p.time || "")}</td><td colspan="3"></td></tr>`).join("")
+    : `<tr><td colspan="8" class="muted">${st.humans ? `${st.humans} Spieler online (Namen liefert dieses Spiel nicht)` : "Keine Spieler verbunden."}</td></tr>`;
+  $("#stUpdated").textContent = "aktualisiert " + new Date().toLocaleTimeString("de-DE");
+}
+$("#btnGSave").onclick = async () => {
+  try { const r = await api(`/api/servers/${current.id}/save`, {body:{name: $("#gSaveName").value.trim()}}); toast(r.output || "Gespeichert"); $("#gSaveName").value = ""; }
+  catch(err){ toast(err.message, true); }
+};
+$("#btnGClaim").onclick = async () => {
+  const name = $("#gClaimName").value.trim(), pw = $("#gClaimPw").value;
+  if (!name || !pw) return toast("Servername und Admin-Passwort angeben", true);
+  try { await api(`/api/servers/${current.id}/claim`, {body:{server_name: name, admin_password: pw}}); toast("Server beansprucht – Passwort gespeichert"); $("#gClaimPw").value = ""; refreshStatus(); }
+  catch(err){ toast(err.message, true); }
+};
+
+/* ================= Container ================= */
+function stopCt(){ if (ctTimer){ clearInterval(ctTimer); ctTimer = null; } }
+async function refreshContainer(){
+  if (!current) return;
+  try {
+    const c = await api(`/api/servers/${current.id}/container`);
+    $("#ctName").textContent = c.name; $("#ctImage").textContent = c.image || "";
+    $("#ctState").textContent = c.state || "?"; $("#ctState").style.color = c.state === "running" ? "var(--ok)" : "var(--bad)";
+    $("#ctSince").textContent = c.started && c.state === "running" ? "seit " + new Date(c.started).toLocaleString("de-DE") : (c.restarts ? `${c.restarts} Neustarts` : "");
+    $("#ctCpu").textContent = c.stats && c.stats.cpu != null ? c.stats.cpu + " %" : "–";
+    $("#ctMem").textContent = c.stats && c.stats.mem_mb != null ? (c.stats.mem_mb >= 1024 ? (c.stats.mem_mb/1024).toFixed(1) + " GB" : c.stats.mem_mb + " MB") : "–";
+    $("#ctMemLimit").textContent = c.stats && c.stats.mem_limit_mb ? "von " + (c.stats.mem_limit_mb/1024).toFixed(1) + " GB" : "";
+  } catch(err){ $("#ctState").textContent = "Fehler"; $("#ctSince").textContent = err.message; }
+  if ($("#ctFollow").checked) loadLogs();
+}
+async function loadLogs(){
+  try {
+    const r = await api(`/api/servers/${current.id}/container/logs?tail=300`);
+    const box = $("#ctLogs"), atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+    box.textContent = r.logs.replace(/\x1b\[[0-9;]*m/g, "");
+    if (atEnd) box.scrollTop = box.scrollHeight;
+  } catch(err){ $("#ctLogs").textContent = err.message; }
+}
+$("#btnCtLogs").onclick = loadLogs;
+$$("[data-ct]").forEach(b => b.onclick = async () => {
+  const act = b.dataset.ct, label = {start:"starten", stop:"stoppen", restart:"neu starten"}[act];
+  if (act !== "start" && !confirm(`Container ${current.container} wirklich ${label}?`)) return;
+  b.disabled = true;
+  try { await api(`/api/servers/${current.id}/container/${act}`, {method:"POST"}); toast(`Container wird ${label === "starten" ? "gestartet" : label === "stoppen" ? "gestoppt" : "neu gestartet"}`); setTimeout(refreshContainer, 1500); }
+  catch(err){ toast(err.message, true); }
+  finally { b.disabled = false; }
+});
+async function fillContainerSelect(selected){
+  const sel = $("#dlgContainer");
+  sel.innerHTML = `<option value="">– keiner –</option>` + (selected ? `<option value="${esc(selected)}">${esc(selected)}</option>` : "");
+  sel.value = selected || "";
+  if (!dockerOn){ sel.disabled = true; sel.title = "Docker-Socket nicht eingebunden"; return; }
+  try {
+    const list = await api("/api/docker/containers");
+    sel.innerHTML = `<option value="">– keiner –</option>` + list.map(c => `<option value="${esc(c.name)}">${esc(c.name)} · ${esc(c.image)} · ${esc(c.state)}</option>`).join("");
+    sel.value = selected || "";
+  } catch {}
+}
+function dlgGameChanged(setDefaults){
+  const f = $("#serverForm"), g = GAMES[f.game.value] || GAMES.cs2;
+  $("#dlgPortLabel").textContent = g.port_label;
+  $("#dlgPwLabel").textContent = g.password_label;
+  if (setDefaults) f.port.value = g.default_port;
+  $("#dlgAutoRow").classList.toggle("hidden", f.game.value !== "cs2");
+}
+$("#dlgGame").addEventListener("change", () => dlgGameChanged(true));
+
+/* ================= Netzwerk-Scan ================= */
+let scanTimer = null;
+async function loadScan(){
+  try { renderScan(await api("/api/scan")); } catch(err){ toast(err.message, true); }
+}
+function renderScan(r){
+  const nets = r.subnets && r.subnets.length ? r.subnets : r.planned;
+  $("#scanSub").textContent = r.running ? `Scanne ${nets.join(", ")} …` :
+    r.last ? `Letzter Scan ${new Date(r.last*1000).toLocaleTimeString("de-DE")} (${r.duration}s) · Netze: ${nets.join(", ") || "–"}` : `Noch kein Scan · geplante Netze: ${nets.join(", ") || "– (bitte Subnetz eintragen)"}`;
+  $("#scanInfo").textContent = `Automatischer Scan: ${settings.scan_interval > 0 ? "alle " + settings.scan_interval + " Minuten" : "aus"} (einstellbar unter „Automatik & Einstellungen“)` + (r.error ? ` · Fehler: ${r.error}` : "");
+  const res = r.results || [];
+  const neu = res.filter(x => !x.known).length;
+  $("#scanBadge").textContent = neu; $("#scanBadge").classList.toggle("hidden", !neu);
+  $("#scanRows").innerHTML = res.length ? res.map((x, i) => `<tr>
+    <td>${gbadge(x.game)}</td><td>${esc(x.name || "")}</td>
+    <td class="mono">${x.host ? esc(x.host) + ":" + x.port : (x.ports || []).map(esc).join(", ") || "–"}</td>
+    <td>${esc(x.map || "")}</td><td class="mono">${x.players != null ? x.players + (x.max_players ? "/" + x.max_players : "") : "–"}</td>
+    <td><span class="pill">${esc(x.source)}</span></td>
+    <td>${x.known ? `<span class="pill ok">bereits in der Liste</span>` : `<button class="small primary adminonly" data-adopt="${i}">Übernehmen</button>`}</td></tr>`).join("")
+    : `<tr><td colspan="7" class="muted">${r.running ? "Suche läuft …" : "Nichts gefunden."}</td></tr>`;
+  $$("[data-adopt]").forEach(b => b.onclick = () => adopt(res[+b.dataset.adopt]));
+  clearTimeout(scanTimer);
+  if (r.running && view === "scan") scanTimer = setTimeout(loadScan, 2000);
+}
+$("#btnScan").onclick = async () => {
+  try { renderScan(await api("/api/scan", {method:"POST"})); } catch(err){ toast(err.message, true); }
+};
+function adopt(x){
+  openServerDialog(null);
+  const f = $("#serverForm");
+  f.game.value = x.game; dlgGameChanged(true);
+  f.name.value = x.name || x.container || "";
+  if (x.host){ f.host.value = x.host; f.port.value = x.port; }
+  else {
+    f.host.value = location.hostname;
+    const p = (x.ports || []).map(p => p.split("/")).find(([, t]) => t === (x.game === "valheim" ? "udp" : "tcp"));
+    if (p) f.port.value = x.game === "valheim" ? (+p[0] + (x.ports.length > 1 ? 0 : 1)) : p[0];
+  }
+  if (x.container) setTimeout(() => { $("#dlgContainer").value = x.container; }, 600);
+  toast(GAMES[x.game].password_label.startsWith("–") ? "Daten prüfen und speichern" : `Bitte noch ${GAMES[x.game].password_label} eintragen`);
+}
+
+/* ================= Neuen Server anlegen ================= */
+let tpl = null, createGame = "cs2", jobTimer = null;
+async function initCreate(){
+  try { tpl = await api("/api/templates"); } catch(err){ return toast(err.message, true); }
+  $("#createNoDocker").classList.toggle("hidden", tpl.docker);
+  $("#createNoDocker").innerHTML = `<b style="color:var(--accent)">Docker-Socket nicht eingebunden.</b> <span class="hint">Zum Anlegen und Steuern von Containern muss der Stack <code>/var/run/docker.sock</code> mounten (ist in <code>portainer-stack.yml</code> vorbereitet).</span>`;
+  $("#createGameSeg").innerHTML = Object.entries(tpl.templates).map(([k,t]) => `<button data-cg="${k}" class="${k===createGame?"active":""}">${esc(t.label)}</button>`).join("");
+  $$("#createGameSeg [data-cg]").forEach(b => b.onclick = () => { createGame = b.dataset.cg; initCreate(); });
+  const t = tpl.templates[createGame];
+  const sameGame = servers.filter(s => gameOf(s) === createGame).length, n = sameGame + 1;
+  const fill = v => String(v).replace("{n}", n).replace("{port}", 27014 + n).replace("{tvport}", 27020 + n);
+  $("#createFields").innerHTML = t.fields.map(([k, label, type, def, hint]) => `<div class="field"><label>${esc(label)}</label>${
+    type === "select" ? `<select data-cf="${k}">${hint.split(",").map(o => `<option ${o===def?"selected":""}>${o}</option>`).join("")}</select>`
+    : `<input data-cf="${k}" type="${type==="password"?"password":"text"}" value="${esc(fill(def))}" ${type==="number"?'inputmode="numeric"':""} autocomplete="off">`
+  }${hint && type !== "select" ? `<div class="hint">${esc(hint)}</div>` : ""}</div>`).join("");
+  const upd = () => { const name = ($('[data-cf="name"]') || {}).value || ""; $("#createDataDir").value = t.data_default.replace("{n}", n).replace("{name}", name); };
+  upd(); $('[data-cf="name"]').addEventListener("input", upd);
+  $("#createHost").value = (settings.public_url || "").replace(/^https?:\/\//, "").split(/[:/]/)[0] || location.hostname;
+  $("#createHint").textContent = `Image: ${t.image} · Der Ordner wird auf dem Docker-Host angelegt und für UID ${t.uid} beschreibbar gemacht.`;
+}
+$("#btnCreate").onclick = async () => {
+  const values = Object.fromEntries($$("[data-cf]").map(i => [i.dataset.cf, i.value.trim()]));
+  if (!confirm(`${tpl.templates[createGame].label}-Server „${values.name}“ anlegen und starten?\nDaten: ${$("#createDataDir").value}`)) return;
+  try {
+    const job = await api("/api/create", {body:{game: createGame, values, data_dir: $("#createDataDir").value.trim(), host: $("#createHost").value.trim()}});
+    $("#createJob").classList.remove("hidden"); $("#btnCreateOpen").classList.add("hidden");
+    pollJob(job.id);
+  } catch(err){ toast(err.message, true); }
+};
+function pollJob(id){
+  clearTimeout(jobTimer);
+  api(`/api/jobs/${id}`).then(async j => {
+    $("#createStep").textContent = j.error ? "Fehler: " + j.error : j.done ? "Fertig ✓" : j.step;
+    $("#createStep").style.color = j.error ? "var(--bad)" : j.done ? "var(--ok)" : "";
+    $("#createLog").textContent = j.log.join("\n");
+    if (j.server_id){ await loadServers(); $("#btnCreateOpen").classList.remove("hidden"); $("#btnCreateOpen").onclick = () => selectServer(servers.find(s => s.id === j.server_id)); }
+    if (!j.done) jobTimer = setTimeout(() => pollJob(id), 2000);
+  }).catch(err => { $("#createStep").textContent = err.message; });
+}
+
+/* ================= Benutzer ================= */
+async function loadUsers(){
+  try {
+    const r = await api("/api/users");
+    $("#uRole").innerHTML = Object.entries(r.roles).map(([k,l]) => `<option value="${k}" ${k==="user"?"selected":""}>${esc(l)}</option>`).join("");
+    $("#uRows").innerHTML = r.users.map(u => `<tr>
+      <td><b>${esc(u.username)}</b>${me && u.username === me.username ? ' <span class="pill">du</span>' : ""}</td>
+      <td><select data-urole="${esc(u.username)}">${Object.entries(r.roles).map(([k,l]) => `<option value="${k}" ${k===u.role?"selected":""}>${esc(l)}</option>`).join("")}</select></td>
+      <td>${u.created ? fmtDate(u.created) : "–"}</td><td>${u.last_login ? fmtDate(u.last_login) : "nie"}</td>
+      <td><button class="small" data-upw="${esc(u.username)}">Passwort setzen</button> <button class="small danger" data-udel="${esc(u.username)}">Löschen</button></td></tr>`).join("");
+    $$("[data-urole]").forEach(sel => sel.onchange = async () => {
+      try { await api(`/api/users/${sel.dataset.urole}`, {method:"PUT", body:{username: sel.dataset.urole, role: sel.value}}); toast("Rolle geändert"); }
+      catch(err){ toast(err.message, true); loadUsers(); }
+    });
+    $$("[data-upw]").forEach(b => b.onclick = async () => {
+      const pw = prompt(`Neues Passwort für ${b.dataset.upw} (min. 6 Zeichen):`); if (!pw) return;
+      try { await api(`/api/users/${b.dataset.upw}`, {method:"PUT", body:{username: b.dataset.upw, password: pw}}); toast("Passwort gesetzt – Benutzer muss sich neu anmelden"); }
+      catch(err){ toast(err.message, true); }
+    });
+    $$("[data-udel]").forEach(b => b.onclick = async () => {
+      if (!confirm(`Benutzer ${b.dataset.udel} löschen?`)) return;
+      try { await api(`/api/users/${b.dataset.udel}`, {method:"DELETE"}); loadUsers(); } catch(err){ toast(err.message, true); }
+    });
+  } catch(err){ toast(err.message, true); }
+}
+$("#btnUAdd").onclick = async () => {
+  try {
+    await api("/api/users", {body:{username: $("#uName").value.trim(), password: $("#uPw").value, role: $("#uRole").value}});
+    toast("Benutzer angelegt"); $("#uName").value = ""; $("#uPw").value = ""; loadUsers();
+  } catch(err){ toast(err.message, true); }
+};
+$("#btnMyPw").onclick = () => { $("#pwForm").reset(); $("#dlgPw").showModal(); };
+$("#btnPwCancel").onclick = () => $("#dlgPw").close();
+$("#pwForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const f = $("#pwForm");
+  if (f.new1.value !== f.new2.value) return toast("Neue Passwörter stimmen nicht überein", true);
+  try { await api("/api/me/password", {body:{old_password: f.old.value, new_password: f.new1.value}}); $("#dlgPw").close(); toast("Passwort geändert"); }
+  catch(err){ toast(err.message, true); }
+});
+
 /* ================= Start ================= */
 async function start(){
   $("#login").classList.add("hidden"); $("#app").classList.remove("hidden");
-  try { [settings, presets, favs] = await Promise.all([api("/api/settings"), api("/api/match/presets"), api("/api/workshop/favorites")]); } catch(err){ toast(err.message, true); }
+  try {
+    const [m, g] = await Promise.all([api("/api/me"), api("/api/games")]);
+    me = m.user; GAMES = g.games; dockerOn = g.docker;
+    document.body.classList.toggle("not-admin", !me || me.role !== "admin");
+    document.body.classList.toggle("viewer", me && me.role === "viewer");
+    $("#meName").textContent = me ? `${me.username} · ${me.role_label}` : "";
+    [settings, presets, favs] = await Promise.all([api("/api/settings"), api("/api/match/presets"), api("/api/workshop/favorites")]);
+  } catch(err){ toast(err.message, true); }
   refreshModeSelects();
   fillMapSelect("#mapSelect"); fillMapSelect("#qMap");
   $("#mapSelect").querySelector("optgroup[label^='★']")?.remove();

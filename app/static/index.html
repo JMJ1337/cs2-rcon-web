@@ -3,17 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CS2 RCON</title>
+<title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=2">
+<link rel="stylesheet" href="/static/app.css?v=3">
 </head>
 <body>
 
 <!-- Login -->
 <div id="login" class="hidden">
   <form id="loginForm">
-    <div class="logo">CS2 <span>RCON</span></div>
-    <div class="muted">Bitte mit dem Admin-Passwort anmelden.</div>
+    <div class="logo">Spielserver<span>manager</span></div>
+    <div class="muted">Bitte anmelden.</div>
+    <input id="loginUser" placeholder="Benutzername" autocomplete="username" value="admin">
     <input type="password" id="loginPw" placeholder="Passwort" autocomplete="current-password" autofocus>
     <button class="primary" type="submit">Anmelden</button>
     <div id="loginErr" style="color:var(--bad)"></div>
@@ -24,18 +25,22 @@
 <div id="app" class="hidden">
   <aside>
     <div class="head">
-      <div class="logo">CS2 <span>RCON</span></div>
+      <div class="logo">Spielserver<span>manager</span></div>
       <button class="small" id="btnLogout" title="Abmelden">Logout</button>
     </div>
+    <div class="hint" style="padding:8px 16px 0;display:flex;justify-content:space-between;align-items:center"><span id="meName"></span><button class="small" id="btnMyPw">Passwort</button></div>
     <div class="nav">
       <button data-view="dash" class="active">▦ Übersicht aller Server</button>
       <button data-view="players">☺ Spieler &amp; SteamIDs</button>
-      <button data-view="auto">⚙ Automatik &amp; Modi</button>
+      <button data-view="scan">⌕ Netzwerk-Scan <span class="pill hidden" id="scanBadge"></span></button>
+      <button data-view="create" class="adminonly">＋ Neuen Server anlegen</button>
+      <button data-view="users" class="adminonly">☰ Benutzer</button>
+      <button data-view="auto" class="adminonly">⚙ Automatik &amp; Einstellungen</button>
     </div>
     <div class="sect">Server</div>
     <div id="serverList"></div>
     <div class="foot">
-      <button class="primary" id="btnAdd">+ Server hinzufügen</button>
+      <button class="primary adminonly" id="btnAdd">+ Server hinzufügen</button>
       <button id="btnBroadcast">An alle Server senden</button>
     </div>
   </aside>
@@ -78,7 +83,7 @@
 
     <!-- Automatik -->
     <section id="view-auto" class="hidden">
-      <div class="topbar"><div><div class="title">Automatik &amp; Modi</div><div class="sub">Spieleranzahl je nach Modus und Map (sv_visiblemaxplayers)</div></div>
+      <div class="topbar"><div><div class="title">Automatik &amp; Einstellungen</div><div class="sub">Spieleranzahl je nach Modus und Map (sv_visiblemaxplayers)</div></div>
         <div style="margin-left:auto"><button class="primary" id="btnAutoSave">Speichern</button></div></div>
       <div class="content">
         <div class="panel">
@@ -97,8 +102,66 @@
           <div class="settings-grid">
             <div class="field"><label>Adresse dieses Tools für die CS2-Server (MatchZy)</label><input id="setPublicUrl" placeholder="z. B. http://192.168.200.27:8090"></div>
             <div class="field"><label>Prüfintervall (Sekunden)</label><input id="setInterval" inputmode="numeric"></div>
+            <div class="field"><label>Automatischer Netzwerk-Scan (Minuten, 0 = aus)</label><input id="setScanInterval" inputmode="numeric"></div>
+            <div class="field"><label>Zusätzliche Netze für den Scan</label><input id="setScanSubnets" placeholder="z. B. 192.168.200.0/24" class="mono"></div>
           </div>
           <div class="hint" style="margin-top:6px">Leer = Adresse aus dem Browser. Die CS2-Server laden Match-Configs von dieser Adresse – also die LAN-IP verwenden, nicht „localhost“.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Netzwerk-Scan -->
+    <section id="view-scan" class="hidden">
+      <div class="topbar"><div><div class="title">Netzwerk-Scan</div><div class="sub" id="scanSub">Sucht CS2-, Valheim- und Satisfactory-Server im LAN sowie Spiel-Container in Docker</div></div>
+        <div style="margin-left:auto"><button class="primary" id="btnScan">Jetzt scannen</button></div></div>
+      <div class="content">
+        <div class="panel">
+          <div class="hint" id="scanInfo"></div>
+          <div style="overflow:auto;margin-top:10px"><table><thead><tr><th>Spiel</th><th>Name</th><th>Adresse</th><th>Map / Status</th><th>Spieler</th><th>Quelle</th><th></th></tr></thead><tbody id="scanRows"></tbody></table></div>
+        </div>
+        <div class="hint">Factorio antwortet nicht auf Netzwerk-Abfragen – Factorio-Server werden über ihre Docker-Container gefunden (Docker-Socket nötig).</div>
+      </div>
+    </section>
+
+    <!-- Benutzer -->
+    <section id="view-users" class="hidden">
+      <div class="topbar"><div><div class="title">Benutzer</div><div class="sub">bleiben bei Updates erhalten (Volume)</div></div></div>
+      <div class="content">
+        <div class="panel">
+          <h2>Benutzer anlegen</h2>
+          <div class="row">
+            <input id="uName" placeholder="Benutzername" maxlength="32">
+            <input id="uPw" type="password" placeholder="Passwort (min. 6 Zeichen)" autocomplete="new-password">
+            <select id="uRole"></select>
+            <button class="primary" id="btnUAdd">Anlegen</button>
+          </div>
+          <div class="hint" style="margin-top:8px">Administrator: alles inkl. Benutzer, Server anlegen und Einstellungen · Spielleiter: Server bedienen (Maps, Matches, Konsole, Container) · Nur ansehen: keine Änderungen.</div>
+        </div>
+        <div class="panel"><div style="overflow:auto"><table><thead><tr><th>Benutzer</th><th>Rolle</th><th>Angelegt</th><th>Letzter Login</th><th></th></tr></thead><tbody id="uRows"></tbody></table></div></div>
+      </div>
+    </section>
+
+    <!-- Neuer Server -->
+    <section id="view-create" class="hidden">
+      <div class="topbar"><div><div class="title">Neuen Spielserver anlegen</div><div class="sub">legt einen Docker-Container mit Daten auf dem NAS an</div></div></div>
+      <div class="content">
+        <div class="panel hidden" id="createNoDocker"></div>
+        <div class="panel">
+          <h2>Spiel</h2>
+          <div class="seg" id="createGameSeg"></div>
+          <div class="settings-grid" id="createFields" style="margin-top:14px"></div>
+          <div class="settings-grid" style="margin-top:10px">
+            <div class="field"><label>Datenordner auf dem Docker-Host (NAS-Mount)</label><input id="createDataDir" class="mono"></div>
+            <div class="field"><label>Erreichbar unter (IP des Docker-Hosts)</label><input id="createHost" class="mono"></div>
+          </div>
+          <div class="hint" id="createHint" style="margin-top:8px"></div>
+          <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="primary" id="btnCreate">Server anlegen</button></div>
+        </div>
+        <div class="panel hidden" id="createJob">
+          <h2>Fortschritt</h2>
+          <div class="hint" id="createStep"></div>
+          <pre class="out" id="createLog"></pre>
+          <div class="row" style="margin-top:8px"><button class="hidden" id="btnCreateOpen">Server öffnen</button></div>
         </div>
       </div>
     </section>
@@ -109,11 +172,12 @@
         <div><div class="title" id="svTitle"></div><div class="sub" id="svSub"></div></div>
         <div class="tabs" id="tabs">
           <button data-tab="overview" class="active">Übersicht</button>
-          <button data-tab="maps">Maps &amp; Workshop</button>
-          <button data-tab="match">Wettkampf</button>
-          <button data-tab="console">Konsole</button>
-          <button data-tab="settings">Einstellungen</button>
-          <button id="btnEdit">Bearbeiten</button>
+          <button data-tab="maps" class="cs2only">Maps &amp; Workshop</button>
+          <button data-tab="match" class="cs2only">Wettkampf</button>
+          <button data-tab="console" class="needconsole">Konsole</button>
+          <button data-tab="settings" class="cs2only">Einstellungen</button>
+          <button data-tab="container" class="needcontainer">Container</button>
+          <button id="btnEdit" class="adminonly">Bearbeiten</button>
         </div>
       </div>
 
@@ -121,13 +185,26 @@
       <div class="content" id="tab-overview">
         <div class="cards">
           <div class="card"><div class="k">Status</div><div class="v" id="stOnline">–</div><div class="s" id="stVersion"></div></div>
-          <div class="card thumb"><img id="stMapImg" class="hidden" alt=""><div style="min-width:0"><div class="k">Map</div><div class="v" id="stMap">–</div><div class="s" id="stMapSub"></div></div></div>
+          <div class="card thumb"><img id="stMapImg" class="hidden" alt=""><div style="min-width:0"><div class="k" id="stMapLabel">Map</div><div class="v" id="stMap">–</div><div class="s" id="stMapSub"></div></div></div>
           <div class="card"><div class="k">Modus</div><div class="v" id="stMode" style="font-size:16px">–</div><div class="s" id="stRounds"></div></div>
           <div class="card"><div class="k">Spieler</div><div class="v" id="stPlayers">–</div><div class="s" id="stAuto"></div></div>
-          <div class="card"><div class="k">MatchZy</div><div class="v" id="stMz" style="font-size:16px">–</div><div class="s" id="stMzSub"></div></div>
+          <div class="card cs2only"><div class="k">MatchZy</div><div class="v" id="stMz" style="font-size:16px">–</div><div class="s" id="stMzSub"></div></div>
         </div>
 
-        <div class="grid2">
+        <div class="grid2 nocs2">
+          <div class="panel"><h2>Spielinfos</h2><div class="kvtable" id="gExtra"></div></div>
+          <div class="panel">
+            <h2>Aktionen</h2>
+            <div class="row hidden" id="gSaveRow"><input id="gSaveName" placeholder="Name des Spielstands (optional)"><button class="primary" id="btnGSave">Spiel speichern</button></div>
+            <div class="hidden" id="gClaim" style="margin-top:12px">
+              <div class="pill warn" style="margin-bottom:8px">Server ist noch nicht beansprucht</div>
+              <div class="row"><input id="gClaimName" placeholder="Servername"><input id="gClaimPw" type="password" placeholder="Admin-Passwort"><button class="primary" id="btnGClaim">Beanspruchen</button></div>
+            </div>
+            <div class="hint" id="gActHint" style="margin-top:10px"></div>
+          </div>
+        </div>
+
+        <div class="grid2 cs2only">
           <div class="panel">
             <h2>Schnellaktionen</h2>
             <div class="btns" id="quickActions"></div>
@@ -258,6 +335,28 @@
         </div>
       </div>
 
+      <!-- Container -->
+      <div class="content hidden" id="tab-container">
+        <div class="cards">
+          <div class="card"><div class="k">Container</div><div class="v" id="ctName" style="font-size:16px">–</div><div class="s" id="ctImage"></div></div>
+          <div class="card"><div class="k">Zustand</div><div class="v" id="ctState">–</div><div class="s" id="ctSince"></div></div>
+          <div class="card"><div class="k">CPU</div><div class="v" id="ctCpu">–</div></div>
+          <div class="card"><div class="k">RAM</div><div class="v" id="ctMem">–</div><div class="s" id="ctMemLimit"></div></div>
+        </div>
+        <div class="panel">
+          <div class="btns">
+            <button class="primary" data-ct="start">Starten</button>
+            <button data-ct="restart">Neu starten</button>
+            <button class="danger" data-ct="stop">Stoppen</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="row" style="justify-content:space-between;margin-bottom:8px"><h2 style="margin:0">Logs</h2>
+            <div class="row"><label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="ctFollow" checked style="width:auto"> automatisch aktualisieren</label><button class="small" id="btnCtLogs">Neu laden</button></div></div>
+          <pre id="ctLogs" class="out" style="max-height:60vh;min-height:300px"></pre>
+        </div>
+      </div>
+
       <!-- Konsole -->
       <div class="content hidden" id="tab-console">
         <div id="consoleOut"></div>
@@ -284,14 +383,16 @@
 <dialog id="dlgServer">
   <form method="dialog" id="serverForm">
     <h2 id="dlgTitle">Server hinzufügen</h2>
+    <div><label>Spiel</label><select name="game" id="dlgGame"></select></div>
     <div><label>Name</label><input name="name" required maxlength="64" placeholder="z. B. CS1"></div>
     <div class="row">
       <div style="flex:3"><label>IP / Hostname</label><input name="host" required placeholder="192.168.200.27"></div>
-      <div style="flex:1"><label>Port</label><input name="port" type="number" min="1" max="65535" value="27015" required></div>
+      <div style="flex:1"><label id="dlgPortLabel">Port</label><input name="port" type="number" min="1" max="65535" value="27015" required></div>
     </div>
-    <div><label>RCON-Passwort <span id="pwHint"></span></label><input name="password" type="password" autocomplete="new-password"></div>
+    <div><label><span id="dlgPwLabel">RCON-Passwort</span> <span id="pwHint"></span></label><input name="password" type="password" autocomplete="new-password"></div>
+    <div><label>Docker-Container (optional, für Start/Stop/Logs)</label><select name="container" id="dlgContainer"><option value="">– keiner –</option></select></div>
     <div><label>Notiz</label><input name="notes" maxlength="200"></div>
-    <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" name="auto_slots" checked style="width:auto"> Spieleranzahl automatisch nach Modus/Map setzen</label>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--text)" id="dlgAutoRow"><input type="checkbox" name="auto_slots" checked style="width:auto"> Spieleranzahl automatisch nach Modus/Map setzen</label>
     <div class="row" style="justify-content:space-between;margin-top:6px">
       <button type="button" class="danger" id="btnDelete">Löschen</button>
       <div class="btns">
@@ -323,7 +424,18 @@
   </form>
 </dialog>
 
+<!-- Passwort-Dialog -->
+<dialog id="dlgPw">
+  <form method="dialog" id="pwForm">
+    <h2>Eigenes Passwort ändern</h2>
+    <input type="password" name="old" placeholder="Altes Passwort" autocomplete="current-password" required>
+    <input type="password" name="new1" placeholder="Neues Passwort (min. 6 Zeichen)" autocomplete="new-password" required>
+    <input type="password" name="new2" placeholder="Neues Passwort wiederholen" autocomplete="new-password" required>
+    <div class="row" style="justify-content:flex-end"><button type="button" id="btnPwCancel">Abbrechen</button><button class="primary" type="submit">Speichern</button></div>
+  </form>
+</dialog>
+
 <div id="toast"></div>
-<script src="/static/app.js?v=2"></script>
+<script src="/static/app.js?v=3"></script>
 </body>
 </html>

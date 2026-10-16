@@ -1,4 +1,4 @@
-# Portainer-Stack für CS2 RCON Web
+# Portainer-Stack für den Spielservermanager (Repo: cs2-rcon-web)
 # Portainer → Stacks → Add stack → "Web editor" (Inhalt einfügen) oder "Repository" (Compose path: portainer-stack.yml)
 # Variablen unten unter "Environment variables" setzen (Vorlage: stack.env).
 # Auto-Update: Repository-Stack mit "GitOps updates" (Polling, z. B. 5m) + "Re-pull image" aktivieren.
@@ -6,7 +6,8 @@
 services:
   cs2-rcon:
     image: ${IMAGE:-ghcr.io/dein-github-name/cs2-rcon-web:latest}
-    container_name: cs2-rcon-web
+    container_name: spielservermanager
+    user: "0:0"                     # nötig für den Zugriff auf den Docker-Socket
     restart: unless-stopped
     pull_policy: always
     ports:
@@ -18,8 +19,12 @@ services:
       TZ: ${TZ:-Europe/Berlin}
     volumes:
       - rcon-data:/data
+      # Container starten/stoppen, Logs, neue Spielserver anlegen, Docker-Scan.
+      # Achtung: Zugriff auf den Docker-Socket = volle Kontrolle über den Docker-Host.
+      # Wer das nicht möchte, diese Zeile entfernen – der Rest funktioniert weiter.
+      - /var/run/docker.sock:/var/run/docker.sock
     labels:
-      com.groh-pa.description: "CS2 RCON Weboberfläche"
+      com.groh-pa.description: "Spielservermanager"
       com.groh-pa.build: "9868dde"   # wird nach jedem Image-Build automatisch aktualisiert (Auto-Update)
 
 volumes:

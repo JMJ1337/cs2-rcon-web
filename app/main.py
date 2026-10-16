@@ -16,7 +16,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import automation, steam, store
+from . import automation, docker_api, scanner, steam, store, templates, users
+from .games import GAMES, adapters, game_of
+from .games import satisfactory as sfmod
 from .rcon import RconAuthError, RconClient, RconError
 
 log = logging.getLogger("cs2rcon")
@@ -43,51 +45,81 @@ COOKIE = "cs2rcon_session"
 
 @asynccontextmanager
 async def lifespan(_app):
-    task = asyncio.create_task(watcher()) if WATCH_ENABLED else None
+    tasks = [asyncio.create_task(watcher()), asyncio.create_task(scan_loop())] if WATCH_ENABLED else []
     yield
-    if task:
-        task.cancel()
+    for t in tasks:
+        t.cancel()
 
 
 app = FastAPI(title="CS2 RCON Web", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 
-# ---------------------------------------------------------------- Auth
+# ---------------------------------------------------------------- Auth / Benutzer
+users.bootstrap(ADMIN_PASSWORD)
+
+
 def _sign(value: str) -> str:
     return hmac.new(SECRET, value.encode(), hashlib.sha256).hexdigest()
 
 
-def make_token() -> str:
-    exp = str(int(time.time()) + SESSION_HOURS * 3600)
-    return f"{exp}.{_sign(exp)}"
+def make_token(username: str) -> str:
+    payload = f"{int(time.time()) + SESSION_HOURS * 3600}.{username}.{int(time.time())}"
+    return f"{payload}.{_sign(payload)}"
 
 
-def valid_token(token: str | None) -> bool:
-    if not token or "." not in token:
-        return False
-    exp, sig = token.split(".", 1)
-    if not hmac.compare_digest(sig, _sign(exp)):
-        return False
-    return exp.isdigit() and int(exp) > time.time()
+def token_user(token: str | None) -> dict | None:
+    if not token or token.count(".") != 3:
+        return None
+    exp, name, iat, sig = token.split(".")
+    if not hmac.compare_digest(sig, _sign(f"{exp}.{name}.{iat}")):
+        return None
+    if not exp.isdigit() or int(exp) < time.time():
+        return None
+    u = users.find(name)
+    if not u or int(iat) < int(u.get("pw_changed") or 0):
+        return None  # gelöscht oder Passwort geändert -> neu anmelden
+    return u
+
+
+ADMIN_PATHS = ("/api/users", "/api/create", "/api/settings")
 
 
 def require_auth(request: Request):
-    if not valid_token(request.cookies.get(COOKIE)):
+    u = token_user(request.cookies.get(COOKIE))
+    if not u:
         raise HTTPException(401, "Nicht angemeldet")
+    level = users.ROLES.get(u["role"], 0)
+    path, method = request.url.path, request.method
+    if method != "GET" and level < 2 and not path.startswith("/api/me"):
+        raise HTTPException(403, "Nur Ansicht – keine Berechtigung für Änderungen")
+    admin_only = (path.startswith(ADMIN_PATHS) and not (path == "/api/settings" and method == "GET")) or \
+        (method in ("POST", "PUT", "DELETE") and re.fullmatch(r"/api/servers(/[\w-]+)?", path))
+    if admin_only and level < 3:
+        raise HTTPException(403, "Nur für Administratoren")
+    request.state.user = u
+    return u
 
 
 class LoginIn(BaseModel):
+    username: str = Field("admin", max_length=32)
     password: str
 
 
 @app.post("/api/login")
 async def login(data: LoginIn, response: Response):
-    if not hmac.compare_digest(data.password.encode(), ADMIN_PASSWORD.encode()):
+    name = (data.username or "admin").strip().lower()
+    u = users.verify(name, data.password)
+    if not u and name == "admin" and hmac.compare_digest(data.password.encode(), ADMIN_PASSWORD.encode()):
+        u = users.find("admin")  # Notfall-Login mit ADMIN_PASSWORD aus dem Stack
+        if not u:
+            users.bootstrap(ADMIN_PASSWORD)
+            u = users.find("admin")
+    if not u:
         await asyncio.sleep(1.0)  # Brute-Force bremsen
-        raise HTTPException(401, "Falsches Passwort")
-    response.set_cookie(COOKIE, make_token(), httponly=True, samesite="strict",
+        raise HTTPException(401, "Benutzername oder Passwort falsch")
+    response.set_cookie(COOKIE, make_token(u["username"]), httponly=True, samesite="strict",
                         max_age=SESSION_HOURS * 3600)
-    return {"ok": True}
+    return {"ok": True, "user": users.public(u)}
 
 
 @app.post("/api/logout")
@@ -98,10 +130,70 @@ async def logout(response: Response):
 
 @app.get("/api/me")
 async def me(request: Request):
-    return {"authenticated": valid_token(request.cookies.get(COOKIE))}
+    u = token_user(request.cookies.get(COOKIE))
+    return {"authenticated": bool(u), "user": users.public(u) if u else None}
 
 
 auth = [Depends(require_auth)]
+
+
+class UserIn(BaseModel):
+    username: str = Field(min_length=1, max_length=32)
+    password: str | None = Field(None, max_length=128)
+    role: str | None = None
+
+
+@app.get("/api/users", dependencies=auth)
+async def list_users():
+    return {"users": [users.public(u) for u in users.load()], "roles": users.ROLE_LABELS}
+
+
+@app.post("/api/users", dependencies=auth)
+async def add_user(data: UserIn):
+    if users.find(data.username):
+        raise HTTPException(400, "Benutzer existiert bereits")
+    try:
+        return users.public(users.upsert(data.username, data.password, data.role or "user"))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.put("/api/users/{username}", dependencies=auth)
+async def update_user(username: str, data: UserIn):
+    if not users.find(username):
+        raise HTTPException(404, "Benutzer nicht gefunden")
+    try:
+        return users.public(users.upsert(username, data.password or None, data.role))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/users/{username}", dependencies=auth)
+async def del_user(username: str, request: Request):
+    if username == request.state.user["username"]:
+        raise HTTPException(400, "Du kannst dich nicht selbst löschen")
+    try:
+        users.delete(username)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+class PwIn(BaseModel):
+    old_password: str
+    new_password: str = Field(min_length=6, max_length=128)
+
+
+@app.post("/api/me/password", dependencies=auth)
+async def change_own_password(data: PwIn, request: Request, response: Response):
+    u = request.state.user
+    if not users.verify(u["username"], data.old_password):
+        raise HTTPException(400, "Altes Passwort falsch")
+    users.upsert(u["username"], data.new_password, None)
+    await asyncio.sleep(1.1)  # neues Token muss nach pw_changed liegen
+    response.set_cookie(COOKIE, make_token(u["username"]), httponly=True, samesite="strict",
+                        max_age=SESSION_HOURS * 3600)
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------- Server-Speicher
@@ -112,6 +204,8 @@ class ServerIn(BaseModel):
     password: str | None = None  # None/"" beim Update = unverändert lassen
     notes: str = ""
     auto_slots: bool = True
+    game: str = "cs2"
+    container: str = ""
 
 
 _store_lock = asyncio.Lock()
@@ -131,6 +225,8 @@ def save_servers(servers: list[dict]) -> None:
 def public(s: dict) -> dict:
     out = {k: v for k, v in s.items() if k != "password"}
     out.setdefault("auto_slots", True)
+    out.setdefault("game", "cs2")
+    out.setdefault("container", "")
     return out | {"has_password": bool(s.get("password"))}
 
 
@@ -145,6 +241,18 @@ def drop_client(sid: str):
     c = _clients.pop(sid, None)
     if c:
         c.close()
+    _sf_clients.pop(sid, None)
+
+
+_sf_clients: dict[str, sfmod.SatisfactoryClient] = {}
+
+
+def sf_client(s: dict) -> sfmod.SatisfactoryClient:
+    c = _sf_clients.get(s["id"])
+    if c is None:
+        c = sfmod.SatisfactoryClient(s["host"], int(s["port"]), s.get("password", ""))
+        _sf_clients[s["id"]] = c
+    return c
 
 
 def client_for(s: dict) -> RconClient:
@@ -176,7 +284,8 @@ async def add_server(data: ServerIn):
         servers = load_servers()
         s = {"id": uuid.uuid4().hex[:10], "name": data.name, "host": data.host.strip(),
              "port": data.port, "password": data.password or "", "notes": data.notes,
-             "auto_slots": data.auto_slots}
+             "auto_slots": data.auto_slots, "game": data.game if data.game in GAMES else "cs2",
+             "container": data.container.strip()}
         servers.append(s)
         save_servers(servers)
     return public(s)
@@ -189,7 +298,8 @@ async def update_server(sid: str, data: ServerIn):
         for s in servers:
             if s["id"] == sid:
                 s.update(name=data.name, host=data.host.strip(), port=data.port, notes=data.notes,
-                         auto_slots=data.auto_slots)
+                         auto_slots=data.auto_slots, game=data.game if data.game in GAMES else "cs2",
+                         container=data.container.strip())
                 if data.password:
                     s["password"] = data.password
                 save_servers(servers)
@@ -216,6 +326,15 @@ class CommandIn(BaseModel):
 @app.post("/api/servers/{sid}/command", dependencies=auth)
 async def command(sid: str, data: CommandIn):
     s = get_server(sid)
+    g = game_of(s)
+    if g == "satisfactory":
+        try:
+            d = await sf_client(s).call("RunCommand", {"Command": data.command})
+        except sfmod.SatisfactoryError as e:
+            raise HTTPException(502, str(e))
+        return {"output": (d or {}).get("commandResult", "")}
+    if not GAMES[g]["console"]:
+        raise HTTPException(400, f"{GAMES[g]['label']} hat keine Remote-Konsole")
     out = await run(s, data.command)
     return {"output": out}
 
@@ -291,6 +410,8 @@ async def _matchzy_info(s: dict) -> dict:
 
 async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = False) -> dict:
     """Status + wichtige Cvars lesen, optional Spieleranzahl automatisch setzen."""
+    if game_of(s) != "cs2":
+        return await collect_generic(s)
     c = client_for(s)
     raw = await c.execute("status")
     st = parse_status(raw)
@@ -335,6 +456,25 @@ async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = 
         result["matchzy"] = await _matchzy_info(s)
     elif "matchzy" in _state.get(s["id"], {}):
         result["matchzy"] = _state[s["id"]]["matchzy"]
+    prev = _state.get(s["id"], {})
+    _state[s["id"]] = {**{k: v for k, v in prev.items() if k.startswith("_")}, **result}
+    return result
+
+
+async def collect_generic(s: dict) -> dict:
+    g = game_of(s)
+    try:
+        if g == "factorio":
+            st = await adapters.factorio_status(client_for(s))
+        elif g == "satisfactory":
+            st = await sfmod.status(sf_client(s))
+        elif g == "valheim":
+            st = await adapters.valheim_status(s["host"], int(s["port"]))
+        else:
+            raise RconError("Unbekanntes Spiel")
+    except (sfmod.SatisfactoryError, adapters.a2s.A2SError) as e:
+        raise RconError(str(e)) from e
+    result = {"online": True, "game": g, **st}
     prev = _state.get(s["id"], {})
     _state[s["id"]] = {**{k: v for k, v in prev.items() if k.startswith("_")}, **result}
     return result
@@ -508,6 +648,8 @@ class SettingsIn(BaseModel):
     map_rules: list[dict] | None = None
     public_url: str | None = None
     watch_interval: int | None = Field(None, ge=5, le=300)
+    scan_interval: int | None = Field(None, ge=0, le=1440)
+    scan_subnets: str | None = Field(None, max_length=200)
 
 
 @app.get("/api/settings", dependencies=auth)
@@ -821,6 +963,314 @@ async def match_file(token: str):
         raise HTTPException(404)
     return JSONResponse(cfg)
 
+
+
+# ---------------------------------------------------------------- Spiele allgemein
+@app.get("/api/games", dependencies=auth)
+async def games_meta():
+    return {"games": GAMES, "docker": docker_api.available()}
+
+
+class SaveIn(BaseModel):
+    name: str = Field("", max_length=64)
+
+
+@app.post("/api/servers/{sid}/save", dependencies=auth)
+async def save_game(sid: str, data: SaveIn):
+    s = get_server(sid)
+    g = game_of(s)
+    name = re.sub(r"[^\w\-]", "_", data.name.strip()) or time.strftime("lan_%Y%m%d_%H%M")
+    if g == "factorio":
+        out = await run(s, f"/server-save {name}" if data.name.strip() else "/server-save")
+        return {"output": out or "Gespeichert"}
+    if g == "satisfactory":
+        try:
+            await sf_client(s).call("SaveGame", {"SaveName": name})
+        except sfmod.SatisfactoryError as e:
+            raise HTTPException(502, str(e))
+        return {"output": f"Spielstand „{name}“ gespeichert"}
+    if g == "cs2":
+        raise HTTPException(400, "CS2 hat keine Spielstände")
+    raise HTTPException(400, "Speichern wird für dieses Spiel nicht unterstützt")
+
+
+class ClaimIn(BaseModel):
+    server_name: str = Field(min_length=1, max_length=64)
+    admin_password: str = Field(min_length=1, max_length=128)
+
+
+@app.post("/api/servers/{sid}/claim", dependencies=auth)
+async def claim_server(sid: str, data: ClaimIn):
+    """Satisfactory: frischen Server beanspruchen und Admin-Passwort setzen."""
+    s = get_server(sid)
+    if game_of(s) != "satisfactory":
+        raise HTTPException(400, "Nur für Satisfactory")
+    try:
+        await sf_client(s).claim(data.server_name, data.admin_password)
+    except sfmod.SatisfactoryError as e:
+        raise HTTPException(502, str(e))
+    await _set_server_fields(sid, password=data.admin_password)
+    return {"ok": True}
+
+
+async def _set_server_fields(sid: str, **fields):
+    async with _store_lock:
+        servers = load_servers()
+        for x in servers:
+            if x["id"] == sid:
+                x.update(fields)
+        save_servers(servers)
+    drop_client(sid)
+
+
+# ---------------------------------------------------------------- Docker / Container
+def _need_docker():
+    if not docker_api.available():
+        raise HTTPException(400, "Docker-Socket nicht eingebunden – im Stack /var/run/docker.sock mounten")
+
+
+@app.get("/api/docker/containers", dependencies=auth)
+async def docker_containers():
+    _need_docker()
+    try:
+        return await docker_api.list_containers()
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+
+
+def _container_of(sid: str) -> str:
+    s = get_server(sid)
+    if not s.get("container"):
+        raise HTTPException(400, "Kein Container verknüpft (Server bearbeiten → Container)")
+    _need_docker()
+    return s["container"]
+
+
+@app.get("/api/servers/{sid}/container", dependencies=auth)
+async def container_info(sid: str):
+    name = _container_of(sid)
+    try:
+        i = await docker_api.inspect(name)
+        st = i.get("State", {})
+        info = {"name": name, "image": i.get("Config", {}).get("Image"), "state": st.get("Status"),
+                "started": st.get("StartedAt"), "health": (st.get("Health") or {}).get("Status"),
+                "restarts": i.get("RestartCount"), "stats": None}
+        if st.get("Running"):
+            info["stats"] = await docker_api.stats(name)
+        return info
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+
+
+@app.post("/api/servers/{sid}/container/{act}", dependencies=auth)
+async def container_action(sid: str, act: str):
+    name = _container_of(sid)
+    try:
+        await docker_api.action(name, act)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    drop_client(sid)
+    return {"ok": True}
+
+
+@app.get("/api/servers/{sid}/container/logs", dependencies=auth)
+async def container_logs(sid: str, tail: int = 300):
+    name = _container_of(sid)
+    try:
+        return {"logs": await docker_api.logs(name, tail)}
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+
+
+# ---------------------------------------------------------------- Neue Server anlegen
+_jobs: dict[str, dict] = {}
+
+
+@app.get("/api/templates", dependencies=auth)
+async def list_templates():
+    return {"templates": templates.TEMPLATES, "docker": docker_api.available()}
+
+
+class CreateIn(BaseModel):
+    game: str
+    values: dict[str, str]
+    data_dir: str = Field(min_length=2, max_length=255)
+    host: str | None = Field(None, max_length=255)  # Adresse, unter der der neue Server erreichbar ist
+
+
+def _job_log(job, msg):
+    job["log"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+    job["log"] = job["log"][-200:]
+    job["step"] = msg
+
+
+async def _create_job(job: dict, data: CreateIn, host: str):
+    try:
+        b = templates.build(data.game, data.values, data.data_dir)
+        _job_log(job, f"Ordner vorbereiten: {', '.join(b['dirs'])}")
+        own = f" && chown -R {b['uid']}:{b['uid']} /target" if b["uid"] else ""
+        for d in b["dirs"]:
+            await docker_api.run_helper([f"{d}:/target"], ["sh", "-c", f"mkdir -p /target{own} && echo ok"])
+        _job_log(job, f"Image laden: {b['image']} (kann beim ersten Mal dauern)")
+        last = {"t": 0.0}
+
+        def prog(m):
+            if time.time() - last["t"] > 3:
+                last["t"] = time.time()
+                job["step"] = "Image laden: " + m[:80]
+        try:
+            await docker_api.pull(b["image"], prog)
+        except docker_api.DockerError as e:
+            if not await docker_api.image_exists(b["image"]):
+                raise
+            _job_log(job, f"Pull fehlgeschlagen ({e}) – nutze vorhandenes lokales Image")
+        _job_log(job, f"Container {b['name']} anlegen und starten")
+        await docker_api.create_container(b["name"], b["spec"])
+        srv = {"id": uuid.uuid4().hex[:10], "name": b["name"], "host": host, "port": b["server"]["port"],
+               "password": b["server"].get("password", ""), "notes": "angelegt vom Spielservermanager",
+               "auto_slots": True, "game": data.game, "container": b["name"]}
+        async with _store_lock:
+            servers = load_servers()
+            servers.append(srv)
+            save_servers(servers)
+        job["server_id"] = srv["id"]
+        _job_log(job, "Server in die Liste eingetragen")
+        if data.game == "factorio":
+            _job_log(job, "Warte auf RCON-Passwort (config/rconpw) …")
+            for _ in range(60):
+                await asyncio.sleep(5)
+                try:
+                    pw = (await docker_api.exec_cmd(b["name"], ["cat", "/factorio/config/rconpw"])).strip()
+                except docker_api.DockerError:
+                    pw = ""
+                if pw and "No such file" not in pw:
+                    await _set_server_fields(srv["id"], password=pw)
+                    _job_log(job, "RCON-Passwort übernommen")
+                    break
+        if data.game == "satisfactory" and b["server"]["claim"]["password"]:
+            _job_log(job, "Warte, bis Satisfactory bereit ist, um den Server zu beanspruchen (Download ~10 GB) …")
+            c = sfmod.SatisfactoryClient(host, b["server"]["port"], "")
+            for _ in range(240):
+                await asyncio.sleep(15)
+                try:
+                    if await c.unclaimed():
+                        await c.claim(b["server"]["claim"]["name"], b["server"]["claim"]["password"])
+                        await _set_server_fields(srv["id"], password=b["server"]["claim"]["password"])
+                        _job_log(job, "Server beansprucht, Admin-Passwort gesetzt")
+                        break
+                except sfmod.SatisfactoryError:
+                    continue
+        job["done"] = True
+        _job_log(job, "Fertig")
+    except (ValueError, docker_api.DockerError) as e:
+        job["error"] = str(e)
+        job["done"] = True
+        _job_log(job, "Fehler: " + str(e))
+    except Exception as e:  # noqa: BLE001
+        log.exception("Anlegen fehlgeschlagen")
+        job["error"] = str(e) or e.__class__.__name__
+        job["done"] = True
+
+
+@app.post("/api/create", dependencies=auth)
+async def create_server(data: CreateIn, request: Request):
+    _need_docker()
+    if data.game not in templates.TEMPLATES:
+        raise HTTPException(400, "Unbekanntes Spiel")
+    try:
+        templates.build(data.game, data.values, data.data_dir)  # früh validieren
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    host = (data.host or "").strip() or _docker_host_ip(request)
+    jid = secrets.token_hex(6)
+    job = {"id": jid, "game": data.game, "log": [], "step": "", "done": False, "error": None, "server_id": None}
+    _jobs[jid] = job
+    asyncio.create_task(_create_job(job, data, host))
+    return job
+
+
+@app.get("/api/jobs/{jid}", dependencies=auth)
+async def get_job(jid: str):
+    if jid not in _jobs:
+        raise HTTPException(404)
+    return _jobs[jid]
+
+
+def _docker_host_ip(request: Request | None = None) -> str:
+    pub = automation.get_settings().get("public_url") or ""
+    m = re.match(r"https?://([^:/]+)", pub)
+    if m:
+        return m.group(1)
+    if request and request.url.hostname:
+        return request.url.hostname
+    return _seen_hosts[-1] if _seen_hosts else "127.0.0.1"
+
+
+# ---------------------------------------------------------------- Netzwerk-Scan
+_seen_hosts: list[str] = []
+
+
+@app.middleware("http")
+async def remember_host(request: Request, call_next):
+    h = request.url.hostname or ""
+    if re.fullmatch(r"\d+\.\d+\.\d+\.\d+", h) and not h.startswith("127.") and h not in _seen_hosts:
+        _seen_hosts.append(h)
+        del _seen_hosts[:-5]
+    return await call_next(request)
+
+
+def _scan_nets():
+    st = automation.get_settings()
+    hosts = list(_seen_hosts) + [s["host"] for s in load_servers()]
+    m = re.match(r"https?://([^:/]+)", st.get("public_url") or "")
+    if m:
+        hosts.insert(0, m.group(1))
+    extra = [x for x in re.split(r"[,\s]+", st.get("scan_subnets") or "") if x]
+    return scanner.subnets_for(hosts, extra)
+
+
+def _annotate(results):
+    known = {(s["host"], int(s["port"])) for s in load_servers()}
+    known_c = {s.get("container") for s in load_servers() if s.get("container")}
+    out = []
+    for r in results:
+        k = (r["host"], r["port"]) in known if r.get("host") else r.get("container") in known_c
+        out.append({**r, "known": k})
+    return out
+
+
+@app.get("/api/scan", dependencies=auth)
+async def scan_state():
+    st = scanner.state
+    return {**{k: v for k, v in st.items() if k != "results"}, "results": _annotate(st["results"]),
+            "planned": [str(n) for n in _scan_nets()]}
+
+
+@app.post("/api/scan", dependencies=auth)
+async def scan_now():
+    nets = _scan_nets()
+    if not nets:
+        raise HTTPException(400, "Kein Netz bekannt – unter „Automatik & Modi“ ein Subnetz eintragen (z. B. 192.168.200.0/24)")
+    if not scanner.state["running"]:
+        asyncio.create_task(scanner.scan(nets))
+    await asyncio.sleep(0.1)
+    return await scan_state()
+
+
+async def scan_loop():
+    await asyncio.sleep(20)
+    while True:
+        minutes = int(automation.get_settings().get("scan_interval") or 0)
+        if minutes > 0:
+            nets = _scan_nets()
+            if nets:
+                try:
+                    await scanner.scan(nets)
+                except Exception:  # noqa: BLE001
+                    log.exception("Automatischer Scan fehlgeschlagen")
+            await asyncio.sleep(minutes * 60)
+        else:
+            await asyncio.sleep(60)
 
 # ---------------------------------------------------------------- Frontend
 @app.get("/")

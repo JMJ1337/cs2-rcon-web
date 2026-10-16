@@ -162,3 +162,16 @@ pre.out{background:#0a0c0f;border:1px solid var(--line);border-radius:7px;paddin
 .maplist input{width:auto}
 .avatar{width:28px;height:28px;border-radius:50%;background:var(--panel2);vertical-align:middle}
 @media (max-width:820px){ .teams{grid-template-columns:1fr} }
+
+/* ---------- v3: Multi-Game ---------- */
+.gbadge{display:inline-block;font-size:11px;font-weight:600;padding:1px 7px;border-radius:4px;color:#111;white-space:nowrap}
+.kvtable{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:14px}
+.kvtable span:nth-child(odd){color:var(--muted)}
+.kvtable span:nth-child(even){font-family:var(--mono)}
+body.g-other .cs2only{display:none!important}
+body:not(.g-other) .nocs2{display:none!important}
+body.no-console .needconsole{display:none!important}
+body.no-container .needcontainer{display:none!important}
+#createGameSeg button{padding:8px 14px}
+body.not-admin .adminonly{display:none!important}
+body.viewer .opsonly{display:none!important}

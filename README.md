@@ -1,6 +1,32 @@
-# CS2 RCON Web
+# Spielservermanager
 
-Weboberfläche zur Verwaltung mehrerer CS2-Server per RCON im LAN – als Docker-Container.
+Weboberfläche für die Spielserver auf unserer LAN – als Docker-Container mit Portainer-Stack und Auto-Update.
+(Repository-/Image-Name ist aus historischen Gründen `cs2-rcon-web`.)
+
+| Spiel | Status & Spieler | Konsole / Befehle | Extras |
+|---|---|---|---|
+| **Counter-Strike 2** | RCON | RCON | Maps & Workshop-Suche, MatchZy-Wettkampf (Wingman/Competitive), Auto-Slots, Cvars |
+| **Factorio** | RCON | RCON (`/players`, `/save` …) | Spiel speichern |
+| **Satisfactory** | offizielle HTTPS-API (Port 7777) | `RunCommand` | Spiel speichern, Server beanspruchen |
+| **Valheim** | Steam-Query (A2S, Spielport + 1) | – (hat keine Remote-Konsole) | Neustart/Logs über Docker |
+
+Außerdem:
+- **Benutzerkonten** mit Rollen *Administrator*, *Spielleiter* (bedienen) und *Nur ansehen*. Sie liegen im Volume
+  `cs2-rcon-data` und bleiben bei Updates erhalten. Erster Login: Benutzer `admin` + `ADMIN_PASSWORD`
+  (funktioniert auch später noch als Notfall-Login).
+- **Docker-Steuerung:** Container starten/stoppen/neu starten, Logs, CPU/RAM – pro Server einen Container verknüpfen.
+- **Neue Server anlegen:** CS2, Factorio, Satisfactory, Valheim als Container mit Datenordner auf dem NAS
+  (Ordner wird angelegt und für den Container beschreibbar gemacht).
+- **Netzwerk-Scan:** findet CS2/Valheim (A2S), Satisfactory (UDP-Query) im LAN und Spiel-Container in Docker,
+  automatisch alle 15 Minuten (einstellbar) – gefundene Server mit einem Klick übernehmen.
+
+Docker-Funktionen brauchen den Docker-Socket im Stack (`/var/run/docker.sock`, ist in `portainer-stack.yml` drin).
+**Das gibt dem Tool volle Kontrolle über den Docker-Host** – im LAN mit Login vertretbar; wer das nicht will,
+nimmt die Zeile raus, alles andere funktioniert weiter.
+
+### CS2-Funktionen
+
+
 
 **Funktionen:** Serververwaltung · Live-Status & Spielerliste (inkl. Kick) · Schnellaktionen
 (Warmup, Restart, Pause, Teams tauschen, Bots …) · Map-/Modus-Wechsel & Workshop-Maps ·
