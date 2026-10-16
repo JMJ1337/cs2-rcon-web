@@ -5,7 +5,9 @@ import time
 from collections import defaultdict
 from datetime import datetime
 
-from . import docker_api
+import asyncio
+
+from . import cache_history, docker_api
 
 LOG = "/data/logs/access.log"
 MAX_READ = 20_000_000          # max. Bytes pro Abruf
@@ -56,6 +58,9 @@ def ingest(text: str) -> int:
         if not p:
             continue
         svc, ip, ts, size, cache = p
+        hit = cache == "HIT"
+        if hit or cache in ("MISS", "EXPIRED", "STALE", "UPDATING", "REVALIDATED", "BYPASS"):
+            cache_history.live(svc, ip, ts, size, hit)
         b = _bucket(int(ts // 60))
         if cache == "HIT":
             b["hit_b"] += size; b["hit"] += 1; b["svc"][svc][0] += size
@@ -65,6 +70,7 @@ def ingest(text: str) -> int:
             continue
         b["ip"][ip] += size
         n += 1
+    cache_history.commit_watermark()
     cutoff = int(time.time() // 60) - KEEP_MIN
     for k in [k for k in state["buckets"] if k < cutoff]:
         del state["buckets"][k]
@@ -114,6 +120,7 @@ async def poll(preferred: str = "") -> None:
         if len(df) >= 2:
             parts = df[-1].split()
             state["disk"] = {"total": int(parts[1]), "used": int(parts[2]), "free": int(parts[3])}
+            cache_history.record_disk(state["disk"])
         state["error"] = None
         state["updated"] = time.time()
     except (docker_api.DockerError, ValueError, IndexError) as e:
@@ -149,3 +156,55 @@ def summary() -> dict:
     return {"container": state["container"], "error": state["error"], "updated": state["updated"],
             "disk": state["disk"], "rate_bps": round(rate), "hit_rate_bps": round(hit_rate),
             "last_hour": agg(60), "last_day": agg(KEEP_MIN)}
+
+
+BF_CHUNK = 16_000_000
+_bf_running = False
+
+
+async def backfill() -> None:
+    """Einmaliger Rückimport des kompletten access.log in den Langzeit-Verlauf (läuft im Hintergrund, setzt nach Neustart fort)."""
+    global _bf_running
+    cache_history.init()
+    m = cache_history.meta
+    name = state["container"]
+    if _bf_running or m["bf_done"] or not name or m["bf_cut"] is None:
+        return
+    _bf_running = True
+    try:
+        size_out = (await docker_api.exec_cmd(name, ["stat", "-c", "%s", LOG])).strip()
+        size = int(size_out) if size_out.isdigit() else 0
+        if not m["bf_size"]:
+            m["bf_size"] = size
+        if size < m["bf_pos"]:            # Log wurde inzwischen rotiert -> Rest ist weg
+            m.update(bf_done=True, bf_error="access.log wurde rotiert – Rückimport unvollständig")
+            return
+        while m["bf_pos"] < m["bf_size"]:
+            length = min(BF_CHUNK, m["bf_size"] - m["bf_pos"])
+            data = await docker_api.exec_cmd(name, ["sh", "-c", f"tail -c +{m['bf_pos'] + 1} {LOG} | head -c {length}"])
+            raw = data.encode("utf-8", "replace")
+            end = raw.rfind(b"\n") + 1
+            if end <= 0:
+                if length < BF_CHUNK:      # letzter Rest ohne Zeilenende
+                    break
+                end = len(raw)
+            n = 0
+            for line in raw[:end].decode("utf-8", "replace").splitlines():
+                p = _parse(line)
+                if not p:
+                    continue
+                svc, ip, ts, sz, cache = p
+                hit = cache == "HIT"
+                if hit or cache in ("MISS", "EXPIRED", "STALE", "UPDATING", "REVALIDATED", "BYPASS"):
+                    cache_history.backfill_line(svc, ip, ts, sz, hit)
+                    n += 1
+            m["bf_pos"] += end
+            m["bf_lines"] += n
+            cache_history.maybe_save()
+            await asyncio.sleep(0.2)
+        m["bf_done"] = True
+        cache_history.maybe_save(force=True)
+    except (docker_api.DockerError, ValueError) as e:
+        m["bf_error"] = str(e)
+    finally:
+        _bf_running = False

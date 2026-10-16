@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import automation, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
+from . import automation, cache_history, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
 from .rcon import RconAuthError, RconClient, RconError
@@ -52,6 +52,7 @@ async def lifespan(_app):
         t.cancel()
     try:
         metrics.maybe_save(force=True)
+        cache_history.maybe_save(force=True)
     except Exception:  # noqa: BLE001
         pass
 
@@ -99,7 +100,7 @@ def require_auth(request: Request):
         raise HTTPException(403, "Nur Ansicht – keine Berechtigung für Änderungen")
     admin_only = (path.startswith(ADMIN_PATHS) and not (path == "/api/settings" and method == "GET")) or \
         (method in ("POST", "PUT", "DELETE") and re.fullmatch(r"/api/servers(/[\w-]+)?", path)) or \
-        re.fullmatch(r"/api/servers/[\w-]+/delete(-preview)?", path)
+        re.fullmatch(r"/api/servers/[\w-]+/(delete(-preview)?|container/diag)", path)
     if admin_only and level < 3:
         raise HTTPException(403, "Nur für Administratoren")
     request.state.user = u
@@ -617,6 +618,9 @@ async def load_loop():
         n += 1
         if n % 4 == 0 and docker_api.available():
             await cache_stats.poll(automation.get_settings().get("cache_container") or "")
+            if cache_stats.state["container"] and not cache_history.meta["bf_done"] and not cache_stats._bf_running:
+                asyncio.create_task(cache_stats.backfill())
+            cache_history.maybe_save()
         if n % 2 == 0 and docker_api.available():
             names = sorted({s["container"] for s in load_servers() if s.get("container")})
             if names:
@@ -779,6 +783,17 @@ async def cache_metrics():
     if cache_stats.state["updated"] is None:
         await cache_stats.poll(automation.get_settings().get("cache_container") or "")
     return cache_stats.summary()
+
+
+@app.get("/api/cache/history", dependencies=auth)
+async def cache_history_api(range: str = "30d"):
+    if range not in cache_history.RANGES:
+        raise HTTPException(400, "Zeitraum unbekannt")
+    out = cache_history.series(range)
+    out["container"] = cache_stats.state["container"]
+    out["error"] = cache_stats.state["error"]
+    out["disk_now"] = cache_stats.state["disk"]
+    return out
 
 
 @app.get("/api/host", dependencies=auth)
@@ -1372,6 +1387,29 @@ async def container_action(sid: str, act: str):
         raise HTTPException(502, str(e))
     drop_client(sid)
     return {"ok": True}
+
+
+DIAG_SH = r"""
+echo '=== Prozesse'; ps -eo pid,etime,pcpu,rss,args 2>/dev/null | cut -c1-220 | head -40
+echo '=== UDP-Sockets (lokale Ports)'; for h in $(cat /proc/net/udp /proc/net/udp6 2>/dev/null | awk 'NR>1 && $2 ~ /:/{split($2,a,":"); print a[2]}' | sort -u); do printf "%d " 0x$h; done; echo
+echo '=== TCP-Listen'; for h in $(cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk '$4=="0A"{split($2,a,":"); print a[2]}' | sort -u); do printf "%d " 0x$h; done; echo
+echo '=== Datenträger'; df -h /serverdata/serverfiles 2>/dev/null | tail -1
+for c in /serverdata/serverfiles/server_config.cfg /serverdata/serverfiles/server/server_config.cfg; do
+  [ -f "$c" ] && { echo "=== $c"; grep -v '^[[:space:]]*#' "$c" | grep -v '^[[:space:]]*$' | grep -iv 'password' | head -80; }
+done
+echo '=== Dateien'; ls -la /serverdata/serverfiles 2>/dev/null | head -40
+for l in $(ls -t /serverdata/serverfiles/*.log /serverdata/serverfiles/*/*.log 2>/dev/null | head -2); do echo "=== $l"; tail -n 60 "$l" | cut -c1-240; done
+"""
+
+
+@app.get("/api/servers/{sid}/container/diag", dependencies=auth)
+async def container_diag(sid: str):
+    """Fest vorgegebene Diagnose (Prozesse, Ports, Konfiguration) – nur Admins, keine freien Befehle."""
+    name = _container_of(sid)
+    try:
+        return {"output": await docker_api.exec_cmd(name, ["sh", "-c", DIAG_SH])}
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
 
 
 @app.get("/api/servers/{sid}/container/logs", dependencies=auth)

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=15">
+<link rel="stylesheet" href="/static/app.css?v=16">
 </head>
 <body>
 
@@ -42,6 +42,7 @@
     <div class="nav">
       <button data-view="dash" class="active">▦ Übersicht aller Server</button>
       <button data-view="players">☺ Spieler &amp; SteamIDs</button>
+      <button data-view="cache">⛁ Lancache-Verlauf</button>
       <button data-view="scan">⌕ Netzwerk-Scan <span class="pill hidden" id="scanBadge"></span></button>
       <button data-view="create" class="adminonly">＋ Neuen Server anlegen</button>
       <button data-view="users" class="adminonly">☰ Benutzer</button>
@@ -67,6 +68,13 @@
         <div id="dashGrid"></div>
         <div id="dashEmpty" class="empty hidden"><h2>Noch keine Server</h2><p>Lege links einen CS2-Server an (IP, Spielport, RCON-Passwort).</p></div>
       </div>
+    </section>
+
+    <!-- Lancache-Verlauf -->
+    <section id="view-cache" class="hidden">
+      <div class="topbar"><div><div class="title">Lancache-Verlauf</div><div class="sub" id="cacheSub">wird geladen …</div></div>
+        <div style="margin-left:auto" class="row"><span class="hint">Zeitraum</span><div class="seg" id="cacheRangeSeg"><button data-crange="24h">24 h</button><button data-crange="7d">7 Tage</button><button data-crange="30d">30 Tage</button><button data-crange="90d">90 Tage</button><button data-crange="365d">1 Jahr</button></div></div></div>
+      <div class="content" style="max-width:none"><div id="cacheHist"></div></div>
     </section>
 
     <!-- Spieler -->
@@ -492,6 +500,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=15"></script>
+<script src="/static/app.js?v=16"></script>
 </body>
 </html>

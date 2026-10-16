@@ -137,6 +137,7 @@ function showView(v){
   if (v === "dash"){ refreshDash(); refreshCache(); }
   if (v === "players") loadPlayers();
   if (v === "auto") renderAuto();
+  if (v === "cache") loadCacheHistory();
 }
 
 /* ================= Serverliste ================= */
@@ -232,7 +233,39 @@ const CACHE_NAMES = {steam: "Steam", epicgames: "Epic Games", origin: "EA App / 
   daybreak: "Daybreak", neverwinter: "Neverwinter", renegadex: "Renegade X", teso: "Elder Scrolls Online",
   warframe: "Warframe", cityofheroes: "City of Heroes", hirez: "Hi-Rez", pathofexile: "Path of Exile",
   bsg: "Escape from Tarkov", test: "Test", generic: "Sonstiges"};
-const cacheName = id => CACHE_NAMES[(id || "").toLowerCase()] || id || "?";
+const cacheName = id => id === "_other" ? "Weitere Dienste" : CACHE_NAMES[(id || "").toLowerCase()] || id || "?";
+// eigene, schlichte Symbole je Dienst (keine offiziellen Logos)
+const SVC_ICONS = {
+  steam: ['<rect x="2.5" y="7" width="19" height="11" rx="5"/><path d="M7.5 10.5v4M5.5 12.5h4"/><circle cx="15.5" cy="11.5" r="1"/><circle cx="18" cy="14" r="1"/>', "#5b8fd6"],
+  wsus: ['<rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><path d="M17 13v8M14 18l3 3 3-3"/>', "#4fb3e8"],
+  epicgames: ['<path d="M5 3h14v14l-7 4-7-4z"/><path d="M9 8h6M9 12h4"/>', "#b8b8b8"],
+  origin: ['<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/>', "#f57c3a"],
+  blizzard: ['<path d="M12 2v20M3.3 7l17.4 10M3.3 17L20.7 7"/>', "#4aa3ff"],
+  riot: ['<path d="M4 18l2-12 12-2 2 14z"/><path d="M8 18l1-7"/>', "#e84a4a"],
+  uplay: ['<circle cx="12" cy="12" r="8"/><path d="M8 13a4 4 0 1 0 4-5"/>', "#4f7bff"],
+  xboxlive: ['<circle cx="12" cy="12" r="8.5"/><path d="M7 6c3 3 7 9 9 13M17 6c-3 3-7 9-9 13"/>', "#4cbb5f"],
+  sony: ['<path d="M4 15h16M6 11h12M8 7h8"/>', "#3d6ee0"],
+  nintendo: ['<rect x="4" y="4" width="7" height="16" rx="3"/><rect x="13" y="4" width="7" height="16" rx="3"/>', "#e85454"],
+  apple: ['<path d="M12 7c-4-2-8 1-7 6s4 8 7 6c3 2 6-1 7-6s-3-8-7-6z"/><path d="M12 7c0-2 1-3 3-4"/>', "#c8c8c8"],
+  _: ['<path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 19h16"/>', "#9aa3ad"],
+};
+SVC_ICONS.windowsupdates = SVC_ICONS.wsus;
+function svcIcon(id, size = 16){
+  const [path, color] = SVC_ICONS[(id || "").toLowerCase()] || SVC_ICONS._;
+  return `<span class="gtile svctile" style="background:${color}"><svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg></span>`;
+}
+function svcRows(list){
+  return (list || []).map(x => {
+    const tot = x.hit + x.miss, p = tot ? Math.round(x.hit / tot * 100) : 0;
+    return `<tr><td><div class="row" style="gap:8px;flex-wrap:nowrap">${svcIcon(x.name, 15)}<b>${esc(cacheName(x.name))}</b> <span class="hint mono">${esc(x.name)}</span></div></td>
+      <td class="mono" style="color:var(--ok)">${fmtBytes(x.hit)}</td><td class="mono">${fmtBytes(x.miss)}</td><td class="mono">${fmtBytes(tot)}</td>
+      <td style="min-width:140px"><div class="cachebar" title="${p} % aus dem Cache"><i style="width:${p}%"></i></div></td><td class="mono">${p} %</td></tr>`;
+  }).join("");
+}
+function savedCard(bytes, label){
+  return `<div class="card savedcard"><div class="k">Traffic gespart${label ? " · " + label : ""}</div><div class="v" style="color:var(--ok)">${fmtBytes(bytes || 0)}</div>
+    <div class="s">nicht erneut aus dem Internet geladen</div></div>`;
+}
 async function refreshCache(){
   try { cacheData = await api("/api/cache"); } catch { return; }
   const c = cacheData, h = c.last_hour || {}, d = c.last_day || {};
@@ -251,21 +284,17 @@ async function refreshCache(){
     return;
   }
   const disk = c.disk ? Math.round(c.disk.used / c.disk.total * 100) : null;
-  const svc = (d.services || []).map(x => {
-    const tot = x.hit + x.miss, p = tot ? Math.round(x.hit / tot * 100) : 0;
-    return `<tr><td><b>${esc(cacheName(x.name))}</b> <span class="hint mono">${esc(x.name)}</span></td>
-      <td class="mono" style="color:var(--ok)">${fmtBytes(x.hit)}</td><td class="mono">${fmtBytes(x.miss)}</td><td class="mono">${fmtBytes(tot)}</td>
-      <td style="min-width:140px"><div class="cachebar" title="${p} % aus dem Cache"><i style="width:${p}%"></i></div></td><td class="mono">${p} %</td></tr>`;
-  }).join("");
+  const svc = svcRows(d.services);
   $("#cachePanel").innerHTML = `<div class="dsect"><h3 class="dhead"><span class="gtile" style="background:#7fb3a6">${gicon("cache", 16)}</span>Lancache <span class="hint">${esc(c.container)}${c.error ? " · " + esc(c.error) : ""}</span></h3>
     <div class="cards cachecards">
+      ${savedCard(d.hit_bytes, "24 h")}
       <div class="card"><div class="k">Aus dem Cache (24 h)</div><div class="v" style="color:var(--ok)">${fmtBytes(d.hit_bytes)}</div><div class="s">${d.hit_ratio != null ? d.hit_ratio + " % Trefferquote" : "noch keine Downloads"}</div></div>
       <div class="card"><div class="k">Aus dem Internet (24 h)</div><div class="v">${fmtBytes(d.miss_bytes)}</div><div class="s">${(d.requests || 0).toLocaleString("de-DE")} Anfragen</div></div>
       <div class="card"><div class="k">Durchsatz jetzt</div><div class="v">${fmtRate(c.rate_bps || 0)}</div><div class="s">davon ${fmtRate(c.hit_rate_bps || 0)} aus dem Cache · letzte Std. ${fmtBytes((h.hit_bytes||0)+(h.miss_bytes||0))}</div></div>
       <div class="card"><div class="k">Cache-Speicher</div><div class="v">${disk != null ? disk + " %" : "–"}</div>
         ${c.disk ? `<div class="bar" style="margin-top:6px"><i class="${lvl(disk)}" style="width:${disk}%"></i></div><div class="s">${fmtBytes(c.disk.used)} von ${fmtBytes(c.disk.total)}</div>` : ""}</div>
     </div>
-    ${svc ? `<div class="panel" style="padding:12px 16px"><h2 style="margin-bottom:6px">Was wurde ausgeliefert? <span class="hint">(letzte 24 h, nach Dienst)</span></h2>
+    ${svc ? `<div class="panel" style="padding:12px 16px"><h2 style="margin-bottom:6px">Was wurde ausgeliefert? <span class="hint">(letzte 24 h, nach Dienst)</span> <a href="#" class="hint" style="float:right" onclick="showView('cache');return false">Verlauf bis 1 Jahr →</a></h2>
       <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Dienst</th><th>aus dem Cache</th><th>aus dem Internet</th><th>gesamt</th><th>Trefferquote</th><th></th></tr></thead><tbody>${svc}</tbody></table></div></div>`
       : `<div class="hint" style="margin-bottom:14px">In den letzten 24 Stunden wurde nichts über den Lancache geladen.</div>`}
   </div>`;
@@ -371,7 +400,7 @@ async function refreshDash(){
 }
 
 /* ================= Server-Ansicht ================= */
-const VIEWS = ["dash","players","auto","server","scan","create","users"];
+const VIEWS = ["dash","players","auto","server","scan","create","users","cache"];
 function applyGameClasses(s){
   const g = gameOf(s), meta = GAMES[g] || {};
   document.body.classList.toggle("g-other", g !== "cs2");
@@ -1376,3 +1405,69 @@ async function refreshActivity(){
   });
   $$("[data-act-job]").forEach(el => el.onclick = () => showView("create"));
 }
+
+/* ================= Lancache-Verlauf (bis 1 Jahr) ================= */
+let cacheRange = (() => { try { return localStorage.getItem("gsmCacheRange") || "30d"; } catch { return "30d"; } })();
+const CACHE_RANGES = {"24h": "24 Stunden", "7d": "7 Tage", "30d": "30 Tage", "90d": "90 Tage", "365d": "1 Jahr"};
+$$("#cacheRangeSeg [data-crange]").forEach(b => b.onclick = () => {
+  cacheRange = b.dataset.crange;
+  try { localStorage.setItem("gsmCacheRange", cacheRange); } catch {}
+  loadCacheHistory();
+});
+function fmtBucket(t, stepH){
+  const d = new Date(t * 1000);
+  if (stepH < 24) return d.toLocaleString("de-DE", {weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"});
+  if (stepH === 24) return d.toLocaleDateString("de-DE", {weekday: "short", day: "2-digit", month: "2-digit", year: "numeric"});
+  return "Woche ab " + d.toLocaleDateString("de-DE", {day: "2-digit", month: "2-digit", year: "numeric"});
+}
+function cacheChart(points, stepH){
+  const w = 900, h = 180, n = points.length || 1, bw = w / n;
+  const max = Math.max(1, ...points.map(p => p.hit + p.miss));
+  const bars = points.map((p, i) => {
+    const hh = p.hit / max * (h - 4), mh = p.miss / max * (h - 4), x = (i * bw).toFixed(2), wd = Math.max(0.6, bw - (bw > 4 ? 1 : 0)).toFixed(2);
+    const tip = `${fmtBucket(p.t, stepH)}\naus dem Cache (gespart): ${fmtBytes(p.hit)}\naus dem Internet: ${fmtBytes(p.miss)}`;
+    return `<g><title>${esc(tip)}</title><rect x="${x}" y="0" width="${wd}" height="${h}" fill="transparent"/>
+      ${mh ? `<rect x="${x}" y="${(h - hh - mh).toFixed(1)}" width="${wd}" height="${mh.toFixed(1)}" fill="#8a7a66"/>` : ""}
+      ${hh ? `<rect x="${x}" y="${(h - hh).toFixed(1)}" width="${wd}" height="${hh.toFixed(1)}" fill="var(--ok)"/>` : ""}</g>`;
+  }).join("");
+  const first = points[0], last = points[points.length - 1];
+  return `<svg class="cachechart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${bars}
+      <line x1="0" y1="${h - 0.5}" x2="${w}" y2="${h - 0.5}" stroke="var(--line)"/></svg>
+    <div class="row hint" style="justify-content:space-between;margin-top:4px"><span>${first ? esc(fmtBucket(first.t, stepH)) : ""}</span>
+      <span>max. ${fmtBytes(max)} je ${stepH < 24 ? stepH + " h" : stepH === 24 ? "Tag" : "Woche"}</span><span>${last ? esc(fmtBucket(last.t, stepH)) : ""}</span></div>`;
+}
+async function loadCacheHistory(){
+  $$("#cacheRangeSeg [data-crange]").forEach(b => b.classList.toggle("active", b.dataset.crange === cacheRange));
+  let c;
+  try { c = await api(`/api/cache/history?range=${cacheRange}`); } catch (e) { $("#cacheHist").innerHTML = `<div class="hint">${esc(e.message)}</div>`; return; }
+  if (view !== "cache") return;
+  $("#cacheSub").textContent = c.container ? `${c.container} · ${CACHE_RANGES[c.range]}` + (c.since ? ` · Daten seit ${new Date(c.since * 1000).toLocaleDateString("de-DE")}` : "")
+    : (c.error || "kein Lancache gefunden");
+  const bf = c.backfill || {};
+  const bfHtml = !bf.done && bf.size ? `<div class="panel" style="padding:10px 14px;margin-bottom:14px"><div class="hint" style="margin-bottom:6px">Altes access.log wird einmalig eingelesen … ${Math.floor(bf.pos / bf.size * 100)} % (${fmtBytes(bf.pos)} von ${fmtBytes(bf.size)}, ${(bf.lines || 0).toLocaleString("de-DE")} Downloads)</div>
+      <div class="bar"><i style="width:${(bf.pos / bf.size * 100).toFixed(1)}%;background:var(--accent)"></i></div></div>`
+    : bf.error ? `<div class="hint" style="margin-bottom:14px">Rückimport: ${esc(bf.error)}</div>` : "";
+  const total = c.hit_bytes + c.miss_bytes;
+  const dn = c.disk_now, dpct = dn ? Math.round(dn.used / dn.total * 100) : null;
+  const diskVals = (c.disk || []).map(d => Math.round(d.used / d.total * 100));
+  const clients = (c.clients || []).map(x => `<tr><td class="mono">${esc(x.ip)}</td><td class="mono">${fmtBytes(x.bytes)}</td></tr>`).join("");
+  $("#cacheHist").innerHTML = `${bfHtml}
+    <div class="cards">
+      ${savedCard(c.hit_bytes, CACHE_RANGES[c.range])}
+      <div class="card"><div class="k">Aus dem Internet</div><div class="v">${fmtBytes(c.miss_bytes)}</div><div class="s">${(c.requests || 0).toLocaleString("de-DE")} Anfragen gesamt</div></div>
+      <div class="card"><div class="k">Trefferquote</div><div class="v">${c.hit_ratio != null ? c.hit_ratio + " %" : "–"}</div><div class="s">ausgeliefert gesamt ${fmtBytes(total)}</div></div>
+      <div class="card"><div class="k">Ø pro Tag</div><div class="v">${fmtBytes(c.per_day)}</div><div class="s">${c.peak.t ? "Spitze " + fmtRate(c.peak.bps) + " (" + new Date(c.peak.t * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"}) + ")" : "noch keine Spitze"}</div></div>
+      <div class="card"><div class="k">Cache-Speicher</div><div class="v">${dpct != null ? dpct + " %" : "–"}</div>
+        ${dn ? `<div class="bar" style="margin-top:6px"><i class="${lvl(dpct)}" style="width:${dpct}%"></i></div><div class="s">${fmtBytes(dn.used)} von ${fmtBytes(dn.total)}</div>` : ""}</div>
+    </div>
+    <div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:8px">Ausgeliefert je ${c.step_h < 24 ? c.step_h + " Stunde(n)" : c.step_h === 24 ? "Tag" : "Woche"}
+      <span class="hint"><span class="lgd" style="background:var(--ok)"></span> aus dem Cache (gespart) <span class="lgd" style="background:#8a7a66"></span> aus dem Internet</span></h2>
+      ${total ? cacheChart(c.points, c.step_h) : `<div class="hint">Für diesen Zeitraum liegen noch keine Daten vor.</div>`}</div>
+    ${c.services.length ? `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:6px">Was wurde gecacht? <span class="hint">(${CACHE_RANGES[c.range]}, nach Dienst)</span></h2>
+      <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Dienst</th><th>aus dem Cache</th><th>aus dem Internet</th><th>gesamt</th><th>Trefferquote</th><th></th></tr></thead><tbody>${svcRows(c.services)}</tbody></table></div></div>` : ""}
+    <div class="cgrid">
+      ${clients ? `<div class="panel" style="padding:12px 16px"><h2 style="margin-bottom:6px">Top-Clients <span class="hint">(${CACHE_RANGES[c.range]})</span></h2><table class="cachetable"><tbody>${clients}</tbody></table></div>` : ""}
+      ${diskVals.length > 1 ? `<div class="panel" style="padding:12px 16px"><h2 style="margin-bottom:6px">Cache-Speicher belegt <span class="hint">(% je Tag)</span></h2>${spark(diskVals, "var(--accent)", {min: 100, h: 60})}</div>` : ""}
+    </div>`;
+}
+setInterval(() => { if (view === "cache") loadCacheHistory(); }, 60000);
