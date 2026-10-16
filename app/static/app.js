@@ -1847,11 +1847,12 @@ async function loadPrefill(){
     pfLoaded = true; pfApps = (s.apps || []).slice();
     $$("[data-pf]").forEach(el => { const v = s.flags[el.dataset.pf]; if (el.type === "checkbox") el.checked = !!v; else el.value = v ?? ""; });
     $("#pfSchedule").value = s.schedule || "";
+    $("#pfYield").checked = s.yield !== false; $("#pfYieldMbs").value = s.yield_mbs ?? 2;
     renderPfApps();
   }
   $("#pfSub").textContent = `Konfiguration: ${d.config_dir}` + (d.dns ? ` · Lancache-DNS ${d.dns.join(", ")}` : " · kein Lancache-DNS gefunden");
   $("#pfCards").innerHTML = `
-    <div class="card"><div class="k">Status</div><div class="v" style="color:${run ? "var(--ok)" : "inherit"}">${run ? "läuft" : c ? (c.exit === 0 ? "fertig" : "beendet (" + c.exit + ")") : "noch nie gelaufen"}</div><div class="s">${c && c.finished && !run && !c.finished.startsWith("0001") ? "zuletzt " + new Date(c.finished).toLocaleString("de-DE") : esc(d.job.step || "")}</div></div>
+    <div class="card"><div class="k">Status</div><div class="v" style="color:${d.auto && d.auto.paused ? "var(--warn,#e5a50a)" : run ? "var(--ok)" : "inherit"}" title="${esc((d.auto && d.auto.reason) || "")}">${d.auto && d.auto.paused ? "pausiert" : run ? "läuft" : c ? (c.exit === 0 ? "fertig" : "beendet (" + c.exit + ")") : "noch nie gelaufen"}</div><div class="s">${d.auto && d.auto.paused ? esc(d.auto.reason || "") : c && c.finished && !run && !c.finished.startsWith("0001") ? "zuletzt " + new Date(c.finished).toLocaleString("de-DE") : esc(d.job.step || "")}</div></div>
     <div class="card"><div class="k">Steam-Konto</div><div class="v">${d.logged_in ? "angemeldet" : "nicht angemeldet"}</div><div class="s">${d.logged_in ? "Login gespeichert im Config-Ordner" : "beim ersten Lauf wird nach dem Login gefragt"}</div></div>
     <div class="card"><div class="k">Ausgewählte Spiele</div><div class="v">${(s.apps || []).length}</div><div class="s">${[s.flags.recent && "zuletzt gespielt", s.flags.all && "alle", s.flags.top && "Top " + s.flags.top].filter(Boolean).join(" · ") || "nur Auswahl"}</div></div>
     <div class="card"><div class="k">Zeitplan</div><div class="v">${s.schedule ? "täglich " + esc(s.schedule) : "aus"}</div><div class="s">${s.last_run ? "letzter Start " + new Date(s.last_run * 1000).toLocaleString("de-DE") : ""}</div></div>`;
@@ -1921,7 +1922,7 @@ $("#pfInput").addEventListener("keydown", e => { if (e.key === "Enter") pfSend()
 $("#pfSaveOpts").onclick = async () => {
   const flags = {};
   $$("[data-pf]").forEach(el => flags[el.dataset.pf] = el.type === "checkbox" ? el.checked : el.type === "number" ? (+el.value || 0) : el.value);
-  try { await api("/api/prefill/settings", {method: "PUT", body: {schedule: $("#pfSchedule").value, flags}}); toast("Gespeichert"); loadPrefill(); }
+  try { await api("/api/prefill/settings", {method: "PUT", body: {schedule: $("#pfSchedule").value, flags, yield: $("#pfYield").checked, yield_mbs: +$("#pfYieldMbs").value || 2}}); toast("Gespeichert"); loadPrefill(); }
   catch (e) { toast(e.message, true); }
 };
 setInterval(() => { if (view === "prefill" && !document.hidden) loadPrefill(); }, 2000);

@@ -16,7 +16,7 @@ from . import automation, docker_api, store
 IMAGE = "tpill90/steam-lancache-prefill:latest"
 NAME = "steamprefill"
 SETTINGS = "prefill.json"
-DEFAULTS = {"schedule": "", "flags": {"recent": False, "recently_purchased": False, "top": 0, "all": False,
+DEFAULTS = {"yield": True, "yield_mbs": 2.0, "schedule": "", "flags": {"recent": False, "recently_purchased": False, "top": 0, "all": False,
                                       "force": False, "verbose": False, "os": "windows"},
             "apps": [], "last_run": None, "last_scheduled": ""}
 
@@ -32,7 +32,7 @@ def settings() -> dict:
 
 def save_settings(data: dict) -> dict:
     s = settings()
-    for k in ("schedule", "flags", "apps", "last_run", "last_scheduled"):
+    for k in ("schedule", "flags", "apps", "last_run", "last_scheduled", "yield", "yield_mbs"):
         if k in data:
             s[k] = data[k]
     store.save(SETTINGS, s)
@@ -222,3 +222,45 @@ def parse_progress(text: str) -> dict:
         if re.search(r"(error|failed|exception|unable)", line, re.I):
             cur.update(state="Fehler", info=line[:160])
     return {"apps": apps, "current": next((a for a in reversed(apps) if a["state"] == "läuft"), None)}
+
+
+auto = {"paused": False, "since": None, "reason": None, "busy": 0, "quiet": 0}
+
+
+async def pause(on: bool) -> None:
+    await docker_api._req("POST", f"/containers/{NAME}/{'pause' if on else 'unpause'}", timeout=30)
+
+
+async def yield_check(cache_tx: float | None, prefill_rx: float | None, others_downloading: list[str]) -> None:
+    """Alle 5 s: Prefill pausieren, solange andere über den Cache laden (oder Server-Updates laufen), danach fortsetzen."""
+    s = settings()
+    st = await container_state()
+    running = bool(st and st.get("running"))
+    try:
+        info = await docker_api.inspect(NAME) if running else None
+    except docker_api.DockerError:
+        info = None
+    is_paused = bool(info and (info.get("State") or {}).get("Paused"))
+    if not running:
+        auto.update(paused=False, since=None, reason=None, busy=0, quiet=0)
+        return
+    if not s.get("yield"):
+        if is_paused and auto["paused"]:
+            await pause(False)
+            auto.update(paused=False, since=None, reason=None)
+        return
+    limit = float(s.get("yield_mbs") or 2.0) * 1e6
+    # Traffic an andere Clients = alles, was der Cache sendet, minus das, was Prefill selbst empfängt
+    others = max(0.0, (cache_tx or 0) - (0 if is_paused else (prefill_rx or 0)))
+    busy = others > limit or bool(others_downloading)
+    if busy:
+        auto["busy"] += 1; auto["quiet"] = 0
+    else:
+        auto["quiet"] += 1; auto["busy"] = 0
+    if not is_paused and auto["busy"] >= 2:
+        await pause(True)
+        why = ("Server-Update: " + ", ".join(others_downloading)) if others_downloading else f"andere laden {others / 1e6:.1f} MB/s über den Cache"
+        auto.update(paused=True, since=time.time(), reason=why)
+    elif is_paused and auto["paused"] and auto["quiet"] >= 6:      # 30 s Ruhe
+        await pause(False)
+        auto.update(paused=False, since=None, reason=None)

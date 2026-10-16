@@ -781,6 +781,18 @@ async def load_loop():
             for k in list(_loads):
                 if k not in names:
                     _loads.pop(k, None)
+        if n % 2 == 0 and docker_api.available():
+            try:
+                lc_ = cache_stats.state.get("container")
+                cd = livestats.data.get(lc_ or "") or {}
+                pd = livestats.data.get(prefill.NAME) or {}
+                dls = [x["name"] for x in load_servers() if x.get("container") and
+                       ((install_watch.state.get(x["container"]) or {}).get("progress") or {}).get("phase") == "downloading"]
+                await prefill.yield_check(cd.get("tx_bps"), pd.get("rx_bps"), dls)
+            except docker_api.DockerError:
+                pass
+            except Exception:  # noqa: BLE001
+                log.exception("SteamPrefill-Pause")
         if n % 24 == 3 and docker_api.available():
             try:
                 await prefill_scheduler()
@@ -934,6 +946,8 @@ async def activity():
             cur = pp["current"]
             d = livestats.data.get(prefill.NAME) or {}
             done = sum(1 for a in pp["apps"] if a["state"] in ("fertig", "aktuell"))
+            if prefill.auto.get("paused"):
+                cur = dict(cur or {"name": "", "pct": 0.0}); cur["name"] = (cur["name"] + " – pausiert").strip(" –")
             items.append({"server_id": None, "name": "SteamPrefill" + (f": {cur['name']}" if cur else ""), "game": "prefill",
                           "container": prefill.NAME, "errors": [], "prefill": True,
                           "progress": {"label": "Vorladen", "pct": cur["pct"] if cur else 0.0, "rate": d.get("rx_bps"),
@@ -2128,7 +2142,7 @@ async def prefill_state(tail: int = 300):
             "rate": (livestats.data.get(prefill.NAME) or {}).get("rx_bps") if st and st.get("running") else None, "config_dir": prefill.config_dir(), "files": files,
             "logged_in": any(f.lower().startswith("account") or f.endswith(".dat") or "token" in f.lower() for f in files),
             "log": lg, "prompt": prefill.prompt_of(lg) if st and st.get("running") else None, "progress": prog,
-            "job": prefill.job, "dns": await lancache_dns()}
+            "job": prefill.job, "dns": await lancache_dns(), "auto": prefill.auto}
 
 
 class PrefillRunIn(BaseModel):
@@ -2211,6 +2225,8 @@ async def prefill_apps(data: PrefillApps):
 class PrefillSettings(BaseModel):
     schedule: str = Field("", max_length=5)
     flags: dict
+    yield_: bool = Field(True, alias="yield")
+    yield_mbs: float = Field(2.0, ge=0.1, le=1000)
 
 
 @app.put("/api/prefill/settings", dependencies=auth)
@@ -2221,7 +2237,7 @@ async def prefill_settings(data: PrefillSettings):
     flags = {"recent": bool(f.get("recent")), "recently_purchased": bool(f.get("recently_purchased")),
              "top": max(0, min(100, int(f.get("top") or 0))), "all": bool(f.get("all")), "force": bool(f.get("force")),
              "verbose": bool(f.get("verbose")), "os": f.get("os") if f.get("os") in ("windows", "linux", "macos") else "windows"}
-    return prefill.save_settings({"schedule": data.schedule, "flags": flags})
+    return prefill.save_settings({"schedule": data.schedule, "flags": flags, "yield": data.yield_, "yield_mbs": data.yield_mbs})
 
 
 async def prefill_scheduler():
