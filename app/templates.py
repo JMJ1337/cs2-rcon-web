@@ -184,7 +184,7 @@ def build(game: str, v: dict, data_dir: str) -> dict:
                                      "27015/udp": [{"HostPort": str(sport)}], "8080/tcp": [{"HostPort": str(wport)}]})
         host["Binds"] += [f"{data_dir}/steamcmd:/serverdata/steamcmd", f"{data_dir}/serverfiles:/serverdata/serverfiles"]
         spec_extra = {}
-        srv = {"port": qport, "password": "", "web_url": f"http://{{host}}:{wport}"}
+        srv = {"port": qport, "password": "", "web_url": f"http://{{host}}:{wport}", "game_port": port}
     else:
         raise ValueError("Unbekanntes Spiel")
     spec = {"Image": t["image"], "Env": env, "ExposedPorts": exposed, "HostConfig": host, "Labels": labels, **spec_extra}

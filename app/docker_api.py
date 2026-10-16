@@ -93,8 +93,11 @@ async def stats(name: str) -> dict:
         cpu_pct = None
     mem = s.get("memory_stats", {})
     usage = mem.get("usage", 0) - (mem.get("stats", {}).get("inactive_file") or 0)
+    nets = s.get("networks") or {}
+    rx = sum((n or {}).get("rx_bytes", 0) for n in nets.values()) if nets else None
+    tx = sum((n or {}).get("tx_bytes", 0) for n in nets.values()) if nets else None
     return {"cpu": cpu_pct, "mem_mb": round(usage / 1048576) if usage else None,
-            "mem_limit_mb": round(mem.get("limit", 0) / 1048576) or None}
+            "mem_limit_mb": round(mem.get("limit", 0) / 1048576) or None, "net_rx": rx, "net_tx": tx}
 
 
 async def exec_cmd(name: str, cmd: list[str]) -> str:

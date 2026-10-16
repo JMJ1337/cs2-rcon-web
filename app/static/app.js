@@ -137,7 +137,7 @@ function showView(v){
   if (v === "dash"){ refreshDash(); refreshCache(); }
   if (v === "players") loadPlayers();
   if (v === "auto") renderAuto();
-  if (v === "cache") loadCacheHistory();
+  if (v === "cache"){ loadCacheHistory(); loadDnsCheck(); }
 }
 
 /* ================= Serverliste ================= */
@@ -209,7 +209,8 @@ async function refreshHost(){
   $("#hlHost").textContent = h.cores ? h.cores + " Kerne" : "";
   const g = h.games || {};
   $("#hlSub").innerHTML = `${fmtMem(h.mem_used_mb)} von ${fmtMem(h.mem_total_mb)} · Load ${h.load ? h.load.map(x => x.toFixed(2)).join(" ") : "–"}` +
-    (g.containers ? `<br>Spielserver: ${g.running}/${g.containers} laufen · ${g.cpu_host} % CPU · ${fmtMem(g.mem_mb)}` : "");
+    (g.containers ? `<br>Spielserver: ${g.running}/${g.containers} laufen · ${g.cpu_host} % CPU · ${fmtMem(g.mem_mb)}` +
+      (g.rx_bps || g.tx_bps ? ` · Netz ↓ ${fmtRate(g.rx_bps)} ↑ ${fmtRate(g.tx_bps)}` : "") : "");
 }
 function loadHtml(l){
   if (!l) return "";
@@ -218,7 +219,11 @@ function loadHtml(l){
   const c = l.cpu_host || 0;
   return `<div class="loadrow" title="CPU bezogen auf den ganzen Host (${l.cpu ?? "?"} % eines Kerns)"><span>Last</span>
     <div class="bar"><i class="${lvl(c)}" style="width:${Math.min(100, c)}%"></i></div>
-    <span><b>${c.toFixed(1)} %</b> CPU · <b>${fmtMem(l.mem_mb)}</b></span></div>`;
+    <span><b>${c.toFixed(1)} %</b> CPU · <b>${fmtMem(l.mem_mb)}</b></span></div>
+    <div class="loadrow" title="Netzwerk des Containers (empfangen / gesendet)"><span>Netz</span>
+    ${l.net_host ? `<span class="hint">Host-Netzwerk – pro Server nicht messbar</span><span></span>` :
+      `<div class="bar"><i style="width:${Math.min(100, ((l.rx_bps || 0) + (l.tx_bps || 0)) / LINK_BPS * 100)}%;background:#4f9dde"></i></div>
+       <span>↓ <b>${l.rx_bps != null ? fmtRate(l.rx_bps) : "–"}</b> · ↑ <b>${l.tx_bps != null ? fmtRate(l.tx_bps) : "–"}</b></span>`}</div>`;
 }
 
 /* ================= Lancache ================= */
@@ -350,6 +355,13 @@ function hostPanelHtml(){
       <div><div class="mlab"><span>RAM belegt</span><b>jetzt ${memN.length ? memN[memN.length-1] : "–"} % · max ${mx(memN)} %</b></div>${spark(m.mem, "#a78bfa", {min: 100})}</div>
     </div></div></div>`;
 }
+function netCell(m){
+  const tot = (m.rx || []).map((v, i) => v == null && (m.tx || [])[i] == null ? null : (v || 0) + ((m.tx || [])[i] || 0));
+  const nums = tot.filter(v => v != null);
+  if (!nums.length) return "";
+  const avg = nums.reduce((a, b) => a + b, 0) / nums.length;
+  return `<div class="mcell" title="Netzwerk (empfangen + gesendet)"><div class="mlab"><span>Netz</span><b>Ø ${fmtRate(avg)} · max ${fmtRate(Math.max(...nums))}</b></div>${spark(tot, "#4f9dde", {min: 20000})}</div>`;
+}
 function metricsHtml(sid, color){
   const m = metricsData[sid];
   if (!m || !m.samples) return `<div class="hint mstats">Verlauf wird gesammelt …</div>`;
@@ -359,6 +371,7 @@ function metricsHtml(sid, color){
       <div class="mcell"><div class="mlab"><span>Spieler · ${rangeLabel(m.minutes)}</span><b>Peak ${m.peak_24h}</b></div>${spark(m.players, color, {min: 2})}</div>
       ${cpuNums.length ? `<div class="mcell"><div class="mlab"><span>CPU</span><b>Ø ${cpuAvg} %</b></div>${spark(m.cpu, "var(--ct)", {min: 5})}</div>` : ""}
       ${memNums.length ? `<div class="mcell"><div class="mlab"><span>RAM</span><b>${fmtMem(memNums[memNums.length-1])}</b></div>${spark(m.mem, "#a78bfa", {min: 256})}</div>` : ""}
+      ${netCell(m)}
     </div>
     ${!cpuNums.length && !memNums.length ? `<div class="hint mstats">CPU/RAM: ${servers.find(x => x.id === sid)?.container ? "Container läuft nicht" : "unter „Bearbeiten“ den Docker-Container zuordnen"}</div>` : ""}
     <div class="hint mstats">Verfügbarkeit 24 h: <b>${m.uptime_24h != null ? m.uptime_24h + " %" : "–"}</b>${m.ping != null ? ` · Ping Ø <b>${m.ping} ms</b>` : ""} · Peak 24 h: <b>${m.peak_24h}</b></div>`;
@@ -909,6 +922,7 @@ function renderAuto(){
   $("#setGamesBase").value = settings.games_base || "/mnt/grohlan";
   $("#setCacheContainer").value = settings.cache_container || "";
   $("#setHostnamePattern").value = settings.hostname_pattern ?? "CS#{nr} {mode}";
+  $("#setContainerDns").value = settings.container_dns || "";
   $$("[data-mdel]").forEach(b => b.onclick = () => { readAuto(); settings.modes.splice(+b.dataset.mdel, 1); renderAuto(); });
   $$("[data-rdel]").forEach(b => b.onclick = () => { readAuto(); settings.map_rules.splice(+b.dataset.rdel, 1); renderAuto(); });
 }
@@ -926,7 +940,7 @@ $("#btnAutoSave").onclick = async () => {
       public_url: $("#setPublicUrl").value.trim(), watch_interval: parseInt($("#setInterval").value, 10) || 10,
       scan_interval: Math.max(0, parseInt($("#setScanInterval").value, 10) || 0), scan_subnets: $("#setScanSubnets").value.trim(),
       games_base: $("#setGamesBase").value.trim(), cache_container: $("#setCacheContainer").value.trim(),
-      hostname_pattern: $("#setHostnamePattern").value.trim()}});
+      hostname_pattern: $("#setHostnamePattern").value.trim(), container_dns: $("#setContainerDns").value.trim()}});
     renderAuto(); refreshModeSelects(); toast("Gespeichert – wird beim nächsten Prüfen angewendet");
   } catch(err){ toast(err.message, true); }
 };
@@ -1468,7 +1482,10 @@ async function loadCacheHistory(){
   const total = c.hit_bytes + c.miss_bytes;
   const dn = c.disk_now, dpct = dn ? Math.round(dn.used / dn.total * 100) : null;
   const diskVals = (c.disk || []).map(d => Math.round(d.used / d.total * 100));
-  const clients = (c.clients || []).map(x => `<tr><td class="mono">${esc(x.ip)}</td><td class="mono">${fmtBytes(x.bytes)}</td></tr>`).join("");
+  const cmax = Math.max(1, ...(c.clients || []).map(x => x.bytes));
+  const clients = (c.clients || []).map(x => `<tr><td><b>${esc(x.name || "unbekannt")}</b><div class="hint mono">${esc(x.ip)}</div></td>
+    <td style="min-width:120px;width:40%"><div class="cachebar"><i style="width:${(x.bytes / cmax * 100).toFixed(1)}%;background:#4f9dde"></i></div></td>
+    <td class="mono">${fmtBytes(x.bytes)}</td></tr>`).join("");
   $("#cacheHist").innerHTML = `${bfHtml}
     <div class="cards">
       ${savedCard(c.hit_bytes, CACHE_RANGES[c.range])}
@@ -1484,8 +1501,42 @@ async function loadCacheHistory(){
     ${c.services.length ? `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:6px">Was wurde gecacht? <span class="hint">(${CACHE_RANGES[c.range]}, nach Dienst)</span></h2>
       <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Dienst</th><th>aus dem Cache</th><th>aus dem Internet</th><th>gesamt</th><th>Trefferquote</th><th></th></tr></thead><tbody>${svcRows(c.services)}</tbody></table></div></div>` : ""}
     <div class="cgrid">
-      ${clients ? `<div class="panel" style="padding:12px 16px"><h2 style="margin-bottom:6px">Top-Clients <span class="hint">(${CACHE_RANGES[c.range]})</span></h2><table class="cachetable"><tbody>${clients}</tbody></table></div>` : ""}
+      ${clients ? `<div class="panel" style="padding:12px 16px"><h2 style="margin-bottom:6px">Top-Clients <span class="hint">(${CACHE_RANGES[c.range]}, Rechnername per DNS/NetBIOS)</span></h2><table class="cachetable"><tbody>${clients}</tbody></table></div>` : ""}
       ${diskVals.length > 1 ? `<div class="panel" style="padding:12px 16px"><h2 style="margin-bottom:6px">Cache-Speicher belegt <span class="hint">(% je Tag)</span></h2>${spark(diskVals, "var(--accent)", {min: 100, h: 60})}</div>` : ""}
     </div>`;
 }
 setInterval(() => { if (view === "cache") loadCacheHistory(); }, 60000);
+
+/* Laufen die Downloads der Spielserver-Container über den Lancache? */
+async function loadDnsCheck(){
+  const el = $("#cacheDns");
+  el.innerHTML = `<div class="hint">Prüfe Spielserver-Container …</div>`;
+  let r;
+  try { r = await api("/api/cache/dns-check"); } catch (e) { el.innerHTML = `<div class="hint">${esc(e.message)}</div>`; return; }
+  const admin = me && me.role === "admin";
+  const rows = r.items.map(x => {
+    const sid = (servers.find(s => s.container === x.container) || {}).id;
+    const st = x.ok === true ? `<span style="color:var(--ok)">✓ über Lancache (${esc(x.resolves)})</span>`
+      : x.ok === false || (x.ok === null && !x.note) ? `<span style="color:var(--bad)">✗ lädt am Cache vorbei</span>`
+      : `<span class="hint">${esc(x.note || "unbekannt")}</span>`;
+    let fix = "";
+    if (x.ok === false || (x.ok === null && !x.note)){
+      fix = x.managed && admin && sid ? `<button class="small primary" data-dnsfix="${esc(sid)}">Mit Lancache-DNS neu erstellen</button>`
+        : x.stack ? `<span class="hint">im Stack „${esc(x.stack)}“ <span class="mono">dns: [${esc((r.dns || ["IP"])[0])}]</span> eintragen</span>` : "";
+    }
+    return `<tr><td><b>${esc(x.server)}</b><div class="hint mono">${esc(x.container)}</div></td><td>${st}</td>
+      <td class="mono hint">${esc((x.dns && x.dns.length ? x.dns : x.nameserver || []).join(", ") || "Standard")}</td><td>${fix}</td></tr>`;
+  }).join("");
+  el.innerHTML = `<div class="panel" style="padding:12px 16px;margin-top:14px"><h2 style="margin-bottom:6px">Laden die Spielserver über den Cache?
+      <span class="hint">Lancache-DNS: ${r.dns ? esc(r.dns.join(", ")) : "nicht gefunden"}</span> <button class="small" id="btnDnsRe" style="float:right">neu prüfen</button></h2>
+    <div class="hint" style="margin-bottom:8px">Container fragen sonst den normalen DNS – dann holt SteamCMD Updates direkt aus dem Internet und der Lancache sieht davon nichts. Neue Server bekommen den Lancache-DNS automatisch.</div>
+    <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Server</th><th>Status</th><th>DNS</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  $("#btnDnsRe").onclick = loadDnsCheck;
+  $$("[data-dnsfix]").forEach(b => b.onclick = async () => {
+    if (!confirm("Container wird kurz gestoppt und mit Lancache-DNS neu erstellt (Daten bleiben erhalten). Fortfahren?")) return;
+    b.disabled = true; b.textContent = "wird neu erstellt …";
+    try { await api(`/api/servers/${b.dataset.dnsfix}/container/use-lancache`, {method: "POST"}); toast("Container neu erstellt – lädt jetzt über den Lancache"); }
+    catch (e) { toast(e.message, true); }
+    loadDnsCheck();
+  });
+}

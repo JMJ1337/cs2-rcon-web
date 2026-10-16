@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import hashlib
 import hmac
 import json
@@ -16,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import automation, cache_history, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
+from . import automation, cache_history, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
 from .rcon import RconAuthError, RconClient, RconError
@@ -100,7 +101,7 @@ def require_auth(request: Request):
         raise HTTPException(403, "Nur Ansicht – keine Berechtigung für Änderungen")
     admin_only = (path.startswith(ADMIN_PATHS) and not (path == "/api/settings" and method == "GET")) or \
         (method in ("POST", "PUT", "DELETE") and re.fullmatch(r"/api/servers(/[\w-]+)?", path)) or \
-        re.fullmatch(r"/api/servers/[\w-]+/(delete(-preview)?|container/diag)", path)
+        re.fullmatch(r"/api/servers/[\w-]+/(delete(-preview)?|container/(diag|use-lancache))", path)
     if admin_only and level < 3:
         raise HTTPException(403, "Nur für Administratoren")
     request.state.user = u
@@ -458,8 +459,10 @@ def join_info(s: dict, password: str | None = None) -> dict:
         return {"address": f"{host}:{p}", "url": f"steam://run/892970//+connect%20{host}:{p}/",
                 "hint": "Startet Valheim und verbindet – Passwort im Spiel eingeben."}
     if g == "wreckfest":
-        return {"address": f"{host}:{port}", "url": f"steam://connect/{host}:{port}",
-                "hint": "Falls der Link nicht greift: Steam → Server → Favoriten → Adresse hinzufügen."}
+        p = gp or 33540
+        return {"address": f"{host}:{p}", "url": f"steam://connect/{host}:{port}" + (f"/{password}" if password else ""),
+                "hint": "Im Spiel: Mehrspieler → Server-Browser (Reiter Internet/LAN) oder Steam → Ansicht → Server → Favoriten → "
+                        f"{host}:{port} hinzufügen." + (f" Passwort: {password}" if password else "")}
     if g == "satisfactory":
         p = gp or port
         return {"address": f"{host}:{p}", "url": None,
@@ -578,7 +581,10 @@ async def collect_generic(s: dict) -> dict:
         elif g == "valheim":
             st = await adapters.valheim_status(s["host"], int(s["port"]))
         elif g == "wreckfest":
-            st = await adapters.wreckfest_status(s["host"], int(s["port"]))
+            if s.get("container") and docker_api.available():
+                st = await adapters.wreckfest_container_status(s["container"])
+            else:
+                st = await adapters.wreckfest_status(s["host"], int(s["port"]))
         else:
             raise RconError("Unbekanntes Spiel")
     except (sfmod.SatisfactoryError, adapters.a2s.A2SError) as e:
@@ -587,7 +593,8 @@ async def collect_generic(s: dict) -> dict:
         q = await scanner.satisfactory_query(s["host"], int(s["port"]))
         if q:
             st["hostname"] = q["name"]
-    result = {"online": True, "game": g, **st, "join": join_info(s)}
+    pw = st.pop("password", None) if g == "wreckfest" else None
+    result = {"online": True, "game": g, **st, "join": join_info(s, pw)}
     await _sync_name(s, st.get("hostname"))
     prev = _state.get(s["id"], {})
     _state[s["id"]] = {**{k: v for k, v in prev.items() if k.startswith("_")}, **result}
@@ -614,7 +621,8 @@ async def overview():
         st = _state.get(s["id"], {})
         item = {"server": public(s), **{k: v for k, v in st.items() if not k.startswith("_") and k != "raw"}}
         if s.get("container"):
-            item["load"] = _loads.get(s["container"])
+            ld = _loads.get(s["container"])
+            item["load"] = {k: v for k, v in ld.items() if not k.startswith("_")} if ld else None
             item["install"] = install_watch.state.get(s["container"])
         out.append(item)
     return out
@@ -630,9 +638,18 @@ async def _container_load(name: str):
         running = info.get("State", {}).get("Running")
         st = await docker_api.stats(name) if running else {"cpu": 0, "mem_mb": 0, "mem_limit_mb": None}
         cores = hoststats.state.get("cores") or 1
+        now = time.time()
+        prev = _loads.get(name) or {}
+        rx_bps = tx_bps = None
+        if st.get("net_rx") is not None and prev.get("_rx") is not None and now > prev.get("updated", now):
+            dt = now - prev["updated"]
+            rx_bps = max(0, round((st["net_rx"] - prev["_rx"]) / dt))
+            tx_bps = max(0, round((st["net_tx"] - prev["_tx"]) / dt))
         _loads[name] = {"state": info.get("State", {}).get("Status"), "cpu": st["cpu"],
                         "cpu_host": round(st["cpu"] / cores, 1) if st["cpu"] is not None else None,
-                        "mem_mb": st["mem_mb"], "updated": time.time()}
+                        "mem_mb": st["mem_mb"], "updated": now,
+                        "net_host": (info.get("HostConfig") or {}).get("NetworkMode") == "host",
+                        "rx_bps": rx_bps, "tx_bps": tx_bps, "_rx": st.get("net_rx"), "_tx": st.get("net_tx")}
     except docker_api.DockerError as e:
         _loads[name] = {"state": "unbekannt", "error": str(e), "updated": time.time()}
 
@@ -811,7 +828,98 @@ async def cache_metrics():
         return {"error": "Docker-Socket nicht eingebunden", "container": None}
     if cache_stats.state["updated"] is None:
         await cache_stats.poll(automation.get_settings().get("cache_container") or "")
-    return cache_stats.summary()
+    out = cache_stats.summary()
+    hosts = {x["host"] for x in load_servers()}
+    for k in ("last_hour", "last_day"):
+        if out.get(k, {}).get("clients"):
+            out[k]["clients"] = await netnames.annotate(out[k]["clients"], hosts)
+    return out
+
+
+async def lancache_dns() -> list[str] | None:
+    """DNS für Spielserver-Container: Einstellung, sonst automatisch der Docker-Host, wenn dort lancache-dns läuft."""
+    manual = (automation.get_settings().get("container_dns") or "").strip()
+    if manual:
+        return [x.strip() for x in re.split(r"[,\s]+", manual) if x.strip()]
+    if not docker_api.available():
+        return None
+    try:
+        cs = await docker_api.list_containers()
+    except docker_api.DockerError:
+        return None
+    dns = [c for c in cs if c["state"] == "running" and ("lancache-dns" in (c["image"] or "").lower()
+                                                         or ("lancache" in c["name"].lower() and "dns" in c["name"].lower()))]
+    if not dns:
+        return None
+    hosts = [x["host"] for x in load_servers() if re.fullmatch(r"\d+\.\d+\.\d+\.\d+", x.get("host") or "")]
+    if not hosts:
+        return None
+    return [max(set(hosts), key=hosts.count)]
+
+
+DNS_CHECK_SH = "getent hosts lancache.steamcontent.com 2>/dev/null | head -1 || nslookup lancache.steamcontent.com 2>/dev/null | tail -2; echo '#'; grep nameserver /etc/resolv.conf | head -3"
+
+
+@app.get("/api/cache/dns-check", dependencies=auth)
+async def cache_dns_check():
+    """Prüft je Spielserver-Container, ob Downloads über den Lancache laufen (lancache.steamcontent.com auflösbar)."""
+    want = await lancache_dns()
+    names = sorted({(x["container"], x["name"]) for x in load_servers() if x.get("container")})
+
+    async def one(cname, sname):
+        item = {"container": cname, "server": sname, "dns": None, "resolves": None, "ok": None, "managed": False}
+        try:
+            info = await docker_api.inspect(cname)
+            item["dns"] = (info.get("HostConfig") or {}).get("Dns") or []
+            item["managed"] = (info.get("Config", {}).get("Labels") or {}).get("gsm.managed") == "1"
+            item["stack"] = (info.get("Config", {}).get("Labels") or {}).get("com.docker.compose.project")
+            if not info.get("State", {}).get("Running"):
+                item["note"] = "Container läuft nicht"
+                return item
+            out = await asyncio.wait_for(docker_api.exec_cmd(cname, ["sh", "-c", DNS_CHECK_SH]), 8)
+            res, _, ns = out.partition("#")
+            m = re.search(r"(\d+\.\d+\.\d+\.\d+)", res)
+            item["resolves"] = m.group(1) if m else None
+            item["nameserver"] = re.findall(r"nameserver\s+(\S+)", ns)
+            item["ok"] = bool(m) and ipaddress.ip_address(m.group(1)).is_private
+        except (docker_api.DockerError, asyncio.TimeoutError, ValueError) as e:
+            item["note"] = str(e) or "Zeitüberschreitung"
+        return item
+
+    return {"dns": want, "items": await asyncio.gather(*(one(c, n) for c, n in names))}
+
+
+@app.post("/api/servers/{sid}/container/use-lancache", dependencies=auth)
+async def container_use_lancache(sid: str):
+    """Vom Tool angelegten Container mit Lancache-DNS neu erstellen (Daten bleiben, liegen im Ordner)."""
+    name = _container_of(sid)
+    dns = await lancache_dns()
+    if not dns:
+        raise HTTPException(400, "Kein Lancache-DNS gefunden – unter „Automatik & Einstellungen“ eintragen")
+    try:
+        info = await docker_api.inspect(name)
+        cfg, hc = info["Config"], dict(info["HostConfig"])
+        if (cfg.get("Labels") or {}).get("gsm.managed") != "1":
+            raise HTTPException(400, "Nur für Container, die dieses Tool angelegt hat – bei Portainer-Stacks "
+                                     f"im Stack „dns: [{dns[0]}]“ eintragen")
+        hc["Dns"] = dns
+        spec = {k: cfg.get(k) for k in ("Image", "Env", "Cmd", "Entrypoint", "ExposedPorts", "Labels", "WorkingDir",
+                                         "User", "Tty", "OpenStdin", "StopSignal", "Volumes") if cfg.get(k) is not None}
+        spec["HostConfig"] = hc
+        tmp = f"{name}-alt-{int(time.time())}"
+        await docker_api._req("POST", f"/containers/{name}/stop", params={"t": "30"}, timeout=60)
+        await docker_api._req("POST", f"/containers/{name}/rename", params={"name": tmp})
+        try:
+            await docker_api.create_container(name, spec)
+        except docker_api.DockerError:
+            await docker_api._req("POST", f"/containers/{tmp}/rename", params={"name": name})
+            await docker_api._req("POST", f"/containers/{name}/start", timeout=60)
+            raise
+        await docker_api._req("DELETE", f"/containers/{tmp}", params={"force": "1"}, timeout=60)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    drop_client(sid)
+    return {"ok": True, "dns": dns}
 
 
 @app.get("/api/cache/history", dependencies=auth)
@@ -822,6 +930,7 @@ async def cache_history_api(range: str = "30d"):
     out["container"] = cache_stats.state["container"]
     out["error"] = cache_stats.state["error"]
     out["disk_now"] = cache_stats.state["disk"]
+    out["clients"] = await netnames.annotate(out["clients"], {x["host"] for x in load_servers()})
     return out
 
 
@@ -833,7 +942,8 @@ async def host_load():
     games = [v for v in _loads.values() if v.get("cpu") is not None]
     h["games"] = {"containers": len(_loads), "running": sum(1 for v in _loads.values() if v.get("state") == "running"),
                   "cpu_host": round(sum(v.get("cpu_host") or 0 for v in games), 1),
-                  "mem_mb": sum(v.get("mem_mb") or 0 for v in games)}
+                  "mem_mb": sum(v.get("mem_mb") or 0 for v in games),
+                  "rx_bps": sum(v.get("rx_bps") or 0 for v in games), "tx_bps": sum(v.get("tx_bps") or 0 for v in games)}
     return h
 
 
@@ -988,6 +1098,7 @@ class SettingsIn(BaseModel):
     games_base: str | None = Field(None, max_length=200)
     cache_container: str | None = Field(None, max_length=100)
     hostname_pattern: str | None = Field(None, max_length=60)
+    container_dns: str | None = Field(None, max_length=100)
 
 
 @app.get("/api/settings", dependencies=auth)
@@ -1530,6 +1641,10 @@ async def _create_job(job: dict, data: CreateIn, host: str):
             if not await docker_api.image_exists(b["image"]):
                 raise
             _job_log(job, f"Pull fehlgeschlagen ({e}) – nutze vorhandenes lokales Image")
+        dns = await lancache_dns()
+        if dns:
+            b["spec"]["HostConfig"]["Dns"] = dns
+            _job_log(job, f"DNS {', '.join(dns)} (Lancache) – Downloads laufen über den Cache")
         _job_log(job, f"Container {b['name']} anlegen und starten")
         await docker_api.create_container(b["name"], b["spec"])
         srv = {"id": uuid.uuid4().hex[:10], "name": b["name"], "host": host, "port": b["server"]["port"],

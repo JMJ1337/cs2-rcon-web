@@ -31,9 +31,11 @@ def record(sid: str, state: dict, load: dict | None) -> None:
     pings = [pl.get("ping") for pl in state.get("players") or [] if not pl.get("bot") and isinstance(pl.get("ping"), int)]
     cpu = (load or {}).get("cpu_host") if (load or {}).get("state") == "running" else None
     mem = (load or {}).get("mem_mb") if (load or {}).get("state") == "running" else None
+    rx = (load or {}).get("rx_bps") if (load or {}).get("state") == "running" else None
+    tx = (load or {}).get("tx_bps") if (load or {}).get("state") == "running" else None
     if p is None:
         p = s[minute] = {"pl": players, "on": 1 if online else 0, "n": 1, "cpu": cpu, "mem": mem,
-                         "ping": round(sum(pings) / len(pings)) if pings else None}
+                         "ping": round(sum(pings) / len(pings)) if pings else None, "rx": rx, "tx": tx, "nn": 1 if rx is not None else 0}
     else:
         p["pl"] = max(p["pl"], players)
         p["on"] = p["on"] + (1 if online else 0)
@@ -42,6 +44,11 @@ def record(sid: str, state: dict, load: dict | None) -> None:
             p["cpu"] = round(((p["cpu"] or 0) * (p["n"] - 1) + cpu) / p["n"], 1) if p["cpu"] is not None else cpu
         if mem is not None:
             p["mem"] = mem
+        if rx is not None:
+            nn = p.get("nn", 0) + 1
+            p["rx"] = round(((p.get("rx") or 0) * (nn - 1) + rx) / nn)
+            p["tx"] = round(((p.get("tx") or 0) * (nn - 1) + (tx or 0)) / nn)
+            p["nn"] = nn
         if pings:
             p["ping"] = round(sum(pings) / len(pings))
     cutoff = minute - KEEP
@@ -88,7 +95,7 @@ def summary(sid: str, minutes: int = 360, buckets: int = 72) -> dict:
     pts = _series.get(sid, {})
     now = int(time.time() // 60)
     step = max(1, minutes // buckets)
-    players, cpu, mem = [], [], []
+    players, cpu, mem, rx, tx = [], [], [], [], []
     for b in range(buckets):
         start = now - minutes + 1 + b * step
         seg = [pts[m] for m in range(start, start + step) if m in pts]
@@ -97,10 +104,14 @@ def summary(sid: str, minutes: int = 360, buckets: int = 72) -> dict:
         cpu.append(round(sum(c) / len(c), 1) if c else None)
         r = [x["mem"] for x in seg if x.get("mem") is not None]
         mem.append(r[-1] if r else None)
+        a = [x["rx"] for x in seg if x.get("rx") is not None]
+        rx.append(round(sum(a) / len(a)) if a else None)
+        a = [x["tx"] for x in seg if x.get("tx") is not None]
+        tx.append(round(sum(a) / len(a)) if a else None)
     day = [pts[m] for m in range(now - KEEP, now + 1) if m in pts]
     up = round(sum(x["on"] / x["n"] for x in day) / len(day) * 100, 1) if day else None
     peak = max((x["pl"] for x in day), default=0)
     pings = [x["ping"] for x in day[-30:] if x.get("ping") is not None]
-    return {"players": players, "cpu": cpu, "mem": mem, "step_min": step, "minutes": minutes,
+    return {"players": players, "cpu": cpu, "mem": mem, "rx": rx, "tx": tx, "step_min": step, "minutes": minutes,
             "peak_24h": peak, "uptime_24h": up, "ping": round(sum(pings) / len(pings)) if pings else None,
             "samples": len(day)}

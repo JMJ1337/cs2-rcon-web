@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=17">
+<link rel="stylesheet" href="/static/app.css?v=18">
 </head>
 <body>
 
@@ -74,7 +74,7 @@
     <section id="view-cache" class="hidden">
       <div class="topbar"><div><div class="title">Lancache-Verlauf</div><div class="sub" id="cacheSub">wird geladen …</div></div>
         <div style="margin-left:auto" class="row"><span class="hint">Zeitraum</span><div class="seg" id="cacheRangeSeg"><button data-crange="24h">24 h</button><button data-crange="7d">7 Tage</button><button data-crange="30d">30 Tage</button><button data-crange="90d">90 Tage</button><button data-crange="365d">1 Jahr</button></div></div></div>
-      <div class="content" style="max-width:none"><div id="cacheHist"></div></div>
+      <div class="content" style="max-width:none"><div id="cacheHist"></div><div id="cacheDns"></div></div>
     </section>
 
     <!-- Spieler -->
@@ -129,6 +129,7 @@
             <div class="field"><label>Basisordner für neue Spielserver (auf dem Docker-Host)</label><input id="setGamesBase" placeholder="/mnt/grohlan" class="mono"></div>
             <div class="field"><label>Lancache-Container (leer = automatisch)</label><input id="setCacheContainer" placeholder="z. B. lancache-monolithic-1" class="mono"></div>
             <div class="field"><label>CS2-Servername nach Modus (<span class="mono">{nr}</span> = Servernummer, <span class="mono">{mode}</span> = Modus; leer = aus)</label><input id="setHostnamePattern" placeholder="CS#{nr} {mode}" class="mono" maxlength="60"></div>
+            <div class="field"><label>DNS für neue Spielserver-Container (leer = Lancache-DNS automatisch erkennen)</label><input id="setContainerDns" placeholder="z. B. 192.168.200.27" class="mono" maxlength="100"></div>
           </div>
           <div class="hint" style="margin-top:6px">Leer = Adresse aus dem Browser. Die CS2-Server laden Match-Configs von dieser Adresse – also die LAN-IP verwenden, nicht „localhost“.</div>
         </div>
@@ -502,6 +503,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=17"></script>
+<script src="/static/app.js?v=18"></script>
 </body>
 </html>

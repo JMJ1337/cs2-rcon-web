@@ -85,3 +85,72 @@ async def valheim_status(host: str, port: int) -> dict:
                                     "Passwort": "ja" if info["password"] else "nein"}.items() if v},
         "updated": time.time(),
     }
+
+
+WF_SH = r"""
+c=/serverdata/serverfiles/server_config.cfg
+[ -f "$c" ] && grep -E '^[[:space:]]*(server_name|max_players|password|gamemode|track|game_port|query_port|steam_port|bots|laps)[[:space:]]*=' "$c"
+echo '#LOG'
+tail -n 400 /serverdata/serverfiles/log.txt 2>/dev/null
+echo '#PROC'
+pgrep -f Wreckfest_x64.exe >/dev/null && echo running
+"""
+
+WF_TRACKS_HINT = {"": "Rotation"}
+
+
+def _wf_parse(out: str) -> dict:
+    cfg, log, proc, sec = {}, [], False, "cfg"
+    for line in out.splitlines():
+        if line.startswith("#LOG"):
+            sec = "log"; continue
+        if line.startswith("#PROC"):
+            sec = "proc"; continue
+        if sec == "cfg" and "=" in line:
+            k, v = line.split("=", 1)
+            cfg[k.strip()] = v.strip().strip('"')
+        elif sec == "log":
+            log.append(line.strip())
+        elif sec == "proc" and line.strip() == "running":
+            proc = True
+    # nur den letzten Serverstart betrachten
+    start = max([i for i, l in enumerate(log) if "Starting server" in l] or [0])
+    cur = log[start:]
+    connected = any("Server connected" in l for l in cur)
+    players: dict[str, bool] = {}
+    for l in cur:
+        m = re.search(r"\d\d:\d\d:\d\d\s+(.+?)\s+(?:has\s+)?(joined|left|disconnected|was kicked|timed out)", l, re.I)
+        if m:
+            players[m.group(1)] = m.group(2).lower() == "joined"
+    return {"cfg": cfg, "connected": connected, "running": proc, "players": [n for n, on in players.items() if on],
+            "log_tail": cur[-5:]}
+
+
+async def wreckfest_container_status(container: str) -> dict:
+    """Wreckfest beantwortet keine A2S-Abfragen – Zustand direkt aus Container (Konfiguration + log.txt)."""
+    from .. import docker_api
+    try:
+        out = await docker_api.exec_cmd(container, ["sh", "-c", WF_SH])
+    except docker_api.DockerError as e:
+        raise a2s.A2SError(f"Container nicht erreichbar: {e}") from e
+    p = _wf_parse(out)
+    if not p["running"]:
+        raise a2s.A2SError("Wreckfest-Prozess läuft nicht (Container startet/installiert?)")
+    if not p["connected"]:
+        raise a2s.A2SError("Wreckfest startet noch …")
+    cfg = p["cfg"]
+    mx = int(cfg["max_players"]) if cfg.get("max_players", "").isdigit() else 0
+    names = p["players"]
+    return {
+        "map": cfg.get("track") or "–", "humans": len(names), "bots": int(cfg["bots"]) if cfg.get("bots", "").isdigit() else 0,
+        "max_players": mx,
+        "players": [{"name": n, "time": ""} for n in names],
+        "version": None, "hostname": cfg.get("server_name"),
+        "mode": {"key": "wreckfest", "label": (cfg.get("gamemode") or "Wreckfest").title()},
+        "password": cfg.get("password") or "",
+        "extra": {k: v for k, v in {"Servername": cfg.get("server_name"), "Strecke": cfg.get("track"),
+                                    "Modus": cfg.get("gamemode"), "Runden": cfg.get("laps"),
+                                    "Spielport": cfg.get("game_port"),
+                                    "Passwort": cfg.get("password") or "keins"}.items() if v},
+        "updated": time.time(),
+    }
