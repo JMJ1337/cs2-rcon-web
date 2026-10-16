@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import automation, cache_history, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
+from . import automation, cache_history, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
 from .games import minecraft as mcmod
@@ -641,7 +641,10 @@ async def collect_generic(s: dict) -> dict:
         elif g == "valheim":
             st = await adapters.valheim_status(s["host"], int(s["port"]))
         elif g == "tf2":
-            st = await adapters.tf2_status(s["host"], int(s.get("game_port") or s["port"]))
+            try:
+                st = await adapters.tf2_rcon_status(client_for(s))
+            except RconError:
+                st = await adapters.tf2_status(s["host"], int(s.get("game_port") or s["port"]))
         elif g == "minecraft":
             st = await mcmod.status(s["host"], int(s.get("game_port") or s["port"]))
         elif g == "teamspeak":
@@ -698,6 +701,10 @@ async def overview():
             ld = _loads.get(s["container"])
             item["load"] = {k: v for k, v in ld.items() if not k.startswith("_")} if ld else None
             item["install"] = install_watch.state.get(s["container"])
+        probs = list((diagnostics.state.get(s.get("container") or "") or {}).get("problems") or [])
+        if st.get("online"):
+            probs += diagnostics.status_hints(game_of(s), st)
+        item["problems"] = probs
         out.append(item)
     return out
 
@@ -770,6 +777,9 @@ async def load_loop():
             for k in list(_loads):
                 if k not in names:
                     _loads.pop(k, None)
+        if n % 12 == 1 and docker_api.available():
+            todo = [(x["container"], game_of(x)) for x in load_servers() if x.get("container")]
+            await asyncio.gather(*(diagnostics.check(c, g) for c, g in todo), return_exceptions=True)
         h = hoststats.state
         lc = cache_stats.state.get("container")
         lh = livestats.host

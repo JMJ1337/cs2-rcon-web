@@ -267,6 +267,11 @@ async function refreshHost(){
     (g.containers ? `<br>Spielserver: ${g.running}/${g.containers} laufen · ${g.cpu_host} % CPU · ${fmtMem(g.mem_mb)}` +
       "" : "");
 }
+function problemsHtml(list){
+  if (!list || !list.length) return "";
+  return list.map(p => `<div class="problem ${p.level === "info" ? "info" : ""}" title="${esc(p.line || "")}">
+    <b>${p.level === "info" ? "ℹ" : "⚠"} ${esc(p.title)}</b><div>💡 ${esc(p.solution)}</div></div>`).join("");
+}
 function loadHtml(l){
   if (!l) return "";
   if (l.error) return `<div class="loadrow"><span>Container</span><span class="hint">${esc(/no such container/i.test(l.error) ? "nicht gefunden – unter „Bearbeiten“ neu zuordnen" : l.error)}</span><span></span></div>`;
@@ -556,12 +561,13 @@ async function refreshDash(){
         ${Object.entries(o.extra || {}).filter(([k]) => !["Session","Servername","Strecke"].includes(k)).slice(0, 2).map(([k,v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join("")}
       </div>`) + `</div>
       <div class="bar"><i style="width:${pct}%"></i></div>
+      ${problemsHtml(o.problems)}
       <div class="ldwrap" data-ld="${esc(s.id)}">${loadHtml(o.load && lastLive && lastLive.servers[s.id] ? {...o.load, ...lastLive.servers[s.id]} : o.load)}</div>
       ${installHtml(o.install)}
       <div class="mwrap" data-mw="${esc(s.id)}">${metricsHtml(s.id, GAMES[gameOf(s)]?.color || "var(--accent)")}</div>
       ${o.auto && o.auto.capped ? `<span class="pill warn">Slots begrenzt auf ${o.max_players} – SLOTS im Stack erhöhen</span>` : ""}
       ${o.unclaimed ? `<span class="pill warn">Satisfactory: noch nicht beansprucht</span>` : ""}`
-      : `${ledOf(o).cls === "warn" ? `<div class="pill warn" style="justify-self:start">Container läuft – Spiel startet oder aktualisiert noch</div>` : ""}<div class="hint">${esc(o.error || (o.online === false ? "offline" : "noch nicht abgefragt"))}</div><div class="ldwrap" data-ld="${esc(s.id)}">${loadHtml(o.load)}</div>${installHtml(o.install)}<div class="mwrap" data-mw="${esc(s.id)}">${metricsHtml(s.id, GAMES[gameOf(s)]?.color || "var(--accent)")}</div>`}
+      : `${ledOf(o).cls === "warn" ? `<div class="pill warn" style="justify-self:start">Container läuft – Spiel startet oder aktualisiert noch</div>` : ""}<div class="hint">${esc(o.error || (o.online === false ? "offline" : "noch nicht abgefragt"))}</div>${problemsHtml(o.problems)}<div class="ldwrap" data-ld="${esc(s.id)}">${loadHtml(o.load)}</div>${installHtml(o.install)}<div class="mwrap" data-mw="${esc(s.id)}">${metricsHtml(s.id, GAMES[gameOf(s)]?.color || "var(--accent)")}</div>`}
     </div>`;
   }).join("") + `</div></div>`).join("");
   $$(".dcard").forEach(el => el.onclick = e => {
@@ -627,6 +633,7 @@ function resetOverview(){
 async function refreshStatus(){
   if (!current) return;
   const id = current.id;
+  const pr = $("#svProblems"); if (pr) pr.innerHTML = problemsHtml(stateOf(id).problems);
   try {
     const st = await api(`/api/servers/${id}/status`);
     if (!current || current.id !== id) return;

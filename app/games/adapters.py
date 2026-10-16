@@ -182,3 +182,30 @@ async def tf2_status(host: str, port: int) -> dict:
                                     "Version": info.get("version"), "Passwort": "ja" if info["password"] else "nein"}.items() if v},
         "updated": time.time(),
     }
+
+
+async def tf2_rcon_status(c: RconClient) -> dict:
+    """TF2-Status per RCON 'status' (zuverlässiger als A2S, liefert Spielernamen und Ping)."""
+    raw = await c.execute("status")
+    g = lambda rx: (re.search(rx, raw, re.M) or [None, None])[1]  # noqa: E731
+    host = g(r"^hostname\s*:\s*(.*)$")
+    m = g(r"^map\s*:\s*(\S+)")
+    pm = re.search(r"^players\s*:\s*(\d+) humans?,\s*(\d+) bots?\s*\((\d+)", raw, re.M)
+    humans, bots, mx = (int(pm.group(1)), int(pm.group(2)), int(pm.group(3))) if pm else (0, 0, 0)
+    players = []
+    for line in raw.splitlines():
+        r = re.match(r'^#\s*(\d+)\s+"(.*)"\s+(\[U:\S+\]|BOT)\s+(\S+)?\s*(\d+)?\s*(\d+)?\s*(\w+)?\s*(\S+)?', line)
+        if r and r.group(3) != "BOT":
+            players.append({"name": r.group(2), "time": r.group(4) or "", "ping": int(r.group(5)) if r.group(5) else None})
+    prefix = m.split("_")[0].lower() if m and "_" in m else ""
+    mode = TF2_MODES.get(prefix, "Team Fortress 2")
+    ver = g(r"^version\s*:\s*(\S+)")
+    acct = g(r"^account\s*:\s*(.*)$")
+    return {
+        "map": m or "–", "humans": humans, "bots": bots, "max_players": mx, "players": players,
+        "version": ver, "hostname": host, "raw": raw,
+        "mode": {"key": prefix or "tf2", "label": mode},
+        "extra": {k: v for k, v in {"Map": m, "Modus": mode, "Bots": bots or None, "Version": ver,
+                                    "Steam-Login": acct}.items() if v},
+        "updated": time.time(),
+    }

@@ -315,3 +315,7 @@ body:not(.g-wreckfest) #wfPanel{display:none!important}
 .dbar{display:flex;flex-direction:column;gap:1px}
 .dbar i{height:50%!important}
 .dbar i.lr-rx{background:#4f9dde}.dbar i.lr-tx{background:#f0a04b}
+.problem{border:1px solid color-mix(in srgb,var(--warn,#e5a50a) 55%,var(--line));background:color-mix(in srgb,var(--warn,#e5a50a) 10%,transparent);border-radius:8px;padding:8px 10px;font-size:13px;display:grid;gap:3px;margin-bottom:6px}
+.problem b{color:var(--warn,#e5a50a)}
+.problem.info{border-color:var(--line);background:transparent}
+.problem.info b{color:var(--muted)}
