@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=8">
+<link rel="stylesheet" href="/static/app.css?v=9">
 </head>
 <body>
 
@@ -35,6 +35,7 @@
       <div class="hl-row"><span>CPU</span><div class="bar"><i id="hlCpuBar"></i></div><b id="hlCpu">–</b></div>
       <div class="hl-row"><span>RAM</span><div class="bar"><i id="hlMemBar"></i></div><b id="hlMem">–</b></div>
       <div class="hl-sub" id="hlSub"></div>
+      <div class="hl-sub hidden" id="hlCache"></div>
     </div>
     <div class="nav">
       <button data-view="dash" class="active">▦ Übersicht aller Server</button>
@@ -58,6 +59,7 @@
     <section id="view-dash">
       <div class="topbar"><div><div class="title">Übersicht aller Server</div><div class="sub" id="dashSub">wird geladen …</div></div></div>
       <div class="content" style="max-width:none">
+        <div id="cachePanel"></div>
         <div id="dashGrid"></div>
         <div id="dashEmpty" class="empty hidden"><h2>Noch keine Server</h2><p>Lege links einen CS2-Server an (IP, Spielport, RCON-Passwort).</p></div>
       </div>
@@ -112,6 +114,8 @@
             <div class="field"><label>Prüfintervall (Sekunden)</label><input id="setInterval" inputmode="numeric"></div>
             <div class="field"><label>Automatischer Netzwerk-Scan (Minuten, 0 = aus)</label><input id="setScanInterval" inputmode="numeric"></div>
             <div class="field"><label>Zusätzliche Netze für den Scan</label><input id="setScanSubnets" placeholder="z. B. 192.168.200.0/24" class="mono"></div>
+            <div class="field"><label>Basisordner für neue Spielserver (auf dem Docker-Host)</label><input id="setGamesBase" placeholder="/mnt/grohlan" class="mono"></div>
+            <div class="field"><label>Lancache-Container (leer = automatisch)</label><input id="setCacheContainer" placeholder="z. B. lancache-monolithic-1" class="mono"></div>
           </div>
           <div class="hint" style="margin-top:6px">Leer = Adresse aus dem Browser. Die CS2-Server laden Match-Configs von dieser Adresse – also die LAN-IP verwenden, nicht „localhost“.</div>
         </div>
@@ -450,6 +454,6 @@
 </dialog>
 
 <div id="toast"></div>
-<script src="/static/app.js?v=8"></script>
+<script src="/static/app.js?v=9"></script>
 </body>
 </html>

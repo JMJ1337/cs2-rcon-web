@@ -33,6 +33,8 @@ DEFAULT_SETTINGS = {
     "watch_interval": 10,
     "scan_interval": 15,        # Minuten, 0 = aus
     "scan_subnets": "",         # zusätzliche Netze, z. B. "192.168.200.0/24"
+    "games_base": "/mnt/grohlan",   # Basisordner für neue Spielserver (NAS-Mount auf dem Docker-Host)
+    "cache_container": "",      # Lancache-Container (leer = automatisch erkennen)
 }
 
 
@@ -46,7 +48,8 @@ def get_settings() -> dict:
 
 def save_settings(data: dict) -> dict:
     cur = get_settings()
-    for k in ("modes", "map_rules", "public_url", "watch_interval", "scan_interval", "scan_subnets"):
+    for k in ("modes", "map_rules", "public_url", "watch_interval", "scan_interval", "scan_subnets",
+              "games_base", "cache_container"):
         if k in data:
             cur[k] = data[k]
     store.save(SETTINGS_FILE, cur)

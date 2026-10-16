@@ -69,6 +69,7 @@ const ICONS = {
   factorio: '<circle cx="12" cy="12" r="3.5"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/><circle cx="12" cy="12" r="6.5"/>',
   satisfactory: '<path d="M3 21V11l5 3v-3l5 3V8h3V4h3v17z"/><path d="M3 21h18"/>',
   valheim: '<path d="M6 21L17 6"/><path d="M14 3c3 0 6 3 6 6-2 0-3-1-4.5-2.5S14 5 14 3z"/>',
+  cache: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
   wreckfest: '<path d="M3 15l2-5c.4-1 1.2-1.5 2.2-1.5h6.3c.9 0 1.7.4 2.2 1.1L18 12l2.5.8c.8.3 1.5 1 1.5 1.9V15"/><path d="M2 15h20v2H2z"/><circle cx="7" cy="17.5" r="2"/><circle cx="17" cy="17.5" r="2"/><path d="M9 5l1.5 2M14 4l-1 3"/>',
   _: '<rect x="3" y="7" width="18" height="10" rx="4"/><path d="M8 10v4M6 12h4"/><circle cx="16" cy="11" r="1"/><circle cx="18" cy="13" r="1"/>',
 };
@@ -133,7 +134,7 @@ function showView(v){
   if (v === "create") initCreate();
   if (v === "users") loadUsers();
   renderServerList();
-  if (v === "dash") refreshDash();
+  if (v === "dash"){ refreshDash(); refreshCache(); }
   if (v === "players") loadPlayers();
   if (v === "auto") renderAuto();
 }
@@ -205,6 +206,37 @@ function loadHtml(l){
   return `<div class="loadrow" title="CPU bezogen auf den ganzen Host (${l.cpu ?? "?"} % eines Kerns)"><span>Last</span>
     <div class="bar"><i class="${lvl(c)}" style="width:${Math.min(100, c)}%"></i></div>
     <span><b>${c.toFixed(1)} %</b> CPU · <b>${fmtMem(l.mem_mb)}</b></span></div>`;
+}
+
+/* ================= Lancache ================= */
+const fmtBytes = b => b == null ? "–" : b >= 1e12 ? (b/1e12).toFixed(2) + " TB" : b >= 1e9 ? (b/1e9).toFixed(1) + " GB" : b >= 1e6 ? (b/1e6).toFixed(0) + " MB" : Math.round(b/1e3) + " KB";
+const fmtRate = bps => bps >= 1e6 ? (bps/1e6).toFixed(1) + " MB/s" : bps >= 1e3 ? Math.round(bps/1e3) + " KB/s" : "0 KB/s";
+let cacheData = null;
+async function refreshCache(){
+  try { cacheData = await api("/api/cache"); } catch { return; }
+  const c = cacheData, h = c.last_hour || {}, d = c.last_day || {};
+  $("#hlCache").classList.toggle("hidden", !c.container);
+  if (c.container) $("#hlCache").innerHTML = `Lancache: ${d.hit_ratio != null ? d.hit_ratio + " % aus dem Cache" : "noch keine Daten"} · ${fmtRate(c.rate_bps || 0)}`;
+  if (view !== "dash") return;
+  if (!c.container){
+    $("#cachePanel").innerHTML = `<div class="hint" style="margin-bottom:14px">Lancache: ${esc(c.error || "nicht gefunden")} – Container-Name unter „Automatik &amp; Einstellungen“ eintragen.</div>`;
+    return;
+  }
+  const disk = c.disk ? Math.round(c.disk.used / c.disk.total * 100) : null;
+  const svc = (d.services || []).map(x => {
+    const tot = x.hit + x.miss, p = tot ? Math.round(x.hit / tot * 100) : 0;
+    return `<span>${esc(x.name)}</span><span>${fmtBytes(tot)} · ${p} % Cache</span>`;
+  }).join("");
+  $("#cachePanel").innerHTML = `<div class="dsect"><h3 class="dhead"><span class="gtile" style="background:#7fb3a6">${gicon("cache", 16)}</span>Lancache <span class="hint">${esc(c.container)}${c.error ? " · " + esc(c.error) : ""}</span></h3>
+    <div class="cards cachecards">
+      <div class="card"><div class="k">Aus dem Cache (24 h)</div><div class="v" style="color:var(--ok)">${fmtBytes(d.hit_bytes)}</div><div class="s">${d.hit_ratio != null ? d.hit_ratio + " % Trefferquote" : "noch keine Downloads"}</div></div>
+      <div class="card"><div class="k">Aus dem Internet (24 h)</div><div class="v">${fmtBytes(d.miss_bytes)}</div><div class="s">${(d.requests || 0).toLocaleString("de-DE")} Anfragen</div></div>
+      <div class="card"><div class="k">Durchsatz jetzt</div><div class="v">${fmtRate(c.rate_bps || 0)}</div><div class="s">davon ${fmtRate(c.hit_rate_bps || 0)} aus dem Cache · letzte Std. ${fmtBytes((h.hit_bytes||0)+(h.miss_bytes||0))}</div></div>
+      <div class="card"><div class="k">Cache-Speicher</div><div class="v">${disk != null ? disk + " %" : "–"}</div>
+        ${c.disk ? `<div class="bar" style="margin-top:6px"><i class="${lvl(disk)}" style="width:${disk}%"></i></div><div class="s">${fmtBytes(c.disk.used)} von ${fmtBytes(c.disk.total)}</div>` : ""}</div>
+    </div>
+    ${svc ? `<div class="panel" style="padding:12px 16px"><div class="kvtable">${svc}</div></div>` : ""}
+  </div>`;
 }
 
 /* ================= Dashboard ================= */
@@ -740,6 +772,8 @@ function renderAuto(){
   $("#setInterval").value = settings.watch_interval || 10;
   $("#setScanInterval").value = settings.scan_interval ?? 15;
   $("#setScanSubnets").value = settings.scan_subnets || "";
+  $("#setGamesBase").value = settings.games_base || "/mnt/grohlan";
+  $("#setCacheContainer").value = settings.cache_container || "";
   $$("[data-mdel]").forEach(b => b.onclick = () => { readAuto(); settings.modes.splice(+b.dataset.mdel, 1); renderAuto(); });
   $$("[data-rdel]").forEach(b => b.onclick = () => { readAuto(); settings.map_rules.splice(+b.dataset.rdel, 1); renderAuto(); });
 }
@@ -755,7 +789,8 @@ $("#btnAutoSave").onclick = async () => {
   try {
     settings = await api("/api/settings", {method:"PUT", body:{modes: settings.modes, map_rules: settings.map_rules,
       public_url: $("#setPublicUrl").value.trim(), watch_interval: parseInt($("#setInterval").value, 10) || 10,
-      scan_interval: Math.max(0, parseInt($("#setScanInterval").value, 10) || 0), scan_subnets: $("#setScanSubnets").value.trim()}});
+      scan_interval: Math.max(0, parseInt($("#setScanInterval").value, 10) || 0), scan_subnets: $("#setScanSubnets").value.trim(),
+      games_base: $("#setGamesBase").value.trim(), cache_container: $("#setCacheContainer").value.trim()}});
     renderAuto(); refreshModeSelects(); toast("Gespeichert – wird beim nächsten Prüfen angewendet");
   } catch(err){ toast(err.message, true); }
 };
@@ -978,7 +1013,7 @@ async function initCreate(){
     type === "select" ? `<select data-cf="${k}">${hint.split(",").map(o => `<option ${o===def?"selected":""}>${o}</option>`).join("")}</select>`
     : `<input data-cf="${k}" type="${type==="password"?"password":"text"}" value="${esc(fill(def))}" ${type==="number"?'inputmode="numeric"':""} autocomplete="off">`
   }${hint && type !== "select" ? `<div class="hint">${esc(hint)}</div>` : ""}</div>`).join("");
-  const upd = () => { const name = ($('[data-cf="name"]') || {}).value || ""; $("#createDataDir").value = t.data_default.replace("{n}", n).replace("{name}", name); };
+  const upd = () => { const name = ($('[data-cf="name"]') || {}).value || ""; $("#createDataDir").value = t.data_default.replace("{base}", settings.games_base || "/mnt/grohlan").replace("{n}", n).replace("{name}", name); };
   upd(); $('[data-cf="name"]').addEventListener("input", upd);
   $("#createHost").value = (settings.public_url || "").replace(/^https?:\/\//, "").split(/[:/]/)[0] || location.hostname;
   $("#createHint").textContent = `Image: ${t.image} · Der Ordner wird auf dem Docker-Host angelegt und für UID ${t.uid} beschreibbar gemacht.`;
@@ -1063,7 +1098,8 @@ async function start(){
   showView("dash");
   clearInterval(dashTimer);
   refreshHost();
-  dashTimer = setInterval(() => { refreshDash(); refreshHost(); }, 5000);
+  refreshCache();
+  dashTimer = setInterval(() => { refreshDash(); refreshHost(); refreshCache(); }, 5000);
 }
 async function showVersion(){
   try {

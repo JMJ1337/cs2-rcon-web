@@ -5,7 +5,7 @@ import re
 TEMPLATES = {
     "cs2": {
         "label": "Counter-Strike 2 (MatchZy)", "image": "xbird/cs2-matchzy:latest", "uid": 1000,
-        "data_default": "/mnt/cs/server{n}",
+        "data_default": "{base}/cs/server{n}",
         "fields": [
             ["name", "Container-Name", "text", "cs2-dedicated-CS{n}", ""],
             ["server_name", "Servername", "text", "GROH LAN CS{n}", ""],
@@ -22,7 +22,7 @@ TEMPLATES = {
     },
     "factorio": {
         "label": "Factorio", "image": "factoriotools/factorio:stable", "uid": 845,
-        "data_default": "/mnt/factorio/{name}",
+        "data_default": "{base}/factorio/{name}",
         "fields": [
             ["name", "Container-Name", "text", "factorio-{n}", ""],
             ["port", "Spielport (UDP)", "number", "34197", ""],
@@ -32,7 +32,7 @@ TEMPLATES = {
     },
     "satisfactory": {
         "label": "Satisfactory", "image": "wolveix/satisfactory-server:latest", "uid": 1000,
-        "data_default": "/mnt/satisfactory/{name}",
+        "data_default": "{base}/satisfactory/{name}",
         "fields": [
             ["name", "Container-Name", "text", "satisfactory-{n}", ""],
             ["port", "Spiel-/API-Port (TCP+UDP)", "number", "7777", ""],
@@ -44,7 +44,7 @@ TEMPLATES = {
     },
     "valheim": {
         "label": "Valheim", "image": "lloesche/valheim-server:latest", "uid": 0,
-        "data_default": "/mnt/valheim/{name}",
+        "data_default": "{base}/valheim/{name}",
         "fields": [
             ["name", "Container-Name", "text", "valheim-{n}", ""],
             ["server_name", "Servername", "text", "GROH LAN Valheim", ""],
@@ -55,7 +55,7 @@ TEMPLATES = {
     },
     "wreckfest": {
         "label": "Wreckfest", "image": "ghcr.io/ich777/steamcmd:wreckfest", "uid": 99, "gid": 100,
-        "data_default": "/mnt/wreckfest/{name}",
+        "data_default": "{base}/wreckfest/{name}",
         "fields": [
             ["name", "Container-Name", "text", "wreckfest-{n}", ""],
             ["port", "Spielport (UDP)", "number", "33540", ""],

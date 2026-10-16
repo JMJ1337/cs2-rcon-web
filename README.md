@@ -12,6 +12,12 @@ Weboberfläche für die Spielserver auf unserer LAN – als Docker-Container mit
 | **Wreckfest** | Steam-Query (A2S, Query-Port) | – (Webkonsole des ich777-Images verlinkbar) | Neustart/Logs über Docker |
 
 Außerdem:
+- **Lancache-Metriken** in der Übersicht: aus dem Cache vs. aus dem Internet (24 h), Trefferquote, aktueller Durchsatz,
+  Cache-Speicher, Aufteilung nach Dienst (Steam, Epic …). Liest das `access.log` des `lancachenet/monolithic`-Containers
+  per Docker (wird automatisch erkannt, sonst Namen unter „Automatik & Einstellungen“ eintragen).
+- **Spiele-Basisordner:** Neue Server landen unter `/mnt/grohlan/<spiel>/<name>` (einstellbar). Das NAS dafür auf dem
+  Docker-Host dauerhaft mounten, z. B. per `/etc/fstab`:
+  `192.168.200.13:/volume1/Grohlan  /mnt/grohlan  nfs  defaults,_netdev,nofail  0  0`
 - **Beitreten:** Knopf „▶ Beitreten“ startet das Spiel über Steam und verbindet direkt (CS2/Wreckfest per `steam://connect`,
   Factorio/Valheim per Steam-Startparameter). Satisfactory hat keinen Link – dort Adresse kopieren.
 - **Namen wie im Spiel:** Die Server heißen in der Liste automatisch so wie im Spiel (abschaltbar je Server).

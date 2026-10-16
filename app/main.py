@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import automation, docker_api, hoststats, scanner, steam, store, templates, users
+from . import automation, cache_stats, docker_api, hoststats, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
 from .rcon import RconAuthError, RconClient, RconError
@@ -609,6 +609,8 @@ async def load_loop():
         await asyncio.sleep(5)
         hoststats.sample()
         n += 1
+        if n % 4 == 0 and docker_api.available():
+            await cache_stats.poll(automation.get_settings().get("cache_container") or "")
         if n % 2 == 0 and docker_api.available():
             names = sorted({s["container"] for s in load_servers() if s.get("container")})
             if names:
@@ -616,6 +618,15 @@ async def load_loop():
             for k in list(_loads):
                 if k not in names:
                     _loads.pop(k, None)
+
+
+@app.get("/api/cache", dependencies=auth)
+async def cache_metrics():
+    if not docker_api.available():
+        return {"error": "Docker-Socket nicht eingebunden", "container": None}
+    if cache_stats.state["updated"] is None:
+        await cache_stats.poll(automation.get_settings().get("cache_container") or "")
+    return cache_stats.summary()
 
 
 @app.get("/api/host", dependencies=auth)
@@ -778,6 +789,8 @@ class SettingsIn(BaseModel):
     watch_interval: int | None = Field(None, ge=5, le=300)
     scan_interval: int | None = Field(None, ge=0, le=1440)
     scan_subnets: str | None = Field(None, max_length=200)
+    games_base: str | None = Field(None, max_length=200)
+    cache_container: str | None = Field(None, max_length=100)
 
 
 @app.get("/api/settings", dependencies=auth)
@@ -812,6 +825,14 @@ async def put_settings(data: SettingsIn):
         payload["map_rules"] = clean
     if "public_url" in payload:
         payload["public_url"] = payload["public_url"].strip().rstrip("/")
+    if "games_base" in payload:
+        gb = payload["games_base"].strip().rstrip("/")
+        if gb and not gb.startswith("/"):
+            raise HTTPException(400, "Basisordner muss ein absoluter Pfad sein (z. B. /mnt/grohlan)")
+        payload["games_base"] = gb or "/mnt/grohlan"
+    if "cache_container" in payload:
+        payload["cache_container"] = payload["cache_container"].strip()
+        cache_stats.state.update(container=None, offset=0, buckets={}, updated=None)
     return automation.save_settings(payload)
 
 
