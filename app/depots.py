@@ -31,6 +31,8 @@ def want(depots) -> None:
     m = _load()
     for d in depots:
         d = str(d)
+        if d.startswith("_"):
+            continue
         e = m.get(d)
         if (e is None or (not e.get("app") and time.time() - e.get("t", 0) > 86400)) and d not in _queue:
             _queue.append(d)
@@ -60,9 +62,21 @@ def _remember_app(appid: int, info: dict) -> None:
     """Alle Depots einer App eintragen."""
     m = _load()
     name = ((info.get("common") or {}).get("name")) or f"App {appid}"
-    for dk in (info.get("depots") or {}):
-        if dk.isdigit():
-            m[dk] = {"app": appid, "name": name, "t": time.time()}
+    total = 0
+    for dk, dv in (info.get("depots") or {}).items():
+        if not dk.isdigit():
+            continue
+        m[dk] = {"app": appid, "name": name, "t": time.time()}
+        cfg = (dv or {}).get("config") or {}
+        if (cfg.get("oslist") and "windows" not in cfg["oslist"]) or (cfg.get("language") not in (None, "", "english")):
+            continue
+        man = ((dv or {}).get("manifests") or {}).get("public") or {}
+        try:
+            total += int(man.get("download") or man.get("size") or 0)
+        except (TypeError, ValueError):
+            pass
+    if total:
+        m.setdefault("_size", {})[str(appid)] = total
 
 
 async def run() -> None:
@@ -121,3 +135,42 @@ def games(depots: dict) -> list[dict]:
                                  "hit": 0, "miss": 0, "depots": 0})
         g["hit"] += h; g["miss"] += mi; g["depots"] += 1
     return sorted(agg.values(), key=lambda x: -(x["hit"] + x["miss"]))
+
+
+async def icons(appids: list[int]) -> dict:
+    """Echte Spiel-Icons (Steam-Community-Icon) je App-ID, gecacht."""
+    m = _load()
+    ic = m.setdefault("_icons", {})
+    todo = [a for a in appids if str(a) not in ic or (not ic[str(a)] and time.time() - m.get("_icons_t", {}).get(str(a), 0) > 86400)]
+    if todo:
+        tt = m.setdefault("_icons_t", {})
+        async with httpx.AsyncClient(timeout=8, headers={"User-Agent": "Spielservermanager"}) as cl:
+            for a in todo[:20]:
+                info = await _app_info(cl, a)
+                h = ((info or {}).get("common") or {}).get("icon")
+                ic[str(a)] = f"https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/{a}/{h}.jpg" if h else ""
+                tt[str(a)] = time.time()
+                if info:
+                    _remember_app(a, info)
+        store.save(FILE, m)
+    return {str(a): ic.get(str(a)) or "" for a in appids}
+
+
+def app_size(appid) -> int | None:
+    return (_load().get("_size") or {}).get(str(appid))
+
+
+async def ensure_sizes(appids: list[int]) -> None:
+    """Fehlende Spielgrößen nachladen (steamcmd-API)."""
+    m = _load()
+    todo = [a for a in appids if a and str(a) not in (m.get("_size") or {}) and time.time() - _apps_checked.get(a, 0) > 3600]
+    if not todo:
+        return
+    async with httpx.AsyncClient(timeout=8, headers={"User-Agent": "Spielservermanager"}) as cl:
+        for a in todo[:10]:
+            _apps_checked[a] = time.time()
+            info = await _app_info(cl, a)
+            if info:
+                _remember_app(a, info)
+            await asyncio.sleep(0.3)
+    store.save(FILE, m)

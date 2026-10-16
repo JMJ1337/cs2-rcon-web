@@ -81,6 +81,7 @@ const gicon = (g, size=16) => `<svg viewBox="0 0 24 24" width="${size}" height="
 // Originalbilder der Spiele (live von Steam geladen; offline -> eigenes Symbol)
 const STEAM_APPS = {tf2: 440, cs2: 730, factorio: 427520, satisfactory: 526870, valheim: 892970, wreckfest: 228380};
 const steamImg = (g, file) => STEAM_APPS[g] ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${STEAM_APPS[g]}/${file}` : "";
+var ICONS_URL = {apps: {}, games: {}};
 const OTHER_LOGOS = {minecraft: "https://www.minecraft.net/favicon.ico", teamspeak: "https://www.teamspeak.com/favicon.ico"};
 function gameLogo(g){
   const src = steamImg(g, "capsule_sm_120.jpg") || OTHER_LOGOS[g] || "";
@@ -101,6 +102,13 @@ function mapThumb(o, g){
   if (!src) return "";
   return `<div class="mthumb" title="${esc(title || GAMES[g]?.label || "")}"><img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer"
     onerror="if(this.dataset.fb!=='1'&&'${fallback}'){this.dataset.fb='1';this.src='${fallback}'}else{this.parentNode.remove()}"></div>`;
+}
+// echtes Spiel-Icon (Steam bzw. Favicon) in der Kachel, eigenes Symbol nur als Ersatz
+function gameTile(g, size = 16){
+  const src = (ICONS_URL.games || {})[g] || OTHER_LOGOS[g] || "";
+  const svg = gicon(g, size);
+  if (!src) return `<span class="gtile" style="background:${GAMES[g]?.color || "#888"}">${svg}</span>`;
+  return `<span class="gtile gimg" style="background:${GAMES[g]?.color || "#888"}"><img src="${src}" alt="" referrerpolicy="no-referrer" onerror="this.parentNode.classList.remove('gimg');this.remove()">${svg}</span>`;
 }
 const gbadge = g => GAMES[g] ? `<span class="gbadge" style="background:${GAMES[g].color}">${gicon(g, 12)} ${esc(GAMES[g].short)}</span>` : "";
 const collapsed = (() => { try { return JSON.parse(localStorage.getItem("gsmCollapsed") || "{}"); } catch { return {}; } })();
@@ -188,7 +196,7 @@ function renderServerList(){
     const open = !collapsed[g] || (current && gameOf(current) === g);
     return `<div class="sgroup ${open ? "open" : ""}">
       <button class="sghead" data-group="${g}" title="${esc(GAMES[g]?.label || g)} ein-/ausklappen">
-        <span class="gtile" style="background:${GAMES[g]?.color || "#888"}">${gicon(g, 18)}</span>
+        ${gameTile(g, 18)}
         <span class="sgname">${esc(GAMES[g]?.short || g)}</span>
         <span class="sgcount">${on}/${list.length}${players ? ` · ${players} ☺` : ""}</span>
         <span class="chev">▾</span>
@@ -397,17 +405,34 @@ function storageCard(st, disk){
     ${pct != null ? `<div class="bar" style="margin-top:6px"><i class="${lvl(pct)}" style="width:${pct}%"></i></div>` : ""}
     <div class="s">${pct != null ? pct + " % vom Limit · " : ""}Logs ${fmtBytes(logs)}${st.max_age ? " · max. Alter " + esc(st.max_age) : ""}</div></div>`;
 }
+
+async function loadGameIcons(extra = []){
+  try { const r = await api("/api/gameicons?apps=" + extra.join(",")); ICONS_URL.apps = {...ICONS_URL.apps, ...r.apps}; ICONS_URL.games = r.games; } catch {}
+}
+function appIcon(app, size = 28){
+  const ic = app && ICONS_URL.apps[String(app)];
+  const fb = app ? `https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/${app}/capsule_sm_120.jpg` : "";
+  if (ic) return `<img class="gicon" src="${ic}" width="${size}" height="${size}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.outerHTML='${svcIconOwn("steam", size - 10).replace(/'/g, "&#39;").replace(/"/g, "&quot;")}'">`;
+  if (app) return `<img class="gcap" src="https://cdn.cloudflare.steamstatic.com/steam/apps/${app}/capsule_sm_120.jpg" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="if(!this.dataset.f){this.dataset.f=1;this.src='${fb}'}else{this.outerHTML='${svcIconOwn("steam", size - 10).replace(/'/g, "&#39;").replace(/"/g, "&quot;")}'}">`;
+  return svcIconOwn("steam", size - 10);
+}
 function gamesTable(list, label){
   if (!list || !list.length) return "";
+  const missing = list.filter(g => g.app && !(String(g.app) in ICONS_URL.apps)).map(g => g.app);
+  if (missing.length) loadGameIcons(missing);
   const max = Math.max(1, ...list.map(g => g.hit + g.miss));
   return `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:6px">Welche Spiele wurden geladen? <span class="hint">(Steam, ${esc(label)})</span></h2>
-    <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Spiel</th><th>gesamt</th><th>aus dem Cache</th><th>aus dem Internet</th><th></th></tr></thead><tbody>
+    <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Spiel</th><th>Traffic</th><th>aus dem Cache</th><th>aus dem Internet</th><th style="min-width:180px">Im Cache</th></tr></thead><tbody>
     ${list.map(g => { const tot = g.hit + g.miss, p = tot ? Math.round(g.hit / tot * 100) : 0;
-      return `<tr><td><div class="row" style="gap:8px;flex-wrap:nowrap">${g.app ? `<img class="gcap" src="https://cdn.cloudflare.steamstatic.com/steam/apps/${g.app}/capsule_sm_120.jpg" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}
-        <div><b>${esc(g.name)}</b>${g.app ? `<div class="hint mono">App ${g.app}${g.depots > 1 ? " · " + g.depots + " Depots" : ""}</div>` : `<div class="hint">wird ermittelt …</div>`}</div></div></td>
-        <td class="mono">${fmtBytes(tot)}</td><td class="mono" style="color:var(--ok)">${fmtBytes(g.hit)}</td><td class="mono">${fmtBytes(g.miss)}</td>
-        <td style="min-width:140px"><div class="cachebar" title="${p} % aus dem Cache"><i style="width:${(tot / max * 100).toFixed(1)}%;background:linear-gradient(90deg,var(--ok) ${p}%,#8a7a66 ${p}%)"></i></div></td></tr>`; }).join("")}
-    </tbody></table></div></div>`;
+      const cp = g.cached_pct;
+      return `<tr><td><div class="row" style="gap:8px;flex-wrap:nowrap">${appIcon(g.app)}
+        <div><b>${esc(g.name)}</b>${g.app ? `<div class="hint mono">App ${g.app}${g.depots > 1 ? " · " + g.depots + " Depots" : ""}</div>` : `<div class="hint">Spiel wird ermittelt …</div>`}</div></div></td>
+        <td class="mono" title="${p} % davon aus dem Cache">${fmtBytes(tot)}<div class="cachebar" style="margin-top:3px"><i style="width:${(tot / max * 100).toFixed(1)}%;background:linear-gradient(90deg,var(--ok) ${p}%,#8a7a66 ${p}%)"></i></div></td>
+        <td class="mono" style="color:var(--ok)">${fmtBytes(g.hit)}</td><td class="mono">${fmtBytes(g.miss)}</td>
+        <td>${cp != null ? `<div class="cachebar" title="${fmtBytes(g.stored)} von ${fmtBytes(g.size)} (Download-Größe laut Steam)"><i style="width:${cp}%;background:var(--ct)"></i></div>
+          <div class="hint mono">${cp.toFixed(0)} % · ${fmtBytes(g.stored)} / ${fmtBytes(g.size)}</div>` : g.app ? `<span class="hint">Größe wird ermittelt …</span>` : `<span class="hint">–</span>`}</td></tr>`; }).join("")}
+    </tbody></table></div>
+    <div class="hint" style="margin-top:6px">„Im Cache“ = alles, was für das Spiel je aus dem Internet in den Cache geladen wurde, im Verhältnis zur Download-Größe (Windows, Englisch) – Schätzung, abgelaufene Cache-Einträge sind nicht abgezogen.</div></div>`;
 }
 function savedCard(bytes, label){
   return `<div class="card savedcard"><div class="k">Traffic gespart${label ? " · " + label : ""}</div><div class="v" style="color:var(--ok)">${fmtBytes(bytes || 0)}</div>
@@ -557,7 +582,7 @@ async function refreshDash(){
   $$("#rangeSeg [data-range]").forEach(b => b.classList.toggle("active", +b.dataset.range === metricsRange));
   const order = Object.keys(GAMES);
   const byGame = order.map(g => [g, overview.filter(o => gameOf(o.server) === g)]).filter(([, l]) => l.length);
-  $("#dashGrid").innerHTML = byGame.map(([g, items]) => `<div class="dsect"><h3 class="dhead"><span class="gtile" style="background:${GAMES[g].color}">${gicon(g, 16)}</span>${esc(GAMES[g].label)} <span class="hint">${items.filter(o => o.online).length}/${items.length} online</span></h3><div class="dash">` + items.map(o => {
+  $("#dashGrid").innerHTML = byGame.map(([g, items]) => `<div class="dsect"><h3 class="dhead">${gameTile(g, 16)}${esc(GAMES[g].label)} <span class="hint">${items.filter(o => o.online).length}/${items.length} online</span></h3><div class="dash">` + items.map(o => {
     const s = o.server, slots = o.visible_players > 0 ? o.visible_players : (o.max_players || 0);
     const pct = slots ? Math.min(100, Math.round((o.humans||0) / slots * 100)) : 0;
     const mz = o.matchzy && o.matchzy.match ? `${esc(o.matchzy.match.team1||"")} vs ${esc(o.matchzy.match.team2||"")} · ${esc(o.matchzy.match.state||"")}` : (o.matchzy && o.matchzy.installed ? "kein Match geladen" : "–");
@@ -1501,6 +1526,7 @@ async function start(){
   try {
     const [m, g] = await Promise.all([api("/api/me"), api("/api/games")]);
     me = m.user; GAMES = g.games; dockerOn = g.docker;
+    loadGameIcons().then(() => { renderServerList(); if (view === "dash") refreshDash(); });
     document.body.classList.toggle("not-admin", !me || me.role !== "admin");
     document.body.classList.toggle("viewer", me && me.role === "viewer");
     $("#meName").textContent = me ? `${me.username} · ${me.role_label}` : "";

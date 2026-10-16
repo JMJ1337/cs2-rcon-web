@@ -80,7 +80,24 @@ def analyze(text: str, game: str, since: float | None = None) -> list[dict]:
     return sorted(found.values(), key=lambda x: -(x["t"] or 0))
 
 
-async def check(container: str, game: str) -> dict:
+def _hexip(h: str) -> str:
+    return ".".join(str(int(h[k:k + 2], 16)) for k in (6, 4, 2, 0))
+
+
+async def connections(container: str) -> dict:
+    """Aktive TCP-Verbindungen des Containers: {ip:port: anzahl}."""
+    out = await docker_api.exec_cmd(container, ["sh", "-c", "cat /proc/net/tcp 2>/dev/null"], timeout=10)
+    res: dict[str, int] = {}
+    for line in out.splitlines()[1:]:
+        p = line.split()
+        if len(p) > 3 and p[3] == "01" and ":" in p[2]:
+            h, port = p[2].split(":")
+            k = f"{_hexip(h)}:{int(port, 16)}"
+            res[k] = res.get(k, 0) + 1
+    return res
+
+
+async def check(container: str, game: str, downloading: bool = False, cache_ips: list[str] | None = None) -> dict:
     try:
         info = await docker_api.inspect(container)
         st = info.get("State") or {}
@@ -100,7 +117,19 @@ async def check(container: str, game: str) -> dict:
         if st.get("Restarting") or (restarts >= 3 and started and time.time() - started < 600):
             probs.append({"title": f"Container startet ständig neu ({restarts}×)", "line": st.get("Error") or "",
                           "solution": "Siehe Fehler oben bzw. Log im Container-Tab – meist Port, Rechte oder Konfiguration.", "t": None})
-        res = {"problems": probs[:3], "checked": time.time()}
+        if downloading and cache_ips and st.get("Running"):
+            try:
+                conns = await connections(container)
+                via_cache = sum(n for k, n in conns.items() if k.split(":")[0] in cache_ips and k.endswith(":80"))
+                direct = sum(n for k, n in conns.items() if k.endswith(":443") and k.split(":")[0] not in cache_ips)
+                if direct >= 3 and via_cache == 0:
+                    probs.append({"title": "Update lädt am Lancache vorbei",
+                                  "solution": f"SteamCMD holt die Daten verschlüsselt direkt von Steam ({direct} HTTPS-Verbindungen, keine zum Cache) – "
+                                              "das wird nicht gecacht und zählt nicht im Lancache-Durchsatz.",
+                                  "line": ", ".join(sorted(conns)[:4]), "t": None, "level": "info"})
+            except docker_api.DockerError:
+                pass
+        res = {"problems": probs[:4], "checked": time.time()}
     except docker_api.DockerError as e:
         res = {"problems": [], "checked": time.time(), "error": str(e)}
     state[container] = res

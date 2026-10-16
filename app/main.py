@@ -788,7 +788,9 @@ async def load_loop():
                 log.exception("SteamPrefill-Zeitplan")
         if n % 12 == 1 and docker_api.available():
             todo = [(x["container"], game_of(x)) for x in load_servers() if x.get("container")]
-            await asyncio.gather(*(diagnostics.check(c, g) for c, g in todo), return_exceptions=True)
+            cips = await lancache_dns() or []
+            dl = lambda c: bool(((install_watch.state.get(c) or {}).get("progress") or {}).get("phase") == "downloading")  # noqa: E731
+            await asyncio.gather(*(diagnostics.check(c, g, dl(c), cips) for c, g in todo), return_exceptions=True)
         h = hoststats.state
         lc = cache_stats.state.get("container")
         lh = livestats.host
@@ -973,6 +975,20 @@ async def server_metrics(minutes: int = 360):
     return out
 
 
+GAME_APPS = {"cs2": 730, "tf2": 440, "valheim": 892970, "wreckfest": 228380, "factorio": 427520, "satisfactory": 526870}
+
+
+@app.get("/api/gameicons", dependencies=auth)
+async def game_icons(apps: str = ""):
+    """Icons der Spiele (Steam) – für Seitenleiste, Karten und Lancache-Liste."""
+    ids = sorted({int(x) for x in apps.split(",") if x.strip().isdigit()} | set(GAME_APPS.values()))[:60]
+    try:
+        ic = await depots.icons(ids)
+    except Exception:  # noqa: BLE001
+        ic = {}
+    return {"apps": ic, "games": {g: ic.get(str(a), "") for g, a in GAME_APPS.items()}}
+
+
 @app.get("/api/live", dependencies=auth)
 async def live_values():
     """Kompakte Sekundenwerte für die Anzeigen (Seitenleiste, Karten)."""
@@ -998,7 +1014,7 @@ async def cache_metrics():
         await cache_stats.poll(automation.get_settings().get("cache_container") or "")
     out = cache_stats.summary()
     try:
-        out["games_24h"] = depots.games(cache_history.series("24h").get("depots") or {})[:6]
+        out["games_24h"] = _enrich_games(depots.games(cache_history.series("24h").get("depots") or {})[:6])
         asyncio.create_task(depots.run())
     except Exception:  # noqa: BLE001
         out["games_24h"] = []
@@ -1131,10 +1147,24 @@ async def cache_history_api(range: str = "30d"):
     out["error"] = cache_stats.state["error"]
     out["disk_now"] = cache_stats.state["disk"]
     out["storage"] = {k: v for k, v in cache_stats.storage.items() if k != "running"} | {"busy": cache_stats.storage["running"]}
-    out["games"] = depots.games(out.pop("depots", {}) or {})[:30]
+    out["games"] = _enrich_games(depots.games(out.pop("depots", {}) or {})[:30])
     asyncio.create_task(depots.run())
     out["clients"] = await netnames.annotate(out["clients"], {x["host"] for x in load_servers()})
     return out
+
+
+def _enrich_games(games: list[dict]) -> list[dict]:
+    """Wie weit ist jedes Spiel im Cache? -> alles, was je aus dem Internet geholt wurde, im Verhältnis zur Spielgröße."""
+    alltime = {g["app"]: g for g in depots.games(cache_history.series("365d").get("depots") or {}) if g.get("app")}
+    for g in games:
+        a = g.get("app")
+        size = depots.app_size(a) if a else None
+        stored = (alltime.get(a) or {}).get("miss") or 0
+        g["size"] = size
+        g["stored"] = stored
+        g["cached_pct"] = round(min(100.0, stored / size * 100), 1) if size else None
+    asyncio.create_task(depots.ensure_sizes([g["app"] for g in games if g.get("app") and not g.get("size")]))
+    return games
 
 
 @app.get("/api/host", dependencies=auth)

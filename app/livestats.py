@@ -41,8 +41,12 @@ def _ring(key: str) -> deque:
     return r
 
 
+WIN = 4.0   # Sekunden: Rate über ein gleitendes Fenster (Docker liefert Netzwerkzähler teils verzögert/doppelt)
+
+
 async def _stream(name: str):
     prev = None
+    hist: deque = deque()
     while True:
         try:
             async with docker_api._client(timeout=None) as cl:
@@ -73,10 +77,14 @@ async def _stream(name: str):
                         rx = sum((n or {}).get("rx_bytes", 0) for n in nets.values()) if nets else None
                         tx = sum((n or {}).get("tx_bytes", 0) for n in nets.values()) if nets else None
                         rx_bps = tx_bps = None
-                        if rx is not None and prev and prev[1] is not None and t > prev[0]:
-                            dt = t - prev[0]
-                            rx_bps = max(0.0, (rx - prev[1]) / dt)
-                            tx_bps = max(0.0, (tx - prev[2]) / dt)
+                        if rx is not None:
+                            hist.append((t, rx, tx))
+                            while len(hist) > 2 and t - hist[1][0] >= WIN:
+                                hist.popleft()
+                            t0, r0, x0 = hist[0]
+                            if t > t0:
+                                rx_bps = max(0.0, (rx - r0) / (t - t0))
+                                tx_bps = max(0.0, (tx - x0) / (t - t0))
                         prev = (t, rx, tx)
                         cores = hoststats.state.get("cores") or 1
                         d = {"t": t, "cpu": cpu_pct, "cpu_host": round(cpu_pct / cores, 1) if cpu_pct is not None else None,
@@ -88,6 +96,7 @@ async def _stream(name: str):
             data[name] = {"t": time.time(), "running": False, "cpu": 0, "cpu_host": 0, "mem_mb": 0,
                           "rx_bps": 0, "tx_bps": 0, "net": data.get(name, {}).get("net", False)}
             prev = None
+            hist.clear()
             await asyncio.sleep(5)
         except asyncio.CancelledError:
             raise
