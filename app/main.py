@@ -459,10 +459,11 @@ def join_info(s: dict, password: str | None = None) -> dict:
         return {"address": f"{host}:{p}", "url": f"steam://run/892970//+connect%20{host}:{p}/",
                 "hint": "Startet Valheim und verbindet – Passwort im Spiel eingeben."}
     if g == "wreckfest":
+        # Wreckfest verbindet über den Spielport (UDP 33540); der Abfrage-Port antwortet bei Wreckfest nicht
         p = gp or 33540
-        return {"address": f"{host}:{p}", "url": f"steam://connect/{host}:{port}" + (f"/{password}" if password else ""),
-                "hint": "Im Spiel: Mehrspieler → Server-Browser (Reiter Internet/LAN) oder Steam → Ansicht → Server → Favoriten → "
-                        f"{host}:{port} hinzufügen." + (f" Passwort: {password}" if password else "")}
+        return {"address": f"{host}:{p}", "url": f"steam://connect/{host}:{p}" + (f"/{password}" if password else ""),
+                "hint": "Startet Wreckfest über Steam und verbindet direkt. Alternativ im Spiel: Mehrspieler → Server-Browser."
+                        + (f" Passwort: {password}" if password else "")}
     if g == "satisfactory":
         p = gp or port
         return {"address": f"{host}:{p}", "url": None,
