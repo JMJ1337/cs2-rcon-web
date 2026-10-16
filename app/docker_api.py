@@ -158,3 +158,31 @@ async def create_container(name: str, spec: dict) -> str:
     cid = r.json()["Id"]
     await _req("POST", f"/containers/{cid}/start", timeout=60)
     return cid[:12]
+
+
+async def used_host_ports() -> dict[int, str]:
+    """Alle Host-Ports, die Container belegen (auch gestoppte) -> Containername."""
+    used: dict[int, str] = {}
+    r = await _req("GET", "/containers/json", params={"all": "1"})
+    for c in r.json():
+        name = (c.get("Names") or ["/?"])[0].lstrip("/")
+        try:
+            info = await inspect(c["Id"])
+        except DockerError:
+            continue
+        binds = (info.get("HostConfig") or {}).get("PortBindings") or {}
+        for _, lst in binds.items():
+            for b in lst or []:
+                hp = (b or {}).get("HostPort") or ""
+                if "-" in hp:
+                    a, z = hp.split("-", 1)
+                    for p in range(int(a), int(z) + 1):
+                        used[p] = name
+                elif hp.isdigit():
+                    used[int(hp)] = name
+        if (info.get("HostConfig") or {}).get("NetworkMode") == "host":
+            for p in (info.get("Config") or {}).get("ExposedPorts") or {}:
+                num = p.split("/")[0]
+                if num.isdigit():
+                    used[int(num)] = name
+    return used

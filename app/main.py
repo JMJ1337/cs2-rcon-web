@@ -1240,6 +1240,33 @@ async def list_templates():
     return {"templates": templates.TEMPLATES, "docker": docker_api.available()}
 
 
+async def _used_ports() -> dict[int, str]:
+    used = {}
+    if docker_api.available():
+        try:
+            used.update(await docker_api.used_host_ports())
+        except docker_api.DockerError:
+            pass
+    for s in load_servers():   # auch Server ohne Container (z. B. auf anderen Rechnern mit gleicher IP)
+        for key in ("port", "game_port"):
+            if s.get(key):
+                used.setdefault(int(s[key]), s["name"])
+    return used
+
+
+@app.get("/api/templates/{game}/suggest", dependencies=auth)
+async def suggest(game: str):
+    if game not in templates.TEMPLATES:
+        raise HTTPException(404)
+    used = await _used_ports()
+    n = sum(1 for s in load_servers() if game_of(s) == game) + 1
+    names = {s.get("container") for s in load_servers()} | {s["name"] for s in load_servers()}
+    while any(x and str(n) in x and game in x.lower() for x in names) and n < 99:
+        n += 1
+    return {"values": templates.suggest_ports(game, set(used)), "n": n,
+            "used": sorted(used)[:500]}
+
+
 class CreateIn(BaseModel):
     game: str
     values: dict[str, str]
@@ -1329,9 +1356,20 @@ async def create_server(data: CreateIn, request: Request):
     if data.game not in templates.TEMPLATES:
         raise HTTPException(400, "Unbekanntes Spiel")
     try:
-        templates.build(data.game, data.values, data.data_dir)  # früh validieren
+        b = templates.build(data.game, data.values, data.data_dir)  # früh validieren
     except ValueError as e:
         raise HTTPException(400, str(e))
+    used = await _used_ports()
+    clash = [f"{p} (belegt von {used[p]})" for p in templates.host_ports(b["spec"]) if p in used]
+    if clash:
+        raise HTTPException(400, "Port bereits vergeben: " + ", ".join(clash))
+    inner: dict[int, set] = {}
+    for key, lst in b["spec"]["HostConfig"]["PortBindings"].items():
+        for x in lst:
+            inner.setdefault(int(x["HostPort"]), set()).add(key.split("/")[0])
+    dup = [str(p) for p, k in inner.items() if len(k) > 1]
+    if dup:
+        raise HTTPException(400, "Port doppelt angegeben: " + ", ".join(dup))
     host = (data.host or "").strip() or _docker_host_ip(request)
     jid = secrets.token_hex(6)
     job = {"id": jid, "game": data.game, "log": [], "step": "", "done": False, "error": None, "server_id": None}

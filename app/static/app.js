@@ -1007,16 +1007,23 @@ async function initCreate(){
   $("#createGameSeg").innerHTML = Object.entries(tpl.templates).map(([k,t]) => `<button data-cg="${k}" class="${k===createGame?"active":""}">${esc(t.label)}</button>`).join("");
   $$("#createGameSeg [data-cg]").forEach(b => b.onclick = () => { createGame = b.dataset.cg; initCreate(); });
   const t = tpl.templates[createGame];
-  const sameGame = servers.filter(s => gameOf(s) === createGame).length, n = sameGame + 1;
-  const fill = v => String(v).replace("{n}", n).replace("{port}", 27014 + n).replace("{tvport}", 27020 + n);
+  let sug = {values: {}, n: servers.filter(s => gameOf(s) === createGame).length + 1, used: []};
+  try { sug = await api(`/api/templates/${createGame}/suggest`); } catch {}
+  const n = sug.n;
+  const fill = (v, k) => sug.values[k] != null ? String(sug.values[k]) : String(v).replace("{n}", n).replace("{port}", 27014 + n).replace("{tvport}", 27020 + n);
   $("#createFields").innerHTML = t.fields.map(([k, label, type, def, hint]) => `<div class="field"><label>${esc(label)}</label>${
     type === "select" ? `<select data-cf="${k}">${hint.split(",").map(o => `<option ${o===def?"selected":""}>${o}</option>`).join("")}</select>`
-    : `<input data-cf="${k}" type="${type==="password"?"password":"text"}" value="${esc(fill(def))}" ${type==="number"?'inputmode="numeric"':""} autocomplete="off">`
+    : `<input data-cf="${k}" type="${type==="password"?"password":"text"}" value="${esc(fill(def, k))}" ${type==="number"?'inputmode="numeric"':""} autocomplete="off">`
   }${hint && type !== "select" ? `<div class="hint">${esc(hint)}</div>` : ""}</div>`).join("");
   const upd = () => { const name = ($('[data-cf="name"]') || {}).value || ""; $("#createDataDir").value = t.data_default.replace("{base}", settings.games_base || "/mnt/grohlan").replace("{n}", n).replace("{name}", name); };
   upd(); $('[data-cf="name"]').addEventListener("input", upd);
   $("#createHost").value = (settings.public_url || "").replace(/^https?:\/\//, "").split(/[:/]/)[0] || location.hostname;
-  $("#createHint").textContent = `Image: ${t.image} · Der Ordner wird auf dem Docker-Host angelegt und für UID ${t.uid} beschreibbar gemacht.`;
+  $("#createHint").textContent = `Image: ${t.image} · Der Ordner wird auf dem Docker-Host angelegt und für UID ${t.uid} beschreibbar gemacht. Ports: automatisch die nächsten freien gewählt (${sug.used.length} Ports sind bereits belegt) – vor dem Anlegen wird nochmals auf Überschneidungen geprüft.`;
+  const usedSet = new Set(sug.used);
+  $$('[data-cf$="port"]').forEach(i => i.addEventListener("input", () => {
+    const v = parseInt(i.value, 10), clash = usedSet.has(v);
+    i.style.borderColor = clash ? "var(--bad)" : ""; i.title = clash ? "Port ist bereits belegt" : "";
+  }));
 }
 $("#btnCreate").onclick = async () => {
   const values = Object.fromEntries($$("[data-cf]").map(i => [i.dataset.cf, i.value.trim()]));

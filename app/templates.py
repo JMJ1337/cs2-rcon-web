@@ -66,6 +66,40 @@ TEMPLATES = {
     },
 }
 
+# Port-Vergabe: (Feld, Startport, Schrittweite, belegte Ports pro Server)
+PORT_PLAN = {
+    "cs2": [("port", 27015, 1, 1), ("tv_port", 27020, 1, 1)],
+    "factorio": [("port", 34197, 1, 1), ("rcon_port", 27100, 1, 1)],
+    "satisfactory": [("port", 7777, 1, 1), ("msg_port", 8888, 1, 1)],
+    "valheim": [("port", 2456, 2, 2)],                       # Spielport + Query-Port (+1)
+    "wreckfest": [("port", 33540, 1, 1), ("steam_port", 27115, 2, 2), ("web_port", 9028, 1, 1)],  # Steam + Query (+1)
+}
+
+
+def suggest_ports(game: str, used: set[int]) -> dict:
+    taken = set(used)
+    out = {}
+    for field, base, step, span in PORT_PLAN.get(game, []):
+        p = base
+        while any((p + i) in taken for i in range(span)) and p < 65000:
+            p += step
+        for i in range(span):
+            taken.add(p + i)
+        out[field] = p
+    if game == "wreckfest":
+        out["query_port"] = out["steam_port"] + 1
+    return out
+
+
+def host_ports(spec: dict) -> list[int]:
+    ports = []
+    for lst in (spec.get("HostConfig", {}).get("PortBindings") or {}).values():
+        for b in lst:
+            if str(b.get("HostPort", "")).isdigit():
+                ports.append(int(b["HostPort"]))
+    return sorted(set(ports))
+
+
 MODES = {"competitive": (0, 1), "wingman": (0, 2), "casual": (0, 0), "deathmatch": (1, 2)}
 
 
