@@ -12,6 +12,12 @@ Weboberfläche für die Spielserver auf unserer LAN – als Docker-Container mit
 | **Wreckfest** | Steam-Query (A2S, Query-Port) | – (Webkonsole des ich777-Images verlinkbar) | Neustart/Logs über Docker |
 
 Außerdem:
+- **Installation/Update-Fortschritt** links unter der Gesamtlast: liest SteamCMD-Fortschritt aus den Container-Logs
+  (Phase, Prozent, GB, Tempo, Restzeit) und zeigt Fehler übersetzt an (z. B. `0x202` = Speicher voll).
+- **Server löschen mit Rückfrage:** nur aus der Liste, zusätzlich Container entfernen oder komplett inkl. Datenordner.
+  Daten werden nur unter `/mnt/…` gelöscht, nie der Basis-/Spielordner und nie Ordner, die ein anderer Container nutzt;
+  Bestätigung durch Eintippen des Servernamens.
+- **Gesamtlast-Verlauf** (CPU/RAM des Hosts) oben in der Übersicht.
 - **Verlaufs-Metriken je Spielserver:** Spieler, CPU und RAM als Mini-Diagramme (1 h / 6 h / 24 h), Spieler-Peak,
   Verfügbarkeit der letzten 24 h und bei CS2 der Durchschnitts-Ping. Werte liegen in `/data/metrics.json` und
   überstehen Updates.

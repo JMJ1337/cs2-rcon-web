@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import automation, cache_stats, docker_api, hoststats, metrics, scanner, steam, store, templates, users
+from . import automation, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
 from .rcon import RconAuthError, RconClient, RconError
@@ -98,7 +98,8 @@ def require_auth(request: Request):
     if method != "GET" and level < 2 and not path.startswith("/api/me"):
         raise HTTPException(403, "Nur Ansicht – keine Berechtigung für Änderungen")
     admin_only = (path.startswith(ADMIN_PATHS) and not (path == "/api/settings" and method == "GET")) or \
-        (method in ("POST", "PUT", "DELETE") and re.fullmatch(r"/api/servers(/[\w-]+)?", path))
+        (method in ("POST", "PUT", "DELETE") and re.fullmatch(r"/api/servers(/[\w-]+)?", path)) or \
+        re.fullmatch(r"/api/servers/[\w-]+/delete(-preview)?", path)
     if admin_only and level < 3:
         raise HTTPException(403, "Nur für Administratoren")
     request.state.user = u
@@ -584,6 +585,7 @@ async def overview():
         item = {"server": public(s), **{k: v for k, v in st.items() if not k.startswith("_") and k != "raw"}}
         if s.get("container"):
             item["load"] = _loads.get(s["container"])
+            item["install"] = install_watch.state.get(s["container"])
         out.append(item)
     return out
 
@@ -619,9 +621,13 @@ async def load_loop():
             names = sorted({s["container"] for s in load_servers() if s.get("container")})
             if names:
                 await asyncio.gather(*(_container_load(x) for x in names))
+                await asyncio.gather(*(install_watch.poll(x) for x in names
+                                       if (_loads.get(x) or {}).get("state") in ("running", "restarting")))
             for k in list(_loads):
                 if k not in names:
                     _loads.pop(k, None)
+        h = hoststats.state
+        metrics.record_host(h.get("cpu"), h.get("mem_used_mb"), h.get("mem_total_mb"))
         if n % 2 == 0:
             servers = load_servers()
             for s in servers:
@@ -630,10 +636,140 @@ async def load_loop():
             metrics.maybe_save()
 
 
+# ---------------------------------------------------------------- Server komplett löschen
+def _path_check(path: str, other_sources: list[str]) -> str | None:
+    """None = darf gelöscht werden, sonst Grund."""
+    p = os.path.normpath(path or "")
+    base = os.path.normpath(automation.get_settings().get("games_base") or "/mnt/grohlan")
+    if not p.startswith("/mnt/"):
+        return "nur Ordner unter /mnt werden gelöscht"
+    if len(p.strip("/").split("/")) < 3:
+        return "Ordner zu weit oben (geschützt)"
+    if p == base or os.path.dirname(p) == base:
+        return "Basis- bzw. Spielordner ist geschützt"
+    for o in other_sources:
+        o = os.path.normpath(o)
+        if o == p or o.startswith(p + "/"):
+            return "wird noch von einem anderen Container genutzt"
+    return None
+
+
+async def _delete_plan(s: dict) -> dict:
+    plan = {"server": public(s), "container": None, "paths": [], "volumes": [], "docker": docker_api.available()}
+    c = s.get("container")
+    if not (c and docker_api.available()):
+        return plan
+    try:
+        own = await docker_api.mounts(c)
+    except docker_api.DockerError as e:
+        plan["container_error"] = str(e)
+        return plan
+    plan["container"] = c
+    others = await docker_api.all_mounts()
+    other_src = [m["source"] for n, ms in others.items() if n != c for m in ms if m["type"] == "bind" and m["source"]]
+    other_vol = {m["name"] for n, ms in others.items() if n != c for m in ms if m["type"] == "volume"}
+    binds = [m["source"] for m in own if m["type"] == "bind" and m["source"]]
+    # mehrere Unterordner eines gemeinsamen Datenordners (z. B. config + server) -> den Datenordner anbieten
+    parents = {os.path.dirname(os.path.normpath(b)) for b in binds}
+    if len(binds) > 1 and len(parents) == 1 and _path_check(next(iter(parents)), other_src) is None:
+        binds = [next(iter(parents))]
+    for b in binds:
+        plan["paths"].append({"path": b, "blocked": _path_check(b, other_src)})
+    for m in own:
+        if m["type"] == "volume" and m["name"]:
+            plan["volumes"].append({"name": m["name"], "blocked": "wird noch von einem anderen Container genutzt"
+                                    if m["name"] in other_vol else None})
+    return plan
+
+
+@app.get("/api/servers/{sid}/delete-preview", dependencies=auth)
+async def delete_preview(sid: str):
+    return await _delete_plan(get_server(sid))
+
+
+class DeleteIn(BaseModel):
+    remove_container: bool = False
+    delete_data: bool = False
+    confirm: str = ""
+
+
+async def _delete_job(job: dict, s: dict, plan: dict, data: DeleteIn):
+    try:
+        if data.remove_container and plan["container"]:
+            _job_log(job, f"Container {plan['container']} stoppen und entfernen")
+            await docker_api.remove_container(plan["container"])
+        if data.delete_data:
+            for p in plan["paths"]:
+                if p["blocked"]:
+                    _job_log(job, f"Übersprungen: {p['path']} ({p['blocked']})")
+                    continue
+                parent, base = os.path.dirname(p["path"]), os.path.basename(p["path"])
+                _job_log(job, f"Lösche {p['path']} … (kann bei großen Spielen dauern)")
+                await docker_api.run_helper([f"{parent}:/p"], ["rm", "-rf", f"/p/{base}"], timeout=3600)
+            for v in plan["volumes"]:
+                if not v["blocked"]:
+                    _job_log(job, f"Lösche Volume {v['name']}")
+                    await docker_api.remove_volume(v["name"])
+        async with _store_lock:
+            save_servers([x for x in load_servers() if x["id"] != s["id"]])
+        drop_client(s["id"])
+        _state.pop(s["id"], None)
+        job["done"] = True
+        _job_log(job, "Fertig – Server gelöscht")
+    except docker_api.DockerError as e:
+        job["error"], job["done"] = str(e), True
+        _job_log(job, "Fehler: " + str(e))
+
+
+@app.post("/api/servers/{sid}/delete", dependencies=auth)
+async def delete_full(sid: str, data: DeleteIn):
+    s = get_server(sid)
+    plan = await _delete_plan(s)
+    if data.delete_data and data.confirm.strip() != s["name"]:
+        raise HTTPException(400, "Zum Löschen der Daten bitte den Servernamen exakt eintippen")
+    if not data.remove_container and not data.delete_data:
+        async with _store_lock:
+            save_servers([x for x in load_servers() if x["id"] != sid])
+        drop_client(sid)
+        _state.pop(sid, None)
+        return {"done": True}
+    if data.delete_data and not data.remove_container and plan["container"]:
+        raise HTTPException(400, "Daten können nur zusammen mit dem Container gelöscht werden")
+    jid = secrets.token_hex(6)
+    job = {"id": jid, "game": game_of(s), "title": f"{s['name']} löschen", "log": [], "step": "", "done": False,
+           "error": None, "server_id": None}
+    _jobs[jid] = job
+    asyncio.create_task(_delete_job(job, s, plan, data))
+    return job
+
+
+@app.get("/api/activity", dependencies=auth)
+async def activity():
+    """Laufende Installationen/Updates, Fehler aus den Logs und Anlege-Jobs (für die Seitenleiste)."""
+    items = []
+    for s in load_servers():
+        c = s.get("container")
+        st = install_watch.state.get(c) if c else None
+        if st and (st.get("progress") or st.get("errors")):
+            items.append({"server_id": s["id"], "name": s["name"], "game": game_of(s), "container": c,
+                          "progress": st.get("progress"), "errors": st.get("errors") or []})
+    jobs = [{"id": j["id"], "game": j["game"], "step": j["step"], "error": j["error"], "done": j["done"],
+             "server_id": j["server_id"], "title": j.get("title")} for j in _jobs.values() if not j["done"] or j["error"]]
+    return {"items": items, "jobs": jobs[-5:]}
+
+
+@app.post("/api/activity/dismiss/{container}", dependencies=auth)
+async def activity_dismiss(container: str):
+    install_watch.dismiss(container)
+    return {"ok": True}
+
+
 @app.get("/api/metrics", dependencies=auth)
 async def server_metrics(minutes: int = 360):
     minutes = max(30, min(minutes, 24 * 60))
-    return {s["id"]: metrics.summary(s["id"], minutes) for s in load_servers()}
+    out = {s["id"]: metrics.summary(s["id"], minutes) for s in load_servers()}
+    out["_host"] = metrics.summary("_host", minutes)
+    return out
 
 
 @app.get("/api/cache", dependencies=auth)

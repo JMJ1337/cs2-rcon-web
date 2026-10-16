@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=12">
+<link rel="stylesheet" href="/static/app.css?v=15">
 </head>
 <body>
 
@@ -38,6 +38,7 @@
       <div class="hl-sub" id="hlSub"></div>
       <div class="hl-sub hidden" id="hlCache"></div>
     </div>
+    <div id="activity" class="activity hidden"></div>
     <div class="nav">
       <button data-view="dash" class="active">▦ Übersicht aller Server</button>
       <button data-view="players">☺ Spieler &amp; SteamIDs</button>
@@ -61,6 +62,7 @@
       <div class="topbar"><div><div class="title">Übersicht aller Server</div><div class="sub" id="dashSub">wird geladen …</div></div>
         <div style="margin-left:auto" class="row"><span class="hint">Verlauf</span><div class="seg" id="rangeSeg"><button data-range="60">1 h</button><button data-range="360">6 h</button><button data-range="1440">24 h</button></div></div></div>
       <div class="content" style="max-width:none">
+        <div id="hostPanel"></div>
         <div id="cachePanel"></div>
         <div id="dashGrid"></div>
         <div id="dashEmpty" class="empty hidden"><h2>Noch keine Server</h2><p>Lege links einen CS2-Server an (IP, Spielport, RCON-Passwort).</p></div>
@@ -456,6 +458,26 @@
   </form>
 </dialog>
 
+<!-- Lösch-Dialog -->
+<dialog id="dlgDel" style="width:min(560px,calc(100vw - 32px))">
+  <form method="dialog" id="delForm">
+    <h2>Server löschen: <span id="delName"></span></h2>
+    <div class="hint">Was soll gelöscht werden?</div>
+    <label class="delopt"><input type="checkbox" checked disabled> Aus der Serverliste entfernen</label>
+    <label class="delopt" id="delCtRow"><input type="checkbox" id="delCt"> Docker-Container <b class="mono" id="delCtName"></b> stoppen und entfernen</label>
+    <label class="delopt" id="delDataRow"><input type="checkbox" id="delData"> Alle Daten löschen (Spielstände, Installation, Configs)</label>
+    <div id="delPaths" class="delpaths"></div>
+    <div id="delConfirmRow" class="hidden">
+      <div class="hint" style="color:var(--bad);margin-bottom:4px">Das kann nicht rückgängig gemacht werden. Zum Bestätigen den Servernamen eintippen:</div>
+      <input id="delConfirm" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="row" style="justify-content:flex-end">
+      <button type="button" id="delCancel">Abbrechen</button>
+      <button type="submit" class="danger" id="delGo" style="border-color:var(--bad)">Löschen</button>
+    </div>
+  </form>
+</dialog>
+
 <!-- Passwort-Dialog -->
 <dialog id="dlgPw">
   <form method="dialog" id="pwForm">
@@ -470,6 +492,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=12"></script>
+<script src="/static/app.js?v=15"></script>
 </body>
 </html>

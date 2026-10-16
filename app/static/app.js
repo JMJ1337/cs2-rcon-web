@@ -295,6 +295,18 @@ function spark(vals, color, opts = {}){
     <path d="${area}" fill="${color}" opacity=".18"/><path d="${d}" fill="none" stroke="${color}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`;
 }
 const rangeLabel = m => m >= 1440 ? "24 h" : m >= 60 ? (m / 60) + " h" : m + " min";
+function hostPanelHtml(){
+  const m = metricsData._host;
+  if (!m || !m.samples) return "";
+  const cpuN = m.cpu.filter(v => v != null), memN = m.mem.filter(v => v != null);
+  const avg = a => a.length ? (a.reduce((x, y) => x + y, 0) / a.length).toFixed(1) : "–";
+  const mx = a => a.length ? Math.max(...a).toFixed(0) : "–";
+  return `<div class="dsect"><h3 class="dhead"><span class="gtile" style="background:#8aa4c8">${gicon("_", 16)}</span>Gesamtlast des Servers <span class="hint">${rangeLabel(m.minutes)}</span></h3>
+    <div class="panel"><div class="hostpanel">
+      <div><div class="mlab"><span>CPU</span><b>Ø ${avg(cpuN)} % · max ${mx(cpuN)} %</b></div>${spark(m.cpu, "var(--ct)", {min: 100})}</div>
+      <div><div class="mlab"><span>RAM belegt</span><b>jetzt ${memN.length ? memN[memN.length-1] : "–"} % · max ${mx(memN)} %</b></div>${spark(m.mem, "#a78bfa", {min: 100})}</div>
+    </div></div></div>`;
+}
 function metricsHtml(sid, color){
   const m = metricsData[sid];
   if (!m || !m.samples) return `<div class="hint mstats">Verlauf wird gesammelt …</div>`;
@@ -305,6 +317,7 @@ function metricsHtml(sid, color){
       ${cpuNums.length ? `<div class="mcell"><div class="mlab"><span>CPU</span><b>Ø ${cpuAvg} %</b></div>${spark(m.cpu, "var(--ct)", {min: 5})}</div>` : ""}
       ${memNums.length ? `<div class="mcell"><div class="mlab"><span>RAM</span><b>${fmtMem(memNums[memNums.length-1])}</b></div>${spark(m.mem, "#a78bfa", {min: 256})}</div>` : ""}
     </div>
+    ${!cpuNums.length && !memNums.length ? `<div class="hint mstats">CPU/RAM: ${servers.find(x => x.id === sid)?.container ? "Container läuft nicht" : "unter „Bearbeiten“ den Docker-Container zuordnen"}</div>` : ""}
     <div class="hint mstats">Verfügbarkeit 24 h: <b>${m.uptime_24h != null ? m.uptime_24h + " %" : "–"}</b>${m.ping != null ? ` · Ping Ø <b>${m.ping} ms</b>` : ""} · Peak 24 h: <b>${m.peak_24h}</b></div>`;
 }
 
@@ -312,6 +325,7 @@ function metricsHtml(sid, color){
 async function refreshDash(){
   try { overview = await api("/api/overview"); } catch { return; }
   await loadMetrics();
+  if (view === "dash") $("#hostPanel").innerHTML = hostPanelHtml();
   renderServerList();
   if (view !== "dash") return;
   $("#dashEmpty").classList.toggle("hidden", overview.length > 0);
@@ -341,10 +355,11 @@ async function refreshDash(){
       </div>`) + `
       <div class="bar"><i style="width:${pct}%"></i></div>
       ${loadHtml(o.load)}
+      ${installHtml(o.install)}
       ${metricsHtml(s.id, GAMES[gameOf(s)]?.color || "var(--accent)")}
       ${o.auto && o.auto.capped ? `<span class="pill warn">Slots begrenzt auf ${o.max_players} – SLOTS im Stack erhöhen</span>` : ""}
       ${o.unclaimed ? `<span class="pill warn">Satisfactory: noch nicht beansprucht</span>` : ""}`
-      : `${ledOf(o).cls === "warn" ? `<div class="pill warn" style="justify-self:start">Container läuft – Spiel startet oder aktualisiert noch</div>` : ""}<div class="hint">${esc(o.error || (o.online === false ? "offline" : "noch nicht abgefragt"))}</div>${loadHtml(o.load)}${metricsHtml(s.id, GAMES[gameOf(s)]?.color || "var(--accent)")}`}
+      : `${ledOf(o).cls === "warn" ? `<div class="pill warn" style="justify-self:start">Container läuft – Spiel startet oder aktualisiert noch</div>` : ""}<div class="hint">${esc(o.error || (o.online === false ? "offline" : "noch nicht abgefragt"))}</div>${loadHtml(o.load)}${installHtml(o.install)}${metricsHtml(s.id, GAMES[gameOf(s)]?.color || "var(--accent)")}`}
     </div>`;
   }).join("") + `</div></div>`).join("");
   $$(".dcard").forEach(el => el.onclick = e => {
@@ -913,11 +928,48 @@ $("#serverForm").addEventListener("submit", async e => {
     selectServer(servers.find(x => x.id === s.id)); toast("Gespeichert");
   } catch(err){ toast(err.message, true); }
 });
-$("#btnDelete").onclick = async () => {
-  if (!editing || !confirm(`Server "${editing.name}" wirklich löschen?`)) return;
-  await api(`/api/servers/${editing.id}`, {method:"DELETE"});
-  $("#dlgServer").close(); await loadServers(); showView("dash");
-};
+$("#btnDelete").onclick = () => { if (editing){ $("#dlgServer").close(); openDelete(editing); } };
+let delTarget = null;
+async function openDelete(s){
+  delTarget = s;
+  $("#delName").textContent = s.name;
+  $("#delPaths").innerHTML = `<span class="hint">Prüfe Container und Datenordner …</span>`;
+  $("#delCt").checked = false; $("#delData").checked = false; $("#delConfirm").value = "";
+  $("#delCtRow").classList.add("hidden"); $("#delDataRow").classList.add("hidden");
+  updDel();
+  $("#dlgDel").showModal();
+  let plan;
+  try { plan = await api(`/api/servers/${s.id}/delete-preview`); } catch(err){ $("#delPaths").innerHTML = `<span style="color:var(--bad)">${esc(err.message)}</span>`; return; }
+  const hasCt = !!plan.container;
+  $("#delCtRow").classList.toggle("hidden", !hasCt);
+  $("#delCtName").textContent = plan.container || "";
+  const items = [...plan.paths.map(p => ({label: p.path, blocked: p.blocked})), ...plan.volumes.map(v => ({label: "Volume " + v.name, blocked: v.blocked}))];
+  $("#delDataRow").classList.toggle("hidden", !hasCt || !items.length);
+  $("#delPaths").innerHTML = !hasCt ? `<span class="hint">${plan.container_error ? "Container nicht gefunden – " : ""}Kein Container verknüpft: Es wird nur der Eintrag in der Liste entfernt.</span>` :
+    items.map(i => `<div>${i.blocked ? "🔒" : "🗑"} <span class="mono">${esc(i.label)}</span>${i.blocked ? ` <span class="hint">– bleibt erhalten: ${esc(i.blocked)}</span>` : ""}</div>`).join("") || `<span class="hint">Keine Datenordner gefunden.</span>`;
+}
+function updDel(){
+  const data = $("#delData").checked;
+  if (data) $("#delCt").checked = true;
+  $("#delCt").disabled = data;
+  $("#delConfirmRow").classList.toggle("hidden", !data);
+  $("#delGo").disabled = data && $("#delConfirm").value.trim() !== (delTarget ? delTarget.name : "");
+  $("#delGo").textContent = data ? "Server und Daten endgültig löschen" : $("#delCt").checked ? "Server und Container löschen" : "Aus der Liste entfernen";
+}
+["#delCt", "#delData"].forEach(sel => $(sel).addEventListener("change", updDel));
+$("#delConfirm").addEventListener("input", updDel);
+$("#delCancel").onclick = () => $("#dlgDel").close();
+$("#delForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  try {
+    const r = await api(`/api/servers/${delTarget.id}/delete`, {body:{remove_container: $("#delCt").checked, delete_data: $("#delData").checked, confirm: $("#delConfirm").value}});
+    $("#dlgDel").close();
+    toast(r.id ? "Löschen läuft – Fortschritt links unter der Gesamtlast" : "Server aus der Liste entfernt");
+    if (current && current.id === delTarget.id) showView("dash");
+    setTimeout(async () => { await loadServers(); refreshDash(); }, r.id ? 2500 : 0);
+    refreshActivity();
+  } catch(err){ toast(err.message, true); }
+});
 $("#btnTest").onclick = async () => {
   const d = formData(); if (!d.host) return toast("IP fehlt", true);
   $("#btnTest").disabled = true;
@@ -1183,7 +1235,8 @@ async function start(){
   clearInterval(dashTimer);
   refreshHost();
   refreshCache();
-  dashTimer = setInterval(() => { refreshDash(); refreshHost(); refreshCache(); }, 5000);
+  refreshActivity();
+  dashTimer = setInterval(() => { refreshDash(); refreshHost(); refreshCache(); refreshActivity(); }, 5000);
 }
 async function showVersion(){
   try {
@@ -1275,4 +1328,51 @@ async function renderHistory(){
   if (!current) return;
   await loadMetrics();
   $("#svHistory").innerHTML = metricsHtml(current.id, GAMES[gameOf(current)]?.color || "var(--accent)");
+}
+
+/* ================= Installation / Update / Fehler ================= */
+const fmtEta = s => s == null ? "" : s >= 3600 ? `${Math.floor(s/3600)} h ${Math.round(s%3600/60)} min` : s >= 60 ? `${Math.round(s/60)} min` : `${s} s`;
+function progressText(p){
+  return `${p.label} · ${p.pct.toFixed(1)} % · ${fmtBytes(p.done)} / ${fmtBytes(p.total)}` +
+    (p.rate ? ` · ${fmtRate(p.rate)}` : "") + (p.eta ? ` · noch ${fmtEta(p.eta)}` : "");
+}
+function installHtml(inst){
+  if (!inst) return "";
+  let h = "";
+  if (inst.progress){
+    const p = inst.progress;
+    h += `<div class="instbar" data-stop><div class="bar"><i style="width:${Math.min(100, p.pct)}%"></i></div><div class="s">${esc(progressText(p))}</div></div>`;
+  }
+  (inst.errors || []).slice(0, 1).forEach(e => { h += `<div class="pill" style="color:var(--bad);border-color:#6b2a27;justify-self:start;white-space:normal" title="${esc(e.line)}">⚠ ${esc(e.text)}</div>`; });
+  return h;
+}
+async function refreshActivity(){
+  let a;
+  try { a = await api("/api/activity"); } catch { return; }
+  const parts = [];
+  (a.jobs || []).forEach(j => {
+    parts.push(`<div class="act ${j.error ? "err" : ""}" data-act-job="${esc(j.id)}">
+      <div class="t">${gicon(j.game, 14)}<span class="n">${esc(j.title || `Neuer ${GAMES[j.game]?.short || j.game}-Server`)}</span></div>
+      ${j.error ? `<div class="e">${esc(j.error)}</div>` : `<div class="bar indet"><i></i></div><div class="s">${esc(j.step || "…")}</div>`}</div>`);
+  });
+  (a.items || []).forEach(it => {
+    const p = it.progress;
+    parts.push(`<div class="act ${!p && it.errors.length ? "err" : ""}" data-act-sid="${esc(it.server_id)}" title="${esc(it.container)}">
+      <div class="t">${gicon(it.game, 14)}<span class="n">${esc(it.name)}</span>${it.errors.length ? `<button class="x" data-act-dismiss="${esc(it.container)}" title="Fehler ausblenden">✕</button>` : ""}</div>
+      ${p ? `<div class="bar"><i style="width:${Math.min(100, p.pct)}%"></i></div><div class="s">${esc(progressText(p))}</div>` : ""}
+      ${it.errors.map(e => `<div class="e" title="${esc(e.line)}">⚠ ${esc(e.text)}</div>`).join("")}</div>`);
+  });
+  $("#activity").innerHTML = parts.join("");
+  $("#activity").classList.toggle("hidden", !parts.length);
+  $$("[data-act-sid]").forEach(el => el.onclick = e => {
+    if (e.target.closest("[data-act-dismiss]")) return;
+    const s = servers.find(x => x.id === el.dataset.actSid); if (!s) return;
+    selectServer(s); if (dockerOn && s.container) setTab("container");
+  });
+  $$("[data-act-dismiss]").forEach(b => b.onclick = async e => {
+    e.stopPropagation();
+    await api(`/api/activity/dismiss/${encodeURIComponent(b.dataset.actDismiss)}`, {method: "POST"}).catch(() => {});
+    refreshActivity();
+  });
+  $$("[data-act-job]").forEach(el => el.onclick = () => showView("create"));
 }

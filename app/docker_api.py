@@ -131,7 +131,7 @@ async def image_exists(image: str) -> bool:
         return False
 
 
-async def run_helper(binds: list[str], cmd: list[str]) -> str:
+async def run_helper(binds: list[str], cmd: list[str], timeout: float = 120) -> str:
     """Kurzlebigen Hilfs-Container starten (z. B. Ordner auf dem NAS anlegen und Rechte setzen)."""
     if not await image_exists(HELPER_IMAGE):
         await pull(HELPER_IMAGE)  # klein (~4 MB), nur beim ersten Mal
@@ -141,7 +141,7 @@ async def run_helper(binds: list[str], cmd: list[str]) -> str:
     cid = c["Id"]
     try:
         await _req("POST", f"/containers/{cid}/start")
-        w = (await _req("POST", f"/containers/{cid}/wait", timeout=120)).json()
+        w = (await _req("POST", f"/containers/{cid}/wait", timeout=timeout)).json()
         out = _demux((await _req("GET", f"/containers/{cid}/logs", params={"stdout": "1", "stderr": "1"})).content)
         if w.get("StatusCode", 0) != 0:
             raise DockerError(f"Hilfs-Container fehlgeschlagen: {out.strip()[:300]}")
@@ -186,3 +186,26 @@ async def used_host_ports() -> dict[int, str]:
                 if num.isdigit():
                     used[int(num)] = name
     return used
+
+
+async def mounts(name: str) -> list[dict]:
+    info = await inspect(name)
+    return [{"type": m.get("Type"), "source": m.get("Source"), "name": m.get("Name"), "dest": m.get("Destination")}
+            for m in info.get("Mounts") or []]
+
+
+async def all_mounts() -> dict[str, list[dict]]:
+    out = {}
+    r = await _req("GET", "/containers/json", params={"all": "1"})
+    for c in r.json():
+        n = (c.get("Names") or ["/?"])[0].lstrip("/")
+        out[n] = [{"type": m.get("Type"), "source": m.get("Source"), "name": m.get("Name")} for m in c.get("Mounts") or []]
+    return out
+
+
+async def remove_container(name: str) -> None:
+    await _req("DELETE", f"/containers/{name}", params={"force": "1", "v": "1"}, timeout=60)
+
+
+async def remove_volume(name: str) -> None:
+    await _req("DELETE", f"/volumes/{name}", timeout=60)
