@@ -250,8 +250,22 @@ const SVC_ICONS = {
   _: ['<path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 19h16"/>', "#9aa3ad"],
 };
 SVC_ICONS.windowsupdates = SVC_ICONS.wsus;
+// Originalsymbole der Anbieter (deren eigenes Favicon, wird live geladen; offline -> eigenes Ersatzsymbol)
+const SVC_FAVICON = {steam: "store.steampowered.com", wsus: "www.microsoft.com", windowsupdates: "www.microsoft.com",
+  epicgames: "store.epicgames.com", origin: "www.ea.com", blizzard: "www.blizzard.com", riot: "www.riotgames.com",
+  uplay: "www.ubisoft.com", xboxlive: "www.xbox.com", sony: "www.playstation.com", nintendo: "www.nintendo.com",
+  apple: "www.apple.com", wargaming: "wargaming.net", rockstar: "www.rockstargames.com", frontier: "www.frontier.co.uk",
+  arenanet: "www.arena.net", pathofexile: "www.pathofexile.com", warframe: "www.warframe.com", hirez: "www.hirezstudios.com",
+  bsg: "www.escapefromtarkov.com", teso: "www.elderscrollsonline.com"};
 function svcIcon(id, size = 16){
-  const [path, color] = SVC_ICONS[(id || "").toLowerCase()] || SVC_ICONS._;
+  const key = (id || "").toLowerCase(), dom = SVC_FAVICON[key];
+  const own = svcIconOwn(key, size);
+  if (!dom) return own;
+  return `<span class="svcorig"><img src="https://${dom}/favicon.ico" width="${size + 4}" height="${size + 4}" alt="" loading="lazy" referrerpolicy="no-referrer"
+    onerror="this.parentNode.classList.add('fail')">${own}</span>`;
+}
+function svcIconOwn(key, size){
+  const [path, color] = SVC_ICONS[key] || SVC_ICONS._;
   return `<span class="gtile svctile" style="background:${color}"><svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg></span>`;
 }
 function svcRows(list){
@@ -894,6 +908,7 @@ function renderAuto(){
   $("#setScanSubnets").value = settings.scan_subnets || "";
   $("#setGamesBase").value = settings.games_base || "/mnt/grohlan";
   $("#setCacheContainer").value = settings.cache_container || "";
+  $("#setHostnamePattern").value = settings.hostname_pattern ?? "CS#{nr} {mode}";
   $$("[data-mdel]").forEach(b => b.onclick = () => { readAuto(); settings.modes.splice(+b.dataset.mdel, 1); renderAuto(); });
   $$("[data-rdel]").forEach(b => b.onclick = () => { readAuto(); settings.map_rules.splice(+b.dataset.rdel, 1); renderAuto(); });
 }
@@ -910,7 +925,8 @@ $("#btnAutoSave").onclick = async () => {
     settings = await api("/api/settings", {method:"PUT", body:{modes: settings.modes, map_rules: settings.map_rules,
       public_url: $("#setPublicUrl").value.trim(), watch_interval: parseInt($("#setInterval").value, 10) || 10,
       scan_interval: Math.max(0, parseInt($("#setScanInterval").value, 10) || 0), scan_subnets: $("#setScanSubnets").value.trim(),
-      games_base: $("#setGamesBase").value.trim(), cache_container: $("#setCacheContainer").value.trim()}});
+      games_base: $("#setGamesBase").value.trim(), cache_container: $("#setCacheContainer").value.trim(),
+      hostname_pattern: $("#setHostnamePattern").value.trim()}});
     renderAuto(); refreshModeSelects(); toast("Gespeichert – wird beim nächsten Prüfen angewendet");
   } catch(err){ toast(err.message, true); }
 };
@@ -931,6 +947,7 @@ function openServerDialog(s){
   f.game.value = gameOf(s);
   f.web_url.value = s?.web_url || "";
   f.name_from_game.checked = s ? s.name_from_game !== false : true;
+  f.mode_name.checked = s ? s.mode_name !== false : true;
   f.game_port.value = s?.game_port || "";
   fillContainerSelect(s?.container || "");
   dlgGameChanged(!s);
@@ -945,7 +962,7 @@ function formData(){
   const f = $("#serverForm");
   return {name: f.name.value.trim(), host: f.host.value.trim(), port: parseInt(f.port.value, 10), password: f.password.value,
           notes: f.notes.value.trim(), auto_slots: f.auto_slots.checked, game: f.game.value, container: f.container.value,
-          web_url: f.web_url.value.trim(), name_from_game: f.name_from_game.checked,
+          web_url: f.web_url.value.trim(), name_from_game: f.name_from_game.checked, mode_name: f.mode_name.checked,
           game_port: f.game_port.value ? parseInt(f.game_port.value, 10) : null};
 }
 $("#serverForm").addEventListener("submit", async e => {
@@ -1111,6 +1128,7 @@ function dlgGameChanged(setDefaults){
   $("#dlgPwLabel").textContent = g.password_label;
   if (setDefaults) f.port.value = g.default_port;
   $("#dlgAutoRow").classList.toggle("hidden", f.game.value !== "cs2");
+  $("#dlgModeNameRow").classList.toggle("hidden", f.game.value !== "cs2");
 }
 $("#dlgGame").addEventListener("change", () => dlgGameChanged(true));
 

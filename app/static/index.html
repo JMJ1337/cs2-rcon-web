@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=16">
+<link rel="stylesheet" href="/static/app.css?v=17">
 </head>
 <body>
 
@@ -128,6 +128,7 @@
             <div class="field"><label>Zusätzliche Netze für den Scan</label><input id="setScanSubnets" placeholder="z. B. 192.168.200.0/24" class="mono"></div>
             <div class="field"><label>Basisordner für neue Spielserver (auf dem Docker-Host)</label><input id="setGamesBase" placeholder="/mnt/grohlan" class="mono"></div>
             <div class="field"><label>Lancache-Container (leer = automatisch)</label><input id="setCacheContainer" placeholder="z. B. lancache-monolithic-1" class="mono"></div>
+            <div class="field"><label>CS2-Servername nach Modus (<span class="mono">{nr}</span> = Servernummer, <span class="mono">{mode}</span> = Modus; leer = aus)</label><input id="setHostnamePattern" placeholder="CS#{nr} {mode}" class="mono" maxlength="60"></div>
           </div>
           <div class="hint" style="margin-top:6px">Leer = Adresse aus dem Browser. Die CS2-Server laden Match-Configs von dieser Adresse – also die LAN-IP verwenden, nicht „localhost“.</div>
         </div>
@@ -424,7 +425,8 @@
     <h2 id="dlgTitle">Server hinzufügen</h2>
     <div><label>Spiel</label><select name="game" id="dlgGame"></select></div>
     <div><label>Name</label><input name="name" required maxlength="64" placeholder="z. B. CS1">
-      <label style="display:flex;gap:8px;align-items:center;margin-top:4px"><input type="checkbox" name="name_from_game" checked style="width:auto"> Namen automatisch vom Server im Spiel übernehmen</label></div>
+      <label style="display:flex;gap:8px;align-items:center;margin-top:4px"><input type="checkbox" name="name_from_game" checked style="width:auto"> Namen automatisch vom Server im Spiel übernehmen</label>
+      <label id="dlgModeNameRow" style="display:flex;gap:8px;align-items:center;margin-top:4px"><input type="checkbox" name="mode_name" checked style="width:auto"> CS2: Servernamen im Spiel nach aktuellem Modus setzen (z. B. „CS#2 Wingman“)</label></div>
     <div class="row">
       <div style="flex:3"><label>IP / Hostname</label><input name="host" required placeholder="192.168.200.27"></div>
       <div style="flex:1"><label id="dlgPortLabel">Port</label><input name="port" type="number" min="1" max="65535" value="27015" required></div>
@@ -500,6 +502,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=16"></script>
+<script src="/static/app.js?v=17"></script>
 </body>
 </html>

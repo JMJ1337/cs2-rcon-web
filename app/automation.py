@@ -35,6 +35,7 @@ DEFAULT_SETTINGS = {
     "scan_subnets": "",         # zusätzliche Netze, z. B. "192.168.200.0/24"
     "games_base": "/mnt/grohlan",   # Basisordner für neue Spielserver (NAS-Mount auf dem Docker-Host)
     "cache_container": "",      # Lancache-Container (leer = automatisch erkennen)
+    "hostname_pattern": "CS#{nr} {mode}",   # CS2-Servername nach Modus (leer = aus)
 }
 
 
@@ -49,7 +50,7 @@ def get_settings() -> dict:
 def save_settings(data: dict) -> dict:
     cur = get_settings()
     for k in ("modes", "map_rules", "public_url", "watch_interval", "scan_interval", "scan_subnets",
-              "games_base", "cache_container"):
+              "games_base", "cache_container", "hostname_pattern"):
         if k in data:
             cur[k] = data[k]
     store.save(SETTINGS_FILE, cur)

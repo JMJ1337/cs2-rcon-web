@@ -286,3 +286,8 @@ span.joinbtn{background:var(--panel2);color:var(--text);border:1px solid var(--l
 .lgd{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 3px 0 10px;vertical-align:-1px}
 .savedcard{border-color:color-mix(in srgb,var(--ok) 45%,var(--line))}
 .cgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+.svcorig{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex:none}
+.svcorig img{border-radius:4px;background:#fff;padding:1px}
+.svcorig .svctile{display:none}
+.svcorig.fail img{display:none}
+.svcorig.fail .svctile{display:inline-flex}

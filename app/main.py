@@ -222,6 +222,7 @@ class ServerIn(BaseModel):
     web_url: str = Field("", max_length=255)
     game_port: int | None = Field(None, ge=1, le=65535)   # Port zum Beitreten, falls abweichend
     name_from_game: bool = True                            # Namen automatisch aus dem Spiel übernehmen
+    mode_name: bool = True                                 # CS2: Servername im Spiel nach aktuellem Modus setzen
 
 
 _store_lock = asyncio.Lock()
@@ -246,6 +247,7 @@ def public(s: dict) -> dict:
     out.setdefault("web_url", "")
     out.setdefault("game_port", None)
     out.setdefault("name_from_game", True)
+    out.setdefault("mode_name", True)
     return out | {"has_password": bool(s.get("password"))}
 
 
@@ -305,7 +307,8 @@ async def add_server(data: ServerIn):
              "port": data.port, "password": data.password or "", "notes": data.notes,
              "auto_slots": data.auto_slots, "game": data.game if data.game in GAMES else "cs2",
              "container": data.container.strip(), "web_url": data.web_url.strip(),
-             "game_port": data.game_port, "name_from_game": data.name_from_game}
+             "game_port": data.game_port, "name_from_game": data.name_from_game,
+             "mode_name": data.mode_name}
         servers.append(s)
         save_servers(servers)
     return public(s)
@@ -320,7 +323,8 @@ async def update_server(sid: str, data: ServerIn):
                 s.update(name=data.name, host=data.host.strip(), port=data.port, notes=data.notes,
                          auto_slots=data.auto_slots, game=data.game if data.game in GAMES else "cs2",
                          container=data.container.strip(), web_url=data.web_url.strip(),
-                         game_port=data.game_port, name_from_game=data.name_from_game)
+                         game_port=data.game_port, name_from_game=data.name_from_game,
+                         mode_name=data.mode_name)
                 if data.password:
                     s["password"] = data.password
                 save_servers(servers)
@@ -484,6 +488,25 @@ async def _sync_name(s: dict, name: str | None):
         _renaming.discard(s["id"])
 
 
+def _server_nr(s: dict, hostname: str | None) -> int:
+    """Nummer des Servers: aus dem bisherigen Namen (#3), sonst aus dem Container (…CS3), sonst Reihenfolge."""
+    for txt in (hostname or "", s.get("name") or ""):
+        if m := re.search(r"#\s*(\d+)", txt):
+            return int(m.group(1))
+    if m := re.search(r"(\d+)\s*$", s.get("container") or ""):
+        return int(m.group(1))
+    cs = [x["id"] for x in load_servers() if x.get("game", "cs2") == "cs2"]
+    return cs.index(s["id"]) + 1 if s["id"] in cs else 1
+
+
+def _mode_hostname(s: dict, hostname: str | None, mode_label: str, settings: dict) -> str | None:
+    pattern = (settings.get("hostname_pattern") or "").strip()
+    if not pattern:
+        return None
+    name = pattern.replace("{nr}", str(_server_nr(s, hostname))).replace("{mode}", mode_label)
+    return re.sub(r'["\\;]', "", name).strip()[:63] or None
+
+
 async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = False) -> dict:
     """Status + wichtige Cvars lesen, optional Spieleranzahl automatisch setzen."""
     if game_of(s) != "cs2":
@@ -529,6 +552,12 @@ async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = 
         "workshop": ws,
         "updated": time.time(),
     }
+    if apply_auto and mode and s.get("mode_name", True):
+        want = _mode_hostname(s, st.get("hostname"), mode["label"], settings)
+        if want and want != st.get("hostname"):
+            await c.execute(f'hostname "{want}"')
+            log.info("%s: hostname -> %s", s["name"], want)
+            st["hostname"] = result["hostname"] = want
     if with_matchzy:
         result["matchzy"] = await _matchzy_info(s)
     elif "matchzy" in _state.get(s["id"], {}):
@@ -958,6 +987,7 @@ class SettingsIn(BaseModel):
     scan_subnets: str | None = Field(None, max_length=200)
     games_base: str | None = Field(None, max_length=200)
     cache_container: str | None = Field(None, max_length=100)
+    hostname_pattern: str | None = Field(None, max_length=60)
 
 
 @app.get("/api/settings", dependencies=auth)
