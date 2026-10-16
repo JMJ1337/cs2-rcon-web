@@ -271,15 +271,54 @@ async function refreshCache(){
   </div>`;
 }
 
+/* ================= Verlaufs-Metriken ================= */
+let metricsData = {}, metricsRange = (() => { try { return +localStorage.getItem("gsmRange") || 360; } catch { return 360; } })(), metricsAt = 0;
+async function loadMetrics(force){
+  if (!force && Date.now() - metricsAt < 30000) return;
+  try { metricsData = await api(`/api/metrics?minutes=${metricsRange}`); metricsAt = Date.now(); } catch {}
+}
+function spark(vals, color, opts = {}){
+  const w = 200, h = opts.h || 34, pad = 2;
+  const nums = vals.filter(v => v != null);
+  if (!nums.length) return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><line x1="0" y1="${h-1}" x2="${w}" y2="${h-1}" stroke="var(--line)"/></svg>`;
+  const max = Math.max(opts.min || 1, ...nums), n = vals.length;
+  const x = i => (i / (n - 1)) * w, y = v => h - pad - (v / max) * (h - pad * 2);
+  let d = "", area = "", seg = [];
+  const flush = () => {
+    if (!seg.length) return;
+    d += "M" + seg.map(([i, v]) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("L");
+    area += `M${x(seg[0][0]).toFixed(1)},${h}L` + seg.map(([i, v]) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("L") + `L${x(seg[seg.length-1][0]).toFixed(1)},${h}Z`;
+    seg = [];
+  };
+  vals.forEach((v, i) => v == null ? flush() : seg.push([i, v])); flush();
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
+    <path d="${area}" fill="${color}" opacity=".18"/><path d="${d}" fill="none" stroke="${color}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`;
+}
+const rangeLabel = m => m >= 1440 ? "24 h" : m >= 60 ? (m / 60) + " h" : m + " min";
+function metricsHtml(sid, color){
+  const m = metricsData[sid];
+  if (!m || !m.samples) return `<div class="hint mstats">Verlauf wird gesammelt …</div>`;
+  const cpuNums = m.cpu.filter(v => v != null), memNums = m.mem.filter(v => v != null);
+  const cpuAvg = cpuNums.length ? (cpuNums.reduce((a, b) => a + b, 0) / cpuNums.length).toFixed(1) : null;
+  return `<div class="mgrid">
+      <div class="mcell"><div class="mlab"><span>Spieler · ${rangeLabel(m.minutes)}</span><b>Peak ${m.peak_24h}</b></div>${spark(m.players, color, {min: 2})}</div>
+      ${cpuNums.length ? `<div class="mcell"><div class="mlab"><span>CPU</span><b>Ø ${cpuAvg} %</b></div>${spark(m.cpu, "var(--ct)", {min: 5})}</div>` : ""}
+      ${memNums.length ? `<div class="mcell"><div class="mlab"><span>RAM</span><b>${fmtMem(memNums[memNums.length-1])}</b></div>${spark(m.mem, "#a78bfa", {min: 256})}</div>` : ""}
+    </div>
+    <div class="hint mstats">Verfügbarkeit 24 h: <b>${m.uptime_24h != null ? m.uptime_24h + " %" : "–"}</b>${m.ping != null ? ` · Ping Ø <b>${m.ping} ms</b>` : ""} · Peak 24 h: <b>${m.peak_24h}</b></div>`;
+}
+
 /* ================= Dashboard ================= */
 async function refreshDash(){
   try { overview = await api("/api/overview"); } catch { return; }
+  await loadMetrics();
   renderServerList();
   if (view !== "dash") return;
   $("#dashEmpty").classList.toggle("hidden", overview.length > 0);
   const on = overview.filter(o => o.online).length;
   const pl = overview.reduce((a,o) => a + (o.online ? (o.humans||0) : 0), 0);
   $("#dashSub").textContent = `${on} von ${overview.length} online · ${pl} Spieler gesamt · aktualisiert ${new Date().toLocaleTimeString("de-DE")}`;
+  $$("#rangeSeg [data-range]").forEach(b => b.classList.toggle("active", +b.dataset.range === metricsRange));
   const order = Object.keys(GAMES);
   const byGame = order.map(g => [g, overview.filter(o => gameOf(o.server) === g)]).filter(([, l]) => l.length);
   $("#dashGrid").innerHTML = byGame.map(([g, items]) => `<div class="dsect"><h3 class="dhead"><span class="gtile" style="background:${GAMES[g].color}">${gicon(g, 16)}</span>${esc(GAMES[g].label)} <span class="hint">${items.filter(o => o.online).length}/${items.length} online</span></h3><div class="dash">` + items.map(o => {
@@ -302,9 +341,10 @@ async function refreshDash(){
       </div>`) + `
       <div class="bar"><i style="width:${pct}%"></i></div>
       ${loadHtml(o.load)}
+      ${metricsHtml(s.id, GAMES[gameOf(s)]?.color || "var(--accent)")}
       ${o.auto && o.auto.capped ? `<span class="pill warn">Slots begrenzt auf ${o.max_players} – SLOTS im Stack erhöhen</span>` : ""}
       ${o.unclaimed ? `<span class="pill warn">Satisfactory: noch nicht beansprucht</span>` : ""}`
-      : `${ledOf(o).cls === "warn" ? `<div class="pill warn" style="justify-self:start">Container läuft – Spiel startet oder aktualisiert noch</div>` : ""}<div class="hint">${esc(o.error || (o.online === false ? "offline" : "noch nicht abgefragt"))}</div>${loadHtml(o.load)}`}
+      : `${ledOf(o).cls === "warn" ? `<div class="pill warn" style="justify-self:start">Container läuft – Spiel startet oder aktualisiert noch</div>` : ""}<div class="hint">${esc(o.error || (o.online === false ? "offline" : "noch nicht abgefragt"))}</div>${loadHtml(o.load)}${metricsHtml(s.id, GAMES[gameOf(s)]?.color || "var(--accent)")}`}
     </div>`;
   }).join("") + `</div></div>`).join("");
   $$(".dcard").forEach(el => el.onclick = e => {
@@ -396,6 +436,7 @@ async function refreshStatus(){
     $("#stMzSub").textContent = mz.installed ? (mz.match ? `Status: ${mz.match.state || "?"}${mz.match.score1 != null ? ` · ${mz.match.score1}:${mz.match.score2}` : ""}` : (mz.version ? "v" + mz.version : "kein Match geladen")) : "";
     $("#stHost").textContent = `${st.hostname || ""} · max. ${st.max_players ?? "?"} Slots (Stack) · Bots: ${st.bot_quota ?? "?"}`;
     renderPlayers(st.players);
+    renderHistory();
     $("#stUpdated").textContent = "aktualisiert " + new Date().toLocaleTimeString("de-DE");
   } catch(err){
     if (!current || current.id !== id) return;
@@ -927,6 +968,7 @@ function renderGeneric(st){
   $("#playerRows").innerHTML = list.length ? list.map(p => `<tr><td></td><td class="name">${esc(p.name)}</td><td colspan="2"></td><td class="mono">${esc(p.time || "")}</td><td colspan="3"></td></tr>`).join("")
     : `<tr><td colspan="8" class="muted">${st.humans ? `${st.humans} Spieler online (Namen liefert dieses Spiel nicht)` : "Keine Spieler verbunden."}</td></tr>`;
   $("#stUpdated").textContent = "aktualisiert " + new Date().toLocaleTimeString("de-DE");
+  renderHistory();
 }
 $("#btnGSave").onclick = async () => {
   try { const r = await api(`/api/servers/${current.id}/save`, {body:{name: $("#gSaveName").value.trim()}}); toast(r.output || "Gespeichert"); $("#gSaveName").value = ""; }
@@ -1222,3 +1264,15 @@ setInterval(async () => {
   } catch {}
 }, 60000);
 $("#btnReloadApp").onclick = () => location.reload();
+
+$$("#rangeSeg [data-range]").forEach(b => b.onclick = async () => {
+  metricsRange = +b.dataset.range;
+  try { localStorage.setItem("gsmRange", metricsRange); } catch {}
+  await loadMetrics(true); refreshDash();
+});
+
+async function renderHistory(){
+  if (!current) return;
+  await loadMetrics();
+  $("#svHistory").innerHTML = metricsHtml(current.id, GAMES[gameOf(current)]?.color || "var(--accent)");
+}

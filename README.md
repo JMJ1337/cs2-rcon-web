@@ -12,6 +12,9 @@ Weboberfläche für die Spielserver auf unserer LAN – als Docker-Container mit
 | **Wreckfest** | Steam-Query (A2S, Query-Port) | – (Webkonsole des ich777-Images verlinkbar) | Neustart/Logs über Docker |
 
 Außerdem:
+- **Verlaufs-Metriken je Spielserver:** Spieler, CPU und RAM als Mini-Diagramme (1 h / 6 h / 24 h), Spieler-Peak,
+  Verfügbarkeit der letzten 24 h und bei CS2 der Durchschnitts-Ping. Werte liegen in `/data/metrics.json` und
+  überstehen Updates.
 - **Lancache-Metriken** in der Übersicht: aus dem Cache vs. aus dem Internet (24 h), Trefferquote, aktueller Durchsatz,
   Cache-Speicher, Aufteilung nach Dienst (Steam, Epic …). Liest das `access.log` des `lancachenet/monolithic`-Containers
   per Docker (wird automatisch erkannt, sonst Namen unter „Automatik & Einstellungen“ eintragen).

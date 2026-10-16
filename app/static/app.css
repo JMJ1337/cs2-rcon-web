@@ -240,3 +240,15 @@ span.joinbtn{background:var(--panel2);color:var(--text);border:1px solid var(--l
 .cachetable td,.cachetable th{padding:6px 8px}
 .cachebar{height:8px;background:#3a2f22;border-radius:4px;overflow:hidden}
 .cachebar i{display:block;height:100%;background:var(--ok)}
+
+/* ---------- v12: Verlaufs-Metriken ---------- */
+.mgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-top:2px}
+.mcell{min-width:0}
+.mlab{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:2px}
+.mlab b{font-family:var(--mono);font-weight:500;color:var(--text)}
+.spark{width:100%;height:34px;display:block;background:rgba(255,255,255,.02);border-radius:4px}
+.mstats{font-size:11.5px}
+.mstats b{color:var(--text);font-weight:500}
+.svhistory .spark{height:60px}
+.svhistory .mgrid{grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+.svhistory .mlab{font-size:12px}

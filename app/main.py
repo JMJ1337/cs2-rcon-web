@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import automation, cache_stats, docker_api, hoststats, scanner, steam, store, templates, users
+from . import automation, cache_stats, docker_api, hoststats, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
 from .rcon import RconAuthError, RconClient, RconError
@@ -50,6 +50,10 @@ async def lifespan(_app):
     yield
     for t in tasks:
         t.cancel()
+    try:
+        metrics.maybe_save(force=True)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 app = FastAPI(title="CS2 RCON Web", docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -618,6 +622,18 @@ async def load_loop():
             for k in list(_loads):
                 if k not in names:
                     _loads.pop(k, None)
+        if n % 2 == 0:
+            servers = load_servers()
+            for s in servers:
+                metrics.record(s["id"], _state.get(s["id"], {}), _loads.get(s.get("container") or ""))
+            metrics.forget({s["id"] for s in servers})
+            metrics.maybe_save()
+
+
+@app.get("/api/metrics", dependencies=auth)
+async def server_metrics(minutes: int = 360):
+    minutes = max(30, min(minutes, 24 * 60))
+    return {s["id"]: metrics.summary(s["id"], minutes) for s in load_servers()}
 
 
 @app.get("/api/cache", dependencies=auth)
