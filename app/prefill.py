@@ -231,7 +231,8 @@ async def pause(on: bool) -> None:
     await docker_api._req("POST", f"/containers/{NAME}/{'pause' if on else 'unpause'}", timeout=30)
 
 
-async def yield_check(cache_tx: float | None, prefill_rx: float | None, others_downloading: list[str]) -> None:
+async def yield_check(cache_tx: float | None, prefill_rx: float | None, others_downloading: list[str],
+                      lan_tx: float | None = None) -> None:
     """Alle 5 s: Prefill pausieren, solange andere über den Cache laden (oder Server-Updates laufen), danach fortsetzen."""
     s = settings()
     st = await container_state()
@@ -251,15 +252,18 @@ async def yield_check(cache_tx: float | None, prefill_rx: float | None, others_d
         return
     limit = float(s.get("yield_mbs") or 2.0) * 1e6
     # Traffic an andere Clients = alles, was der Cache sendet, minus das, was Prefill selbst empfängt
-    others = max(0.0, (cache_tx or 0) - (0 if is_paused else (prefill_rx or 0)))
-    busy = others > limit or bool(others_downloading)
+    pr = 0 if is_paused else (prefill_rx or 0)
+    others = max(0.0, (cache_tx or 0) - pr)
+    # Toleranz: Cache-Sendung und Prefill-Empfang werden nicht exakt gleichzeitig gemessen
+    busy = others > max(limit, 0.3 * pr) or bool(others_downloading) or (lan_tx is not None and lan_tx > limit)
     if busy:
         auto["busy"] += 1; auto["quiet"] = 0
     else:
         auto["quiet"] += 1; auto["busy"] = 0
     if not is_paused and auto["busy"] >= 2:
         await pause(True)
-        why = ("Server-Update: " + ", ".join(others_downloading)) if others_downloading else f"andere laden {others / 1e6:.1f} MB/s über den Cache"
+        why = ("Server-Update: " + ", ".join(others_downloading)) if others_downloading else \
+            (f"LAN-Clients laden {lan_tx / 1e6:.1f} MB/s" if lan_tx and lan_tx > limit else f"andere laden {others / 1e6:.1f} MB/s über den Cache")
         auto.update(paused=True, since=time.time(), reason=why)
     elif is_paused and auto["paused"] and auto["quiet"] >= 6:      # 30 s Ruhe
         await pause(False)

@@ -788,7 +788,9 @@ async def load_loop():
                 pd = livestats.data.get(prefill.NAME) or {}
                 dls = [x["name"] for x in load_servers() if x.get("container") and
                        ((install_watch.state.get(x["container"]) or {}).get("progress") or {}).get("phase") == "downloading"]
-                await prefill.yield_check(cd.get("tx_bps"), pd.get("rx_bps"), dls)
+                lh = livestats.host
+                await prefill.yield_check(cd.get("tx_bps"), pd.get("rx_bps"), dls,
+                                          lh.get("tx_bps") if lh.get("source") == "host" else None)
             except docker_api.DockerError:
                 pass
             except Exception:  # noqa: BLE001
