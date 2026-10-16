@@ -168,7 +168,7 @@ function renderServerList(){
         const lim = st.visible_players > 0 ? st.visible_players : st.max_players;
         const cnt = st.online ? `${st.humans ?? 0}${lim ? "/" + lim : ""}` : "";
         return `<div class="srv ${current && current.id===s.id ? "active":""}" data-id="${esc(s.id)}">
-          <span class="dot ${st.online===true?"on":st.online===false?"off":""}"></span>
+          ${led(st)}
           <div class="meta"><div class="n">${esc(s.name)}</div><div class="h">${esc(st.map || s.host+":"+s.port)}</div></div>
           <span class="cnt">${esc(cnt)}</span></div>`;
       }).join("")}</div></div>`;
@@ -181,6 +181,18 @@ function renderServerList(){
     b.parentElement.classList.toggle("open");
   });
 }
+
+/* ================= Status-LED ================= */
+const CSTATE = {running: "läuft", exited: "gestoppt", restarting: "startet neu", created: "angelegt", paused: "pausiert", dead: "defekt", removing: "wird entfernt"};
+function ledOf(o){
+  const c = o && o.load && !o.load.error ? o.load.state : null;
+  if (o && o.online) return {cls: "on", tip: "Server online" + (c ? " · Container " + (CSTATE[c] || c) : "")};
+  if (c === "running" || c === "restarting") return {cls: "warn", tip: "Container " + (CSTATE[c] || c) + ", aber das Spiel antwortet (noch) nicht – startet/aktualisiert vermutlich"};
+  if (c) return {cls: "off", tip: "Container " + (CSTATE[c] || c)};
+  if (o && o.online === false) return {cls: "off", tip: "Server nicht erreichbar"};
+  return {cls: "", tip: "noch nicht abgefragt"};
+}
+const led = o => { const l = ledOf(o); return `<span class="dot ${l.cls}" title="${esc(l.tip)}"></span>`; };
 
 /* ================= Last ================= */
 const lvl = p => p >= 85 ? "crit" : p >= 60 ? "warn" : "ok";
@@ -200,8 +212,8 @@ async function refreshHost(){
 }
 function loadHtml(l){
   if (!l) return "";
-  if (l.error) return `<div class="loadrow"><span>Last</span><span class="hint">${esc(l.error)}</span><span></span></div>`;
-  if (l.state !== "running") return `<div class="loadrow"><span>Container</span><span style="color:var(--bad)">${esc(l.state || "?")}</span><span></span></div>`;
+  if (l.error) return `<div class="loadrow"><span>Container</span><span class="hint">${esc(/no such container/i.test(l.error) ? "nicht gefunden – unter „Bearbeiten“ neu zuordnen" : l.error)}</span><span></span></div>`;
+  if (l.state !== "running") return `<div class="loadrow"><span>Container</span><span style="color:var(--bad)">${esc(CSTATE[l.state] || l.state || "?")}</span><span></span></div>`;
   const c = l.cpu_host || 0;
   return `<div class="loadrow" title="CPU bezogen auf den ganzen Host (${l.cpu ?? "?"} % eines Kerns)"><span>Last</span>
     <div class="bar"><i class="${lvl(c)}" style="width:${Math.min(100, c)}%"></i></div>
@@ -210,13 +222,29 @@ function loadHtml(l){
 
 /* ================= Lancache ================= */
 const fmtBytes = b => b == null ? "–" : b >= 1e12 ? (b/1e12).toFixed(2) + " TB" : b >= 1e9 ? (b/1e9).toFixed(1) + " GB" : b >= 1e6 ? (b/1e6).toFixed(0) + " MB" : Math.round(b/1e3) + " KB";
+const LINK_BPS = 125e6;   // 1 Gbit/s als 100 % für den Durchsatz-Balken
 const fmtRate = bps => bps >= 1e6 ? (bps/1e6).toFixed(1) + " MB/s" : bps >= 1e3 ? Math.round(bps/1e3) + " KB/s" : "0 KB/s";
 let cacheData = null;
+const CACHE_NAMES = {steam: "Steam", epicgames: "Epic Games", origin: "EA App / Origin", blizzard: "Battle.net (Blizzard)",
+  riot: "Riot Games", wsus: "Windows Update (WSUS)", windowsupdates: "Windows Update (WSUS)", uplay: "Ubisoft Connect",
+  xboxlive: "Xbox / Microsoft Store", nintendo: "Nintendo", sony: "PlayStation", wargaming: "Wargaming",
+  frontier: "Frontier", arenanet: "ArenaNet (Guild Wars)", rockstar: "Rockstar", apple: "Apple-Updates",
+  daybreak: "Daybreak", neverwinter: "Neverwinter", renegadex: "Renegade X", teso: "Elder Scrolls Online",
+  warframe: "Warframe", cityofheroes: "City of Heroes", hirez: "Hi-Rez", pathofexile: "Path of Exile",
+  bsg: "Escape from Tarkov", test: "Test", generic: "Sonstiges"};
+const cacheName = id => CACHE_NAMES[(id || "").toLowerCase()] || id || "?";
 async function refreshCache(){
   try { cacheData = await api("/api/cache"); } catch { return; }
   const c = cacheData, h = c.last_hour || {}, d = c.last_day || {};
   $("#hlCache").classList.toggle("hidden", !c.container);
-  if (c.container) $("#hlCache").innerHTML = `Lancache: ${d.hit_ratio != null ? d.hit_ratio + " % aus dem Cache" : "noch keine Daten"} · ${fmtRate(c.rate_bps || 0)}`;
+  $("#hlNetRow").classList.toggle("hidden", !c.container);
+  if (c.container){
+    const pct = Math.min(100, (c.rate_bps || 0) / LINK_BPS * 100);
+    $("#hlNet").textContent = fmtRate(c.rate_bps || 0);
+    $("#hlNetBar").style.width = Math.max(pct, c.rate_bps ? 2 : 0) + "%";
+    $("#hlNetRow").title = `Lancache-Durchsatz (Balken = Anteil an 1 Gbit/s) · davon ${fmtRate(c.hit_rate_bps || 0)} aus dem Cache`;
+    $("#hlCache").innerHTML = `Lancache: ${d.hit_ratio != null ? d.hit_ratio + " % aus dem Cache (24 h)" : "noch keine Daten"}`;
+  }
   if (view !== "dash") return;
   if (!c.container){
     $("#cachePanel").innerHTML = `<div class="hint" style="margin-bottom:14px">Lancache: ${esc(c.error || "nicht gefunden")} – Container-Name unter „Automatik &amp; Einstellungen“ eintragen.</div>`;
@@ -225,7 +253,9 @@ async function refreshCache(){
   const disk = c.disk ? Math.round(c.disk.used / c.disk.total * 100) : null;
   const svc = (d.services || []).map(x => {
     const tot = x.hit + x.miss, p = tot ? Math.round(x.hit / tot * 100) : 0;
-    return `<span>${esc(x.name)}</span><span>${fmtBytes(tot)} · ${p} % Cache</span>`;
+    return `<tr><td><b>${esc(cacheName(x.name))}</b> <span class="hint mono">${esc(x.name)}</span></td>
+      <td class="mono" style="color:var(--ok)">${fmtBytes(x.hit)}</td><td class="mono">${fmtBytes(x.miss)}</td><td class="mono">${fmtBytes(tot)}</td>
+      <td style="min-width:140px"><div class="cachebar" title="${p} % aus dem Cache"><i style="width:${p}%"></i></div></td><td class="mono">${p} %</td></tr>`;
   }).join("");
   $("#cachePanel").innerHTML = `<div class="dsect"><h3 class="dhead"><span class="gtile" style="background:#7fb3a6">${gicon("cache", 16)}</span>Lancache <span class="hint">${esc(c.container)}${c.error ? " · " + esc(c.error) : ""}</span></h3>
     <div class="cards cachecards">
@@ -235,7 +265,9 @@ async function refreshCache(){
       <div class="card"><div class="k">Cache-Speicher</div><div class="v">${disk != null ? disk + " %" : "–"}</div>
         ${c.disk ? `<div class="bar" style="margin-top:6px"><i class="${lvl(disk)}" style="width:${disk}%"></i></div><div class="s">${fmtBytes(c.disk.used)} von ${fmtBytes(c.disk.total)}</div>` : ""}</div>
     </div>
-    ${svc ? `<div class="panel" style="padding:12px 16px"><div class="kvtable">${svc}</div></div>` : ""}
+    ${svc ? `<div class="panel" style="padding:12px 16px"><h2 style="margin-bottom:6px">Was wurde ausgeliefert? <span class="hint">(letzte 24 h, nach Dienst)</span></h2>
+      <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Dienst</th><th>aus dem Cache</th><th>aus dem Internet</th><th>gesamt</th><th>Trefferquote</th><th></th></tr></thead><tbody>${svc}</tbody></table></div></div>`
+      : `<div class="hint" style="margin-bottom:14px">In den letzten 24 Stunden wurde nichts über den Lancache geladen.</div>`}
   </div>`;
 }
 
@@ -255,7 +287,7 @@ async function refreshDash(){
     const pct = slots ? Math.min(100, Math.round((o.humans||0) / slots * 100)) : 0;
     const mz = o.matchzy && o.matchzy.match ? `${esc(o.matchzy.match.team1||"")} vs ${esc(o.matchzy.match.team2||"")} · ${esc(o.matchzy.match.state||"")}` : (o.matchzy && o.matchzy.installed ? "kein Match geladen" : "–");
     return `<div class="dcard" data-id="${esc(s.id)}">
-      <div class="top"><span class="dot ${o.online===true?"on":o.online===false?"off":""}"></span>${gbadge(gameOf(s))}<b>${esc(s.name)}</b>${o.online && o.join ? (o.join.url ? `<a class="joinbtn" href="${esc(o.join.url)}" title="Beitreten: ${esc(o.join.address)}" data-stop>▶ Beitreten</a>` : `<span class="joinbtn" data-copy="${esc(o.join.address)}" title="${esc(o.join.hint)}">⧉ ${esc(o.join.address)}</span>`) : `<span class="hint mono">${esc(s.host)}:${esc(s.port)}</span>`}</div>
+      <div class="top">${led(o)}${gbadge(gameOf(s))}<b>${esc(s.name)}</b>${o.online && o.join ? (o.join.url ? `<a class="joinbtn" href="${esc(o.join.url)}" title="Beitreten: ${esc(o.join.address)}" data-stop>▶ Beitreten</a>` : `<span class="joinbtn" data-copy="${esc(o.join.address)}" title="${esc(o.join.hint)}">⧉ ${esc(o.join.address)}</span>`) : `<span class="hint mono">${esc(s.host)}:${esc(s.port)}</span>`}</div>
       ${o.online ? (gameOf(s) === "cs2" ? `
       <div class="kv">
         <span>Map</span><span title="${esc(o.map)}">${esc((o.workshop && o.workshop.title) || o.map || "?")}</span>
@@ -272,7 +304,7 @@ async function refreshDash(){
       ${loadHtml(o.load)}
       ${o.auto && o.auto.capped ? `<span class="pill warn">Slots begrenzt auf ${o.max_players} – SLOTS im Stack erhöhen</span>` : ""}
       ${o.unclaimed ? `<span class="pill warn">Satisfactory: noch nicht beansprucht</span>` : ""}`
-      : `<div class="hint">${esc(o.error || (o.online === false ? "offline" : "noch nicht abgefragt"))}</div>${loadHtml(o.load)}`}
+      : `${ledOf(o).cls === "warn" ? `<div class="pill warn" style="justify-self:start">Container läuft – Spiel startet oder aktualisiert noch</div>` : ""}<div class="hint">${esc(o.error || (o.online === false ? "offline" : "noch nicht abgefragt"))}</div>${loadHtml(o.load)}`}
     </div>`;
   }).join("") + `</div></div>`).join("");
   $$(".dcard").forEach(el => el.onclick = e => {
@@ -367,7 +399,10 @@ async function refreshStatus(){
     $("#stUpdated").textContent = "aktualisiert " + new Date().toLocaleTimeString("de-DE");
   } catch(err){
     if (!current || current.id !== id) return;
-    $("#stOnline").textContent = "Offline"; $("#stOnline").style.color = "var(--bad)";
+    const lo = ledOf(stateOf(current.id));
+    $("#stOnline").textContent = lo.cls === "warn" ? "Startet …" : "Offline";
+    $("#stOnline").style.color = lo.cls === "warn" ? "var(--warn)" : "var(--bad)";
+    $("#stVersion").textContent = lo.tip;
     $("#stUpdated").textContent = err.message; $("#playerRows").innerHTML = "";
   }
 }

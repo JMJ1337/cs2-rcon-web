@@ -230,3 +230,13 @@ span.joinbtn{background:var(--panel2);color:var(--text);border:1px solid var(--l
 #updateBar{position:fixed;left:50%;transform:translateX(-50%);top:12px;z-index:60;background:var(--panel2);border:1px solid var(--accent);border-radius:8px;padding:8px 12px;box-shadow:0 6px 20px rgba(0,0,0,.4);display:flex;gap:10px;align-items:center}
 #updateBar.hidden{display:none}
 @media (max-width:1000px){ .consolewrap{grid-template-columns:1fr} .cmdref{position:static;max-height:none} }
+
+/* ---------- v11: LED gelb, Cache-Tabelle, Durchsatz ---------- */
+:root{--warn:#e3c341}
+.dot.warn{background:var(--warn);box-shadow:0 0 0 3px rgba(227,195,65,.18)}
+.pill.warn{color:var(--warn);border-color:#6a5a1e}
+.bar i.net{background:var(--ct)}
+.hl-row.hidden{display:none}
+.cachetable td,.cachetable th{padding:6px 8px}
+.cachebar{height:8px;background:#3a2f22;border-radius:4px;overflow:hidden}
+.cachebar i{display:block;height:100%;background:var(--ok)}
