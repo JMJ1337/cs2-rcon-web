@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=28">
+<link rel="stylesheet" href="/static/app.css?v=29">
 </head>
 <body>
 
@@ -45,6 +45,7 @@
       <button data-view="dash" class="active">▦ Übersicht aller Server</button>
       <button data-view="players">☺ Spieler &amp; SteamIDs</button>
       <button data-view="cache">⛁ Lancache-Verlauf</button>
+      <button data-view="prefill" class="adminonly">⇩ SteamPrefill</button>
       <button data-view="scan">⌕ Netzwerk-Scan <span class="pill hidden" id="scanBadge"></span></button>
       <button data-view="create" class="adminonly">＋ Neuen Server anlegen</button>
       <button data-view="users" class="adminonly">☰ Benutzer</button>
@@ -77,6 +78,48 @@
       <div class="topbar"><div><div class="title">Lancache-Verlauf</div><div class="sub" id="cacheSub">wird geladen …</div></div>
         <div style="margin-left:auto" class="row"><span class="hint">Zeitraum</span><div class="seg" id="cacheRangeSeg"><button data-crange="24h">24 h</button><button data-crange="7d">7 Tage</button><button data-crange="30d">30 Tage</button><button data-crange="90d">90 Tage</button><button data-crange="365d">1 Jahr</button></div></div></div>
       <div class="content" style="max-width:none"><div id="cacheLive"></div><div id="cacheHist"></div><div id="cacheDns"></div></div>
+    </section>
+
+    <!-- SteamPrefill -->
+    <section id="view-prefill" class="hidden">
+      <div class="topbar"><div><div class="title">SteamPrefill</div><div class="sub" id="pfSub">Spiele vorab in den Lancache laden</div></div>
+        <div style="margin-left:auto" class="row"><button class="primary" id="pfRun">⇩ Jetzt vorladen</button><button id="pfStop">■ Stopp</button></div></div>
+      <div class="content" style="max-width:1200px">
+        <div class="cards" id="pfCards"></div>
+        <div class="panel hidden" id="pfPrompt" style="margin-bottom:14px">
+          <h2 id="pfPromptTitle">Eingabe</h2>
+          <div class="hint" id="pfPromptHint" style="margin-bottom:8px"></div>
+          <div class="row"><input id="pfInput" autocomplete="off" style="flex:1"><button class="primary" id="pfSend">Senden</button></div>
+        </div>
+        <div class="grid2">
+          <div class="panel">
+            <h2>Spiele zum Vorladen</h2>
+            <div class="row" style="margin-bottom:8px"><input id="pfSearch" placeholder="Steam-Spiel suchen (z. B. Counter-Strike)" style="flex:1"></div>
+            <div id="pfResults"></div>
+            <div id="pfApps" style="margin-top:10px"></div>
+            <div class="hint" style="margin-top:8px">Werden in <span class="mono">selectedAppsToPrefill.json</span> gespeichert. Das Steam-Konto muss die Spiele besitzen (kostenlose wie CS2/TF2 gehen immer).</div>
+          </div>
+          <div class="panel">
+            <h2>Optionen &amp; Zeitplan</h2>
+            <div class="pfopts">
+              <label><input type="checkbox" data-pf="recent"> zuletzt gespielte Spiele (2 Wochen)</label>
+              <label><input type="checkbox" data-pf="recently_purchased"> kürzlich gekaufte Spiele</label>
+              <label><input type="checkbox" data-pf="all"> alle Spiele des Kontos</label>
+              <label><input type="checkbox" data-pf="force"> erzwingen (alles neu laden)</label>
+              <label><input type="checkbox" data-pf="verbose"> ausführliches Log</label>
+              <label>Top-Spiele nach Spielerzahl <input type="number" min="0" max="100" data-pf="top" style="width:80px"> (0 = aus)</label>
+              <label>Betriebssystem <select data-pf="os"><option value="windows">Windows</option><option value="linux">Linux</option><option value="macos">macOS</option></select></label>
+              <label>Täglich automatisch um <input type="time" id="pfSchedule" style="width:120px"> (leer = aus)</label>
+            </div>
+            <div class="row" style="margin-top:10px"><button class="primary" id="pfSaveOpts">Speichern</button></div>
+          </div>
+        </div>
+        <div class="panel" style="margin-top:16px">
+          <h2>Ausgabe <span class="hint" id="pfState"></span></h2>
+          <div class="bar hidden" id="pfProgWrap" style="margin-bottom:8px"><i id="pfProg" style="background:var(--ct)"></i></div>
+          <pre class="pflog" id="pfLog">–</pre>
+        </div>
+      </div>
     </section>
 
     <!-- Spieler -->
@@ -513,6 +556,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=28"></script>
+<script src="/static/app.js?v=29"></script>
 </body>
 </html>

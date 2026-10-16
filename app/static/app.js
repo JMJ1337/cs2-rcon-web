@@ -165,6 +165,7 @@ function showView(v){
   if (v === "players") loadPlayers();
   if (v === "auto") renderAuto();
   if (v === "cache"){ loadCacheLive(); loadCacheHistory(); loadDnsCheck(); }
+  if (v === "prefill"){ pfLoaded = false; loadPrefill(); }
 }
 
 /* ================= Serverliste ================= */
@@ -592,7 +593,7 @@ async function refreshDash(){
 }
 
 /* ================= Server-Ansicht ================= */
-const VIEWS = ["dash","players","auto","server","scan","create","users","cache"];
+const VIEWS = ["dash","players","auto","server","scan","create","users","cache","prefill"];
 function applyGameClasses(s){
   const g = gameOf(s), meta = GAMES[g] || {};
   document.body.classList.toggle("g-other", g !== "cs2");
@@ -1795,3 +1796,91 @@ async function loadDnsCheck(){
     loadDnsCheck();
   });
 }
+
+/* ================= SteamPrefill ================= */
+let pfData = null, pfApps = [], pfLoaded = false, pfLastPrompt = null;
+const PF_PROMPTS = {user: ["Steam-Login: Benutzername", "SteamPrefill braucht einmalig ein Steam-Konto (am besten ein eigenes für den Cache).", "text"],
+  password: ["Steam-Login: Passwort", "Wird direkt an SteamPrefill im Container weitergegeben und nicht im Tool gespeichert.", "password"],
+  code: ["Steam Guard", "Code aus der Steam-App bzw. der E-Mail eingeben.", "text"],
+  yesno: ["Rückfrage", "Antwort eingeben (y = ja, n = nein).", "text"]};
+async function loadPrefill(){
+  let d;
+  try { d = await api("/api/prefill"); } catch (e) { $("#pfLog").textContent = e.message; return; }
+  pfData = d;
+  const c = d.container, run = c && c.running, s = d.settings;
+  if (!pfLoaded){
+    pfLoaded = true; pfApps = (s.apps || []).slice();
+    $$("[data-pf]").forEach(el => { const v = s.flags[el.dataset.pf]; if (el.type === "checkbox") el.checked = !!v; else el.value = v ?? ""; });
+    $("#pfSchedule").value = s.schedule || "";
+    renderPfApps();
+  }
+  $("#pfSub").textContent = `Konfiguration: ${d.config_dir}` + (d.dns ? ` · Lancache-DNS ${d.dns.join(", ")}` : " · kein Lancache-DNS gefunden");
+  $("#pfCards").innerHTML = `
+    <div class="card"><div class="k">Status</div><div class="v" style="color:${run ? "var(--ok)" : "inherit"}">${run ? "läuft" : c ? (c.exit === 0 ? "fertig" : "beendet (" + c.exit + ")") : "noch nie gelaufen"}</div><div class="s">${c && c.finished && !run && !c.finished.startsWith("0001") ? "zuletzt " + new Date(c.finished).toLocaleString("de-DE") : esc(d.job.step || "")}</div></div>
+    <div class="card"><div class="k">Steam-Konto</div><div class="v">${d.logged_in ? "angemeldet" : "nicht angemeldet"}</div><div class="s">${d.logged_in ? "Login gespeichert im Config-Ordner" : "beim ersten Lauf wird nach dem Login gefragt"}</div></div>
+    <div class="card"><div class="k">Ausgewählte Spiele</div><div class="v">${(s.apps || []).length}</div><div class="s">${[s.flags.recent && "zuletzt gespielt", s.flags.all && "alle", s.flags.top && "Top " + s.flags.top].filter(Boolean).join(" · ") || "nur Auswahl"}</div></div>
+    <div class="card"><div class="k">Zeitplan</div><div class="v">${s.schedule ? "täglich " + esc(s.schedule) : "aus"}</div><div class="s">${s.last_run ? "letzter Start " + new Date(s.last_run * 1000).toLocaleString("de-DE") : ""}</div></div>`;
+  if (d.job.error) toast(d.job.error, true);
+  const pr = d.prompt;
+  $("#pfPrompt").classList.toggle("hidden", !run);
+  if (run){
+    const [t, h, type] = PF_PROMPTS[pr] || ["Eingabe an SteamPrefill", "Falls SteamPrefill unten etwas fragt, hier antworten (Enter = senden).", "text"];
+    $("#pfPromptTitle").textContent = t; $("#pfPromptHint").textContent = h; $("#pfInput").type = type;
+    if (pfLastPrompt !== pr){ $("#pfInput").value = ""; $("#pfInput").focus(); }
+  }
+  pfLastPrompt = pr;
+  $("#pfState").textContent = run ? "läuft …" : "";
+  $("#pfProgWrap").classList.toggle("hidden", !(run && d.progress));
+  if (d.progress) $("#pfProg").style.width = Math.min(100, d.progress.pct) + "%";
+  const el = $("#pfLog"), atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
+  el.textContent = (d.log || "").trim() || "Noch keine Ausgabe – „Jetzt vorladen“ starten.";
+  if (atEnd) el.scrollTop = el.scrollHeight;
+  $("#pfRun").disabled = !!run; $("#pfStop").disabled = !run;
+}
+function renderPfApps(){
+  $("#pfApps").innerHTML = pfApps.length ? pfApps.map((a, i) => `<div class="pfapp"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/${a.id}/capsule_sm_120.jpg" alt="" referrerpolicy="no-referrer" onerror="this.remove()"><span>${esc(a.name)} <span class="hint mono">${a.id}</span></span><button class="small danger" data-pfdel="${i}">✕</button></div>`).join("")
+    : `<div class="hint">Noch keine Spiele ausgewählt.</div>`;
+  $$("[data-pfdel]").forEach(b => b.onclick = async () => { pfApps.splice(+b.dataset.pfdel, 1); await savePfApps(); });
+}
+async function savePfApps(){
+  try { const r = await api("/api/prefill/apps", {method: "PUT", body: {apps: pfApps}}); pfApps = r.apps; toast("Spieleliste gespeichert"); }
+  catch (e) { toast(e.message, true); }
+  renderPfApps();
+}
+let pfSearchT = null;
+$("#pfSearch").addEventListener("input", () => {
+  clearTimeout(pfSearchT);
+  const q = $("#pfSearch").value.trim();
+  if (q.length < 2){ $("#pfResults").innerHTML = ""; return; }
+  pfSearchT = setTimeout(async () => {
+    let r = [];
+    try { r = await api("/api/prefill/search?q=" + encodeURIComponent(q)); } catch (e) { $("#pfResults").innerHTML = `<div class="hint">${esc(e.message)}</div>`; return; }
+    $("#pfResults").innerHTML = r.map(a => `<div class="pfapp">${a.img ? `<img src="${esc(a.img)}" alt="" referrerpolicy="no-referrer">` : ""}<span>${esc(a.name)} <span class="hint mono">${a.id}</span></span><button class="small primary" data-pfadd="${a.id}" data-name="${esc(a.name)}">＋</button></div>`).join("") || `<div class="hint">Nichts gefunden.</div>`;
+    $$("[data-pfadd]").forEach(b => b.onclick = async () => {
+      const id = +b.dataset.pfadd;
+      if (!pfApps.some(a => a.id === id)) pfApps.push({id, name: b.dataset.name});
+      $("#pfResults").innerHTML = ""; $("#pfSearch").value = "";
+      await savePfApps();
+    });
+  }, 350);
+});
+$("#pfRun").onclick = async () => {
+  $("#pfRun").disabled = true;
+  try { await api("/api/prefill/run", {body: {mode: "prefill"}}); toast("SteamPrefill gestartet"); } catch (e) { toast(e.message, true); }
+  loadPrefill();
+};
+$("#pfStop").onclick = async () => { try { await api("/api/prefill/stop", {method: "POST"}); } catch (e) { toast(e.message, true); } loadPrefill(); };
+async function pfSend(){
+  const v = $("#pfInput").value;
+  try { await api("/api/prefill/input", {body: {text: v}}); $("#pfInput").value = ""; } catch (e) { toast(e.message, true); }
+  setTimeout(loadPrefill, 800);
+}
+$("#pfSend").onclick = pfSend;
+$("#pfInput").addEventListener("keydown", e => { if (e.key === "Enter") pfSend(); });
+$("#pfSaveOpts").onclick = async () => {
+  const flags = {};
+  $$("[data-pf]").forEach(el => flags[el.dataset.pf] = el.type === "checkbox" ? el.checked : el.type === "number" ? (+el.value || 0) : el.value);
+  try { await api("/api/prefill/settings", {method: "PUT", body: {schedule: $("#pfSchedule").value, flags}}); toast("Gespeichert"); loadPrefill(); }
+  catch (e) { toast(e.message, true); }
+};
+setInterval(() => { if (view === "prefill" && !document.hidden) loadPrefill(); }, 2000);

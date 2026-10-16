@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import automation, cache_history, depots, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
+from . import automation, cache_history, depots, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
 from .games import minecraft as mcmod
@@ -90,7 +90,7 @@ def token_user(token: str | None) -> dict | None:
     return u
 
 
-ADMIN_PATHS = ("/api/users", "/api/create", "/api/settings")
+ADMIN_PATHS = ("/api/users", "/api/create", "/api/settings", "/api/prefill")
 
 
 def require_auth(request: Request):
@@ -780,6 +780,11 @@ async def load_loop():
             for k in list(_loads):
                 if k not in names:
                     _loads.pop(k, None)
+        if n % 24 == 3 and docker_api.available():
+            try:
+                await prefill_scheduler()
+            except Exception:  # noqa: BLE001
+                log.exception("SteamPrefill-Zeitplan")
         if n % 12 == 1 and docker_api.available():
             todo = [(x["container"], game_of(x)) for x in load_servers() if x.get("container")]
             await asyncio.gather(*(diagnostics.check(c, g) for c, g in todo), return_exceptions=True)
@@ -2051,6 +2056,139 @@ async def wf_lan_fix(sid: str):
         raise HTTPException(502, str(e))
     await _set_server_fields(sid, port=q, game_port=gport)
     return {"ok": True, "query_port": q, "steam_port": sport, "game_port": gport}
+
+
+# ---------------------------------------------------------------- SteamPrefill
+_prefill_files: dict = {"files": [], "t": 0.0}
+
+
+@app.get("/api/prefill", dependencies=auth)
+async def prefill_state(tail: int = 300):
+    if not docker_api.available():
+        raise HTTPException(400, "Docker-Socket nicht eingebunden")
+    st = await prefill.container_state()
+    if time.time() - _prefill_files["t"] > 60:
+        _prefill_files.update(files=await prefill.config_files(), t=time.time())
+    files = _prefill_files["files"]
+    lg = await prefill.log(tail) if st else ""
+    prog = None
+    for line in reversed(lg.splitlines()):
+        m = re.search(r"(\d{1,3}(?:[.,]\d+)?)\s*%", line)
+        if m:
+            prog = {"pct": float(m.group(1).replace(",", ".")), "line": line.strip()[:160]}
+            break
+    return {"settings": prefill.settings(), "container": st, "config_dir": prefill.config_dir(), "files": files,
+            "logged_in": any(f.lower().startswith("account") or f.endswith(".dat") or "token" in f.lower() for f in files),
+            "log": lg, "prompt": prefill.prompt_of(lg) if st and st.get("running") else None, "progress": prog,
+            "job": prefill.job, "dns": await lancache_dns()}
+
+
+class PrefillRunIn(BaseModel):
+    mode: str = "prefill"
+
+
+async def _prefill_start(mode: str):
+    s = prefill.settings()
+    prefill.job.update(running=True, step="startet …", error=None)
+    try:
+        await prefill.start(prefill.build_cmd(mode, s["flags"]), await lancache_dns())
+        prefill.save_settings({"last_run": time.time()})
+        prefill.job.update(running=False, step=None)
+    except docker_api.DockerError as e:
+        prefill.job.update(running=False, step=None, error=str(e))
+        raise
+
+
+@app.post("/api/prefill/run", dependencies=auth)
+async def prefill_run(data: PrefillRunIn):
+    if data.mode not in ("prefill", "select-apps"):
+        raise HTTPException(400, "Unbekannter Modus")
+    try:
+        await _prefill_start(data.mode)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    _prefill_files["t"] = 0
+    return {"ok": True}
+
+
+class PrefillInput(BaseModel):
+    text: str = Field("", max_length=200)
+
+
+@app.post("/api/prefill/input", dependencies=auth)
+async def prefill_input(data: PrefillInput):
+    try:
+        await prefill.send(data.text)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    _prefill_files["t"] = 0
+    return {"ok": True}
+
+
+@app.post("/api/prefill/stop", dependencies=auth)
+async def prefill_stop():
+    try:
+        await prefill.stop()
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    return {"ok": True}
+
+
+@app.get("/api/prefill/search", dependencies=auth)
+async def prefill_search(q: str):
+    if len(q.strip()) < 2:
+        return []
+    try:
+        return await prefill.search(q.strip())
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Steam-Suche nicht erreichbar ({e.__class__.__name__})")
+
+
+class PrefillApps(BaseModel):
+    apps: list[dict]
+
+
+@app.put("/api/prefill/apps", dependencies=auth)
+async def prefill_apps(data: PrefillApps):
+    apps = [{"id": int(a["id"]), "name": str(a.get("name") or a["id"])[:80]} for a in data.apps if str(a.get("id", "")).isdigit()]
+    try:
+        await prefill.write_apps([a["id"] for a in apps])
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    prefill.save_settings({"apps": apps})
+    _prefill_files["t"] = 0
+    return {"ok": True, "apps": apps}
+
+
+class PrefillSettings(BaseModel):
+    schedule: str = Field("", max_length=5)
+    flags: dict
+
+
+@app.put("/api/prefill/settings", dependencies=auth)
+async def prefill_settings(data: PrefillSettings):
+    if data.schedule and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", data.schedule):
+        raise HTTPException(400, "Uhrzeit als HH:MM angeben")
+    f = data.flags
+    flags = {"recent": bool(f.get("recent")), "recently_purchased": bool(f.get("recently_purchased")),
+             "top": max(0, min(100, int(f.get("top") or 0))), "all": bool(f.get("all")), "force": bool(f.get("force")),
+             "verbose": bool(f.get("verbose")), "os": f.get("os") if f.get("os") in ("windows", "linux", "macos") else "windows"}
+    return prefill.save_settings({"schedule": data.schedule, "flags": flags})
+
+
+async def prefill_scheduler():
+    s = prefill.settings()
+    if not prefill.due(s.get("schedule"), s.get("last_scheduled") or ""):
+        return
+    prefill.save_settings({"last_scheduled": time.strftime("%Y-%m-%d")})
+    st = await prefill.container_state()
+    if st and st.get("running"):
+        return
+    try:
+        await _prefill_start("prefill")
+        log.info("SteamPrefill: geplanter Lauf gestartet")
+    except docker_api.DockerError as e:
+        log.warning("SteamPrefill: %s", e)
 
 
 @app.post("/api/create", dependencies=auth)
