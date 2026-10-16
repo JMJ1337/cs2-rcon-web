@@ -21,6 +21,8 @@ RE_LINE = re.compile(
 from collections import deque
 _recent: deque = deque()        # (Zeitstempel, Bytes, Treffer) der letzten 2 Minuten für den Live-Durchsatz
 
+storage = {"cache_bytes": None, "logs": [], "limit": None, "max_age": None, "updated": None, "running": False, "error": None}
+
 state = {"container": None, "offset": 0, "buckets": {}, "disk": None, "error": None, "updated": None,
          "detected": False}
 
@@ -162,7 +164,7 @@ def summary() -> dict:
     rate = sum(x[1] for x in win) / 60
     hit_rate = sum(x[1] for x in win if x[2]) / 60
     return {"container": state["container"], "error": state["error"], "updated": state["updated"],
-            "disk": state["disk"], "rate_bps": round(rate), "hit_rate_bps": round(hit_rate),
+            "disk": state["disk"], "storage": {k: v for k, v in storage.items() if k != "running"} | {"busy": storage["running"]}, "rate_bps": round(rate), "hit_rate_bps": round(hit_rate),
             "last_hour": agg(60), "last_day": agg(KEEP_MIN)}
 
 
@@ -222,3 +224,44 @@ async def tail(lines: int = 40) -> str:
     if not state["container"]:
         return ""
     return await docker_api.exec_cmd(state["container"], ["tail", "-n", str(max(1, min(lines, 200))), LOG])
+
+
+def _size(txt: str) -> int | None:
+    m = re.match(r"^\s*(\d+(?:\.\d+)?)\s*([kmgtp]?)", (txt or "").lower())
+    if not m:
+        return None
+    return int(float(m.group(1)) * {"": 1, "k": 1e3, "m": 1e6, "g": 1e9, "t": 1e12, "p": 1e15}[m.group(2)])
+
+
+async def poll_storage() -> None:
+    """Belegung von Cache- und Log-Ordner im Lancache-Container (du kann bei vielen TB dauern – läuft im Hintergrund)."""
+    name = state["container"]
+    if not name or storage["running"]:
+        return
+    storage["running"] = True
+    try:
+        info = await docker_api.inspect(name)
+        env = dict(e.split("=", 1) for e in (info.get("Config", {}).get("Env") or []) if "=" in e)
+        storage["limit"] = _size(env.get("CACHE_DISK_SIZE", "")) if env.get("CACHE_DISK_SIZE") else None
+        storage["limit_raw"] = env.get("CACHE_DISK_SIZE")
+        storage["max_age"] = env.get("CACHE_MAX_AGE")
+        out = await docker_api.exec_cmd(name, ["sh", "-c",
+                                               "for f in /data/logs/*; do [ -e \"$f\" ] && du -sb \"$f\"; done; echo '#CACHE'; "
+                                               "timeout 900 du -sb /data/cache 2>/dev/null | tail -1"], timeout=960)
+        logs_part, _, cache_part = out.partition("#CACHE")
+        logs = []
+        for line in logs_part.splitlines():
+            p = line.split("\t", 1)
+            if len(p) == 2 and p[0].strip().isdigit():
+                logs.append({"name": p[1].strip().rsplit("/", 1)[-1], "bytes": int(p[0])})
+        storage["logs"] = sorted(logs, key=lambda x: -x["bytes"])
+        m = re.match(r"^\s*(\d+)", cache_part.strip())
+        if m:
+            storage["cache_bytes"] = int(m.group(1))
+        storage["updated"] = time.time()
+        storage["error"] = None
+    except (docker_api.DockerError, ValueError) as e:
+        storage["error"] = str(e)
+        storage["updated"] = time.time()
+    finally:
+        storage["running"] = False

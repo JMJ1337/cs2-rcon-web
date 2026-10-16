@@ -266,9 +266,11 @@ async function refreshHost(){
   $("#hlHost").textContent = h.cores ? h.cores + " Kerne" : "";
   const g = h.games || {};
   const rx = g.rx_bps || 0, tx = g.tx_bps || 0;
-  $("#hlNetDownBar").style.width = Math.min(100, rx / LINK_BPS * 100) + "%";
-  $("#hlNetUpBar").style.width = Math.min(100, tx / LINK_BPS * 100) + "%";
-  tween($("#hlNetTot"), rx + tx, v => v == null ? "–" : fmtRate(v));
+  const bw = v => v > 0 ? Math.max(2, Math.min(100, v / LINK_BPS * 100)) : 0;
+  $("#hlNetDownBar").style.width = bw(rx) + "%";
+  $("#hlNetUpBar").style.width = bw(tx) + "%";
+  tween($("#hlNetDown"), rx, v => "↓ " + fmtRate(v));
+  tween($("#hlNetUp"), tx, v => "↑ " + fmtRate(v));
   $("#hlNetTotRow").title = `Netzwerk aller Container: ↓ ${fmtRate(rx)} · ↑ ${fmtRate(tx)} (Balken = Anteil an 1 Gbit/s)`;
   $("#hlSub").innerHTML = `${fmtMem(h.mem_used_mb)} von ${fmtMem(h.mem_total_mb)} · Load ${h.load ? h.load.map(x => x.toFixed(2)).join(" ") : "–"}` +
     (g.containers ? `<br>Spielserver: ${g.running}/${g.containers} laufen · ${g.cpu_host} % CPU · ${fmtMem(g.mem_mb)}` +
@@ -343,6 +345,19 @@ function svcRows(list){
       <td style="min-width:140px"><div class="cachebar" title="${p} % aus dem Cache"><i style="width:${p}%"></i></div></td><td class="mono">${p} %</td></tr>`;
   }).join("");
 }
+// Cache-Ordner (du im Lancache-Container) statt der ganzen NAS-Freigabe
+function storageCard(st, disk){
+  st = st || {};
+  const logs = (st.logs || []).reduce((a, x) => a + x.bytes, 0);
+  if (st.cache_bytes == null){
+    return `<div class="card"><div class="k">Cache-Ordner</div><div class="v">${st.busy ? "…" : "–"}</div><div class="s">${st.busy ? "wird gezählt (kann bei vielen TB dauern)" : esc(st.error || "noch nicht gemessen")}</div></div>`;
+  }
+  const lim = st.limit, pct = lim ? Math.min(100, Math.round(st.cache_bytes / lim * 100)) : null;
+  return `<div class="card" title="Gemessen im Container: /data/cache und /data/logs${st.updated ? " · " + new Date(st.updated * 1000).toLocaleString("de-DE") : ""}${disk ? " · Datenträger: " + fmtBytes(disk.used) + " von " + fmtBytes(disk.total) : ""}">
+    <div class="k">Cache-Ordner${lim ? " (Limit " + esc(st.limit_raw || fmtBytes(lim)) + ")" : ""}</div><div class="v">${fmtBytes(st.cache_bytes)}</div>
+    ${pct != null ? `<div class="bar" style="margin-top:6px"><i class="${lvl(pct)}" style="width:${pct}%"></i></div>` : ""}
+    <div class="s">${pct != null ? pct + " % vom Limit · " : ""}Logs ${fmtBytes(logs)}${st.max_age ? " · max. Alter " + esc(st.max_age) : ""}</div></div>`;
+}
 function savedCard(bytes, label){
   return `<div class="card savedcard"><div class="k">Traffic gespart${label ? " · " + label : ""}</div><div class="v" style="color:var(--ok)">${fmtBytes(bytes || 0)}</div>
     <div class="s">nicht erneut aus dem Internet geladen</div></div>`;
@@ -373,8 +388,7 @@ async function refreshCache(){
       <div class="card"><div class="k">Aus dem Cache (24 h)</div><div class="v" style="color:var(--ok)">${fmtBytes(d.hit_bytes)}</div><div class="s">${d.hit_ratio != null ? d.hit_ratio + " % Trefferquote" : "noch keine Downloads"}</div></div>
       <div class="card"><div class="k">Aus dem Internet (24 h)</div><div class="v">${fmtBytes(d.miss_bytes)}</div><div class="s">${(d.requests || 0).toLocaleString("de-DE")} Anfragen</div></div>
       <div class="card"><div class="k">Durchsatz jetzt</div><div class="v">↑ ${fmtRate(live)}</div><div class="s">${cn.rx_bps != null ? `↓ ${fmtRate(cn.rx_bps)} aus dem Internet · ` : ""}letzte Std. ${fmtBytes((h.hit_bytes||0)+(h.miss_bytes||0))}</div></div>
-      <div class="card"><div class="k">Cache-Speicher</div><div class="v">${disk != null ? disk + " %" : "–"}</div>
-        ${c.disk ? `<div class="bar" style="margin-top:6px"><i class="${lvl(disk)}" style="width:${disk}%"></i></div><div class="s">${fmtBytes(c.disk.used)} von ${fmtBytes(c.disk.total)}</div>` : ""}</div>
+      ${storageCard(c.storage, c.disk)}
     </div>
     ${svc ? `<div class="panel" style="padding:12px 16px"><h2 style="margin-bottom:6px">Was wurde ausgeliefert? <span class="hint">(letzte 24 h, nach Dienst)</span> <a href="#" class="hint" style="float:right" onclick="showView('cache');return false">Verlauf bis 1 Jahr →</a></h2>
       <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Dienst</th><th>aus dem Cache</th><th>aus dem Internet</th><th>gesamt</th><th>Trefferquote</th><th></th></tr></thead><tbody>${svc}</tbody></table></div></div>`
@@ -1558,10 +1572,10 @@ async function refreshActivity(){
   });
   (a.items || []).forEach(it => {
     const p = it.progress;
-    parts.push(`<div class="act ${!p && it.errors.length ? "err" : ""}" data-act-sid="${esc(it.server_id)}" title="${esc(it.container)}">
-      <div class="t">${gicon(it.game, 14)}<span class="n">${esc(it.name)}</span>${it.errors.length ? `<button class="x" data-act-dismiss="${esc(it.container)}" title="Fehler ausblenden">✕</button>` : ""}</div>
-      ${p ? `<div class="bar"><i style="width:${Math.min(100, p.pct)}%"></i></div><div class="s">${esc(progressText(p))}</div>` : ""}
-      ${it.errors.map(e => `<div class="e" title="${esc(e.line)}">⚠ ${esc(e.text)}</div>`).join("")}</div>`);
+    if (!p) return;   // links nur Fortschritt anzeigen, keine Fehlermeldungen
+    parts.push(`<div class="act" data-act-sid="${esc(it.server_id)}" title="${esc(it.container)}">
+      <div class="t">${gicon(it.game, 14)}<span class="n">${esc(it.name)}</span></div>
+      <div class="bar"><i style="width:${Math.min(100, p.pct)}%"></i></div><div class="s">${esc(progressText(p))}</div></div>`);
   });
   $("#activity").innerHTML = parts.join("");
   $("#activity").classList.toggle("hidden", !parts.length);
@@ -1632,8 +1646,7 @@ async function loadCacheHistory(){
       <div class="card"><div class="k">Aus dem Internet</div><div class="v">${fmtBytes(c.miss_bytes)}</div><div class="s">${(c.requests || 0).toLocaleString("de-DE")} Anfragen gesamt</div></div>
       <div class="card"><div class="k">Trefferquote</div><div class="v">${c.hit_ratio != null ? c.hit_ratio + " %" : "–"}</div><div class="s">ausgeliefert gesamt ${fmtBytes(total)}</div></div>
       <div class="card"><div class="k">Ø pro Tag</div><div class="v">${fmtBytes(c.per_day)}</div><div class="s">${c.peak.t ? "Spitze " + fmtRate(c.peak.bps) + " (" + new Date(c.peak.t * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"}) + ")" : "noch keine Spitze"}</div></div>
-      <div class="card"><div class="k">Cache-Speicher</div><div class="v">${dpct != null ? dpct + " %" : "–"}</div>
-        ${dn ? `<div class="bar" style="margin-top:6px"><i class="${lvl(dpct)}" style="width:${dpct}%"></i></div><div class="s">${fmtBytes(dn.used)} von ${fmtBytes(dn.total)}</div>` : ""}</div>
+      ${storageCard(c.storage, c.disk_now)}
     </div>
     <div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:8px">Ausgeliefert je ${c.step_h < 24 ? c.step_h + " Stunde(n)" : c.step_h === 24 ? "Tag" : "Woche"}
       <span class="hint"><span class="lgd" style="background:var(--ok)"></span> aus dem Cache (gespart) <span class="lgd" style="background:#8a7a66"></span> aus dem Internet</span></h2>
@@ -1644,9 +1657,14 @@ async function loadCacheHistory(){
       <div class="row hint" style="justify-content:space-between;margin-top:4px"><span>↓ gesamt ${fmtBytes(c.points.reduce((a, p) => a + (p.rx || 0), 0))}</span><span>↑ gesamt ${fmtBytes(c.points.reduce((a, p) => a + (p.tx || 0), 0))}</span></div></div>` : ""}
     ${c.services.length ? `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:6px">Was wurde gecacht? <span class="hint">(${CACHE_RANGES[c.range]}, nach Dienst)</span></h2>
       <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Dienst</th><th>aus dem Cache</th><th>aus dem Internet</th><th>gesamt</th><th>Trefferquote</th><th></th></tr></thead><tbody>${svcRows(c.services)}</tbody></table></div></div>` : ""}
+    ${(c.storage && c.storage.logs && c.storage.logs.length) ? `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:6px">Ordner im Lancache-Container <span class="hint">${c.storage.updated ? "gemessen " + new Date(c.storage.updated * 1000).toLocaleString("de-DE") : ""}</span></h2>
+      <table class="cachetable"><tbody>
+        <tr><td class="mono">/data/cache</td><td class="mono">${fmtBytes(c.storage.cache_bytes)}</td><td class="hint">${c.storage.limit_raw ? "Limit " + esc(c.storage.limit_raw) : ""}</td></tr>
+        ${c.storage.logs.map(l => `<tr><td class="mono">/data/logs/${esc(l.name)}</td><td class="mono">${fmtBytes(l.bytes)}</td><td class="hint">${l.name.startsWith("stream") ? "HTTPS-Durchleitung (wird nicht gecacht)" : l.name.startsWith("access") ? "Downloads (Grundlage der Statistik)" : ""}</td></tr>`).join("")}
+      </tbody></table></div>` : ""}
     <div class="cgrid">
       ${clients ? `<div class="panel" style="padding:12px 16px"><h2 style="margin-bottom:6px">Top-Clients <span class="hint">(${CACHE_RANGES[c.range]}, Rechnername per DNS/NetBIOS)</span></h2><table class="cachetable"><tbody>${clients}</tbody></table></div>` : ""}
-      ${diskVals.length > 1 ? `<div class="panel" style="padding:12px 16px"><h2 style="margin-bottom:6px">Cache-Speicher belegt <span class="hint">(% je Tag)</span></h2>${spark(diskVals, "var(--accent)", {min: 100, h: 60})}</div>` : ""}
+
     </div>`;
 }
 setInterval(() => { if (view === "cache") loadCacheHistory(); }, 30000);

@@ -672,6 +672,10 @@ async def load_loop():
         n += 1
         if n % 2 == 0 and docker_api.available():
             await cache_stats.poll(automation.get_settings().get("cache_container") or "")
+            st_ = cache_stats.storage
+            if cache_stats.state["container"] and not st_["running"] and (st_["updated"] is None or time.time() - st_["updated"] > 1800):
+                st_["updated"] = st_["updated"] or 0.0
+                asyncio.create_task(cache_stats.poll_storage())
             if cache_stats.state["container"] and not cache_history.meta["bf_done"] and not cache_stats._bf_running:
                 asyncio.create_task(cache_stats.backfill())
             cache_history.maybe_save()
@@ -975,6 +979,7 @@ async def cache_history_api(range: str = "30d"):
     out["container"] = cache_stats.state["container"]
     out["error"] = cache_stats.state["error"]
     out["disk_now"] = cache_stats.state["disk"]
+    out["storage"] = {k: v for k, v in cache_stats.storage.items() if k != "running"} | {"busy": cache_stats.storage["running"]}
     out["clients"] = await netnames.annotate(out["clients"], {x["host"] for x in load_servers()})
     return out
 

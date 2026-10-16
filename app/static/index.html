@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=23">
+<link rel="stylesheet" href="/static/app.css?v=24">
 </head>
 <body>
 
@@ -34,7 +34,8 @@
       <div class="hl-head">Gesamtlast <span id="hlHost"></span></div>
       <div class="hl-row"><span>CPU</span><div class="bar"><i id="hlCpuBar"></i></div><b id="hlCpu">–</b></div>
       <div class="hl-row"><span>RAM</span><div class="bar"><i id="hlMemBar"></i></div><b id="hlMem">–</b></div>
-      <div class="hl-row" id="hlNetTotRow" title="Netzwerk aller Spielserver- und Cache-Container (↓ Download / ↑ Upload)"><span>Netz</span><div class="bar netbar"><i id="hlNetDownBar" class="down"></i><i id="hlNetUpBar" class="up"></i></div><b id="hlNetTot">–</b></div>
+      <div class="hl-row" id="hlNetTotRow" title="Netzwerk aller Spielserver- und Cache-Container"><span>Netz ↓</span><div class="bar"><i id="hlNetDownBar" style="background:#4f9dde"></i></div><b id="hlNetDown" style="color:#4f9dde">–</b></div>
+      <div class="hl-row" title="Netzwerk aller Spielserver- und Cache-Container"><span>Netz ↑</span><div class="bar"><i id="hlNetUpBar" style="background:#f0a04b"></i></div><b id="hlNetUp" style="color:#f0a04b">–</b></div>
       <div class="hl-row hidden" id="hlNetRow"><span>Cache</span><div class="bar"><i id="hlNetBar" class="net"></i></div><b id="hlNet" style="color:var(--ct)">–</b></div>
       <div class="hl-sub" id="hlSub"></div>
       <div class="hl-sub hidden" id="hlCache"></div>
@@ -511,6 +512,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=23"></script>
+<script src="/static/app.js?v=24"></script>
 </body>
 </html>
