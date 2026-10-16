@@ -64,6 +64,21 @@ TEMPLATES = {
             ["web_port", "Webkonsole (TCP)", "number", "9028", "Server-Konsole im Browser"],
         ],
     },
+    "tf2": {
+        "label": "Team Fortress 2", "image": "cm2network/tf2:latest", "uid": 1000,
+        "data_default": "{base}/tf2/{name}",
+        "fields": [
+            ["name", "Container-Name", "text", "tf2-{n}", ""],
+            ["server_name", "Servername", "text", "GROH LAN TF2 #{n}", ""],
+            ["port", "Spielport (TCP+UDP, auch RCON)", "number", "27045", "nicht 27015–27019 (CS2)"],
+            ["tv_port", "SourceTV-Port (UDP)", "number", "27055", ""],
+            ["token", "Steam-Token (GSLT, App 440)", "password", "", "steamcommunity.com/dev/managegameservers – für LAN optional"],
+            ["rcon_pw", "RCON-Passwort", "password", "", ""],
+            ["server_pw", "Server-Passwort (optional)", "text", "", ""],
+            ["map", "Startmap", "text", "ctf_2fort", "z. B. ctf_2fort, cp_dustbowl, pl_badwater, koth_harvest_final"],
+            ["slots", "Max. Spieler", "number", "24", ""],
+        ],
+    },
 }
 
 # Port-Vergabe: (Feld, Startport, Schrittweite, belegte Ports pro Server)
@@ -72,6 +87,7 @@ PORT_PLAN = {
     "factorio": [("port", 34197, 1, 1), ("rcon_port", 27100, 1, 1)],
     "satisfactory": [("port", 7777, 1, 1), ("msg_port", 8888, 1, 1)],
     "valheim": [("port", 2456, 2, 2)],                       # Spielport + Query-Port (+1)
+    "tf2": [("port", 27045, 1, 1), ("tv_port", 27055, 1, 1)],
     "wreckfest": [("port", 33540, 1, 1), ("steam_port", 27115, 2, 2), ("web_port", 9028, 1, 1)],  # Steam + Query (+1)
 }
 
@@ -174,6 +190,19 @@ def build(game: str, v: dict, data_dir: str) -> dict:
         host["CapAdd"] = ["SYS_NICE"]
         spec_extra = {}
         srv = {"port": port + 1, "password": ""}
+    elif game == "tf2":
+        port, tv = _port(v.get("port"), "Spielport"), _port(v.get("tv_port"), "SourceTV-Port")
+        rcon = (v.get("rcon_pw") or "").strip()
+        if not rcon:
+            raise ValueError("RCON-Passwort fehlt")
+        env = [f"SRCDS_PORT={port}", f"SRCDS_TV_PORT={tv}", f"SRCDS_CLIENT_PORT={port + 1000}",
+               f"SRCDS_RCONPW={rcon}", f"SRCDS_PW={v.get('server_pw') or ''}", f"SRCDS_TOKEN={v.get('token') or ''}",
+               f"SRCDS_HOSTNAME={v.get('server_name') or name}", f"SRCDS_STARTMAP={v.get('map') or 'ctf_2fort'}",
+               f"SRCDS_MAXPLAYERS={int(v.get('slots') or 24)}", "SRCDS_REGION=3", "SRCDS_FPSMAX=300", "SRCDS_TICKRATE=66"]
+        pub(port, "tcp"); pub(port, "udp"); pub(tv, "udp")
+        host["Binds"].append(f"{data_dir}:/home/steam/tf-dedicated")
+        spec_extra = {}
+        srv = {"port": port, "password": rcon}
     elif game == "wreckfest":
         port = _port(v.get("port"), "Spielport")
         qport, sport = _port(v.get("query_port"), "Query-Port"), _port(v.get("steam_port"), "Steam-Port")

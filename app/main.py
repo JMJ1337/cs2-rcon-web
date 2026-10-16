@@ -450,6 +450,10 @@ def join_info(s: dict, password: str | None = None) -> dict:
         p = gp or port
         url = f"steam://connect/{host}:{p}" + (f"/{password}" if password else "")
         return {"address": f"{host}:{p}", "url": url, "hint": "Startet CS2 und verbindet direkt."}
+    if g == "tf2":
+        p = gp or port
+        url = f"steam://connect/{host}:{p}" + (f"/{password}" if password else "")
+        return {"address": f"{host}:{p}", "url": url, "hint": "Startet TF2 und verbindet direkt."}
     if g == "factorio":
         p = gp or 34197
         return {"address": f"{host}:{p}", "url": f"steam://run/427520//--mp-connect%20{host}:{p}/",
@@ -582,6 +586,8 @@ async def collect_generic(s: dict) -> dict:
             st = await sfmod.status(sf_client(s))
         elif g == "valheim":
             st = await adapters.valheim_status(s["host"], int(s["port"]))
+        elif g == "tf2":
+            st = await adapters.tf2_status(s["host"], int(s.get("game_port") or s["port"]))
         elif g == "wreckfest":
             if s.get("container") and docker_api.available():
                 st = await adapters.wreckfest_container_status(s["container"])
@@ -1564,6 +1570,7 @@ echo '=== Datenträger'; df -h /serverdata/serverfiles 2>/dev/null | tail -1
 for c in /serverdata/serverfiles/server_config.cfg /serverdata/serverfiles/server/server_config.cfg; do
   [ -f "$c" ] && { echo "=== $c"; grep -v '^[[:space:]]*#' "$c" | grep -v '^[[:space:]]*$' | grep -iv 'password' | head -80; }
 done
+[ -f /serverdata/serverfiles/initial_server_config.cfg ] && { echo '=== Vorlage (steam/token/lan)'; grep -inE 'token|steam|lan|auth|owner' /serverdata/serverfiles/initial_server_config.cfg | cut -c1-200 | head -30; }
 echo '=== Dateien'; ls -la /serverdata/serverfiles 2>/dev/null | head -40
 for l in $(ls -t /serverdata/serverfiles/*.log /serverdata/serverfiles/log.txt /serverdata/serverfiles/*/*.log 2>/dev/null | head -3); do echo "=== $l"; tail -n 60 "$l" | cut -c1-240; done
 [ -d /serverdata/serverfiles/crash ] && { echo '=== Absturzberichte'; ls -la /serverdata/serverfiles/crash | tail -n 10; }

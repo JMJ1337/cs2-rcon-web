@@ -154,3 +154,31 @@ async def wreckfest_container_status(container: str) -> dict:
                                     "Passwort": cfg.get("password") or "keins"}.items() if v},
         "updated": time.time(),
     }
+
+
+TF2_MODES = {"ctf": "Capture the Flag", "cp": "Control Point", "pl": "Payload", "plr": "Payload Race",
+             "koth": "King of the Hill", "arena": "Arena", "mvm": "Mann vs. Machine", "pd": "Player Destruction",
+             "sd": "Special Delivery", "tc": "Territorial Control", "rd": "Robot Destruction", "pass": "PASS Time",
+             "tr": "Training", "vsh": "Versus Saxton Hale", "zi": "Zombie Infection", "mge": "MGE", "jump": "Jump"}
+
+
+async def tf2_status(host: str, port: int) -> dict:
+    info = await a2s.info(host, port)
+    try:
+        pl = await a2s.players(host, port)
+    except a2s.A2SError:
+        pl = []
+    m = info.get("map") or ""
+    prefix = m.split("_")[0].lower() if "_" in m else ""
+    mode = TF2_MODES.get(prefix, "Team Fortress 2")
+    humans = max(0, info["players"] - (info.get("bots") or 0))
+    return {
+        "map": m or "–", "humans": humans, "bots": info.get("bots") or 0, "max_players": info["max_players"],
+        "players": [{"name": p["name"] or "(verbindet …)", "time": f"{p['time'] // 60} min", "score": p.get("score")}
+                    for p in pl if p.get("name")],
+        "version": info.get("version"), "hostname": info["name"],
+        "mode": {"key": prefix or "tf2", "label": mode},
+        "extra": {k: v for k, v in {"Map": m, "Modus": mode, "Bots": info.get("bots") or None,
+                                    "Version": info.get("version"), "Passwort": "ja" if info["password"] else "nein"}.items() if v},
+        "updated": time.time(),
+    }

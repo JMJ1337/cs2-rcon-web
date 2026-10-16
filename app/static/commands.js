@@ -34,6 +34,15 @@ const COMMANDS = {
       "Admin (im Spiel, F5)": [["kick <name/ip/userID>","Spieler kicken"],["ban <name/ip/userID>","Spieler bannen"],["unban <ip/userID>","Bann aufheben"],["banned","Gebannte anzeigen"],["save","Welt speichern"],["ping","Ping zum Server"],["info","Systeminfos"],["lodbias <zahl>","Sichtweite (Client)"]],
     },
   },
+  tf2: {
+    note: "RCON-Befehle (Source). Mehrere mit ; trennen.",
+    groups: {
+      "Server & Status": [["status","Spieler, Map, Version"],["hostname \"<name>\"","Servername setzen"],["sv_password \"<passwort>\"","Server-Passwort"],["say <text>","Nachricht an alle"],["exec <datei.cfg>","Config ausführen"],["maxplayers","Max. Spieler anzeigen"],["sv_visiblemaxplayers <n>","Sichtbare Slots"]],
+      "Map": [["changelevel <map>","Map wechseln"],["nextlevel <map>","Nächste Map festlegen"],["maps *","Maps auflisten"],["mp_timelimit <min>","Zeitlimit pro Map"],["mp_winlimit <n>","Siege bis Mapwechsel"],["mp_restartgame 1","Runde neu starten"]],
+      "Teams & Spiel": [["mp_autoteambalance <0|1>","Auto-Teamausgleich"],["mp_teams_unbalance_limit <n>","Max. Unterschied der Teams"],["mp_scrambleteams","Teams mischen"],["mp_tournament <0|1>","Turniermodus"],["mp_tournament_restart","Turnier neu starten"],["tf_bot_add <n>","Bots hinzufügen"],["tf_bot_kick all","Alle Bots raus"],["tf_bot_quota <n>","Anzahl Bots"],["tf_bot_difficulty <0-3>","Bot-Stärke"],["sv_alltalk <0|1>","Alle hören alle"]],
+      "Spieler": [["kickid <userid>","Kicken (ID aus status)"],["kick <name>","Kicken per Name"],["banid <min> <userid>","Bannen (0 = permanent)"],["writeid","Banliste speichern"]],
+    },
+  },
   wreckfest: {
     note: "Wreckfest hat keine Remote-Konsole. Befehle im Spiel-Chat (T) als Admin oder in der Webkonsole eingeben – mit führendem /.",
     readonly: true,

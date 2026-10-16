@@ -31,6 +31,12 @@ GAMES = {
         "password_label": "– (nicht nötig)", "console": False,
         "features": ["webconsole"],
     },
+    "tf2": {
+        "label": "Team Fortress 2", "short": "TF2", "color": "#cf6a32",
+        "port_label": "Spielport (RCON, TCP+UDP)", "default_port": 27045,
+        "password_label": "RCON-Passwort", "console": True,
+        "features": [],
+    },
 }
 
 

@@ -71,11 +71,12 @@ const ICONS = {
   valheim: '<path d="M6 21L17 6"/><path d="M14 3c3 0 6 3 6 6-2 0-3-1-4.5-2.5S14 5 14 3z"/>',
   cache: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
   wreckfest: '<path d="M3 15l2-5c.4-1 1.2-1.5 2.2-1.5h6.3c.9 0 1.7.4 2.2 1.1L18 12l2.5.8c.8.3 1.5 1 1.5 1.9V15"/><path d="M2 15h20v2H2z"/><circle cx="7" cy="17.5" r="2"/><circle cx="17" cy="17.5" r="2"/><path d="M9 5l1.5 2M14 4l-1 3"/>',
+  tf2: '<circle cx="12" cy="12" r="8.5"/><path d="M8 8.5h8M12 8.5V17"/><path d="M9.5 13h4"/>',
   _: '<rect x="3" y="7" width="18" height="10" rx="4"/><path d="M8 10v4M6 12h4"/><circle cx="16" cy="11" r="1"/><circle cx="18" cy="13" r="1"/>',
 };
 const gicon = (g, size=16) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[g] || ICONS._}</svg>`;
 // Originalbilder der Spiele (live von Steam geladen; offline -> eigenes Symbol)
-const STEAM_APPS = {cs2: 730, factorio: 427520, satisfactory: 526870, valheim: 892970, wreckfest: 228380};
+const STEAM_APPS = {tf2: 440, cs2: 730, factorio: 427520, satisfactory: 526870, valheim: 892970, wreckfest: 228380};
 const steamImg = (g, file) => STEAM_APPS[g] ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${STEAM_APPS[g]}/${file}` : "";
 function gameLogo(g){
   const src = steamImg(g, "capsule_sm_120.jpg");
@@ -1118,7 +1119,7 @@ $("#broadcastForm").addEventListener("submit", async e => {
 
 
 /* ================= Andere Spiele (Factorio, Satisfactory, Valheim) ================= */
-const worldLabel = g => ({satisfactory: "Session", wreckfest: "Strecke"})[g] || "Welt";
+const worldLabel = g => ({satisfactory: "Session", wreckfest: "Strecke", tf2: "Map"})[g] || "Welt";
 function renderGeneric(st){
   const g = gameOf(current), meta = GAMES[g];
   $("#stOnline").textContent = "Online"; $("#stOnline").style.color = "var(--ok)";
