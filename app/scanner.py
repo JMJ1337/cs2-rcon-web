@@ -22,6 +22,7 @@ APPIDS = {440: "tf2", 730: "cs2", 892970: "valheim", 896660: "valheim", 228380: 
 IMAGE_HINTS = {
     "cs2": ["cs2", "counter-strike"], "factorio": ["factorio"],
     "satisfactory": ["satisfactory"], "valheim": ["valheim"], "wreckfest": ["wreckfest"], "tf2": ["tf2", "team-fortress", "teamfortress"],
+    "minecraft": ["minecraft"], "teamspeak": ["teamspeak", "ts3"],
 }
 
 state = {"running": False, "last": None, "subnets": [], "results": [], "error": None, "duration": None}

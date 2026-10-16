@@ -37,6 +37,18 @@ GAMES = {
         "password_label": "RCON-Passwort", "console": True,
         "features": [],
     },
+    "minecraft": {
+        "label": "Minecraft", "short": "Minecraft", "color": "#62b04a",
+        "port_label": "Spielport (TCP)", "default_port": 25565,
+        "password_label": "– (Konsole läuft über den Container)", "console": True,
+        "features": [],
+    },
+    "teamspeak": {
+        "label": "TeamSpeak 3", "short": "TS3", "color": "#2580c3",
+        "port_label": "ServerQuery-Port (TCP)", "default_port": 10011,
+        "password_label": "ServerQuery-Passwort (serveradmin)", "console": True,
+        "features": [],
+    },
 }
 
 

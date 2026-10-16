@@ -83,6 +83,33 @@ TEMPLATES = {
             ["slots", "Max. Spieler", "number", "24", ""],
         ],
     },
+    "minecraft": {
+        "label": "Minecraft (Java)", "image": "itzg/minecraft-server:latest", "uid": 1000,
+        "data_default": "{base}/minecraft/{name}",
+        "fields": [
+            ["name", "Container-Name", "text", "minecraft-{n}", ""],
+            ["motd", "Servername (MOTD)", "text", "GROH LAN Minecraft", ""],
+            ["port", "Spielport (TCP)", "number", "25565", ""],
+            ["type", "Server-Typ", "select", "PAPER", "PAPER,VANILLA,FABRIC,FORGE,NEOFORGE,PURPUR"],
+            ["version", "Version", "text", "LATEST", "z. B. LATEST oder 1.21.4"],
+            ["memory", "Arbeitsspeicher", "text", "4G", ""],
+            ["max_players", "Max. Spieler", "number", "20", ""],
+            ["mode", "Spielmodus", "select", "survival", "survival,creative,adventure"],
+            ["difficulty", "Schwierigkeit", "select", "normal", "peaceful,easy,normal,hard"],
+            ["online_mode", "Nur echte Accounts (online-mode)", "select", "TRUE", "TRUE,FALSE"],
+            ["ops", "Operatoren (Spielernamen, kommagetrennt)", "text", "", ""],
+        ],
+    },
+    "teamspeak": {
+        "label": "TeamSpeak 3", "image": "teamspeak:latest", "uid": 9987,
+        "data_default": "{base}/teamspeak/{name}",
+        "fields": [
+            ["name", "Container-Name", "text", "teamspeak-{n}", ""],
+            ["port", "Sprach-Port (UDP)", "number", "9987", "Standard für Clients ohne Portangabe"],
+            ["query_port", "ServerQuery-Port (TCP)", "number", "10011", "für dieses Tool"],
+            ["file_port", "Dateiübertragung (TCP)", "number", "30033", ""],
+        ],
+    },
 }
 
 # Port-Vergabe: (Feld, Startport, Schrittweite, belegte Ports pro Server)
@@ -92,6 +119,8 @@ PORT_PLAN = {
     "satisfactory": [("port", 7777, 1, 1), ("msg_port", 8888, 1, 1)],
     "valheim": [("port", 2456, 2, 2)],                       # Spielport + Query-Port (+1)
     "tf2": [("port", 27045, 1, 1), ("tv_port", 27055, 1, 1)],
+    "minecraft": [("port", 25565, 1, 1)],
+    "teamspeak": [("port", 9987, 1, 1), ("query_port", 10011, 1, 1), ("file_port", 30033, 1, 1)],
     "wreckfest": [("port", 33540, 1, 1), ("query_port", 26900, 1, 1), ("steam_port", 27115, 1, 1), ("web_port", 9028, 1, 1)],
 }
 
@@ -205,6 +234,30 @@ def build(game: str, v: dict, data_dir: str) -> dict:
         host["Binds"].append(f"{data_dir}:/home/steam/tf-dedicated")
         spec_extra = {}
         srv = {"port": port, "password": rcon}
+    elif game == "minecraft":
+        port = _port(v.get("port"), "Spielport")
+        env = ["EULA=TRUE", f"TYPE={v.get('type') or 'PAPER'}", f"VERSION={v.get('version') or 'LATEST'}",
+               f"MEMORY={v.get('memory') or '4G'}", f"MOTD={v.get('motd') or name}",
+               f"MAX_PLAYERS={int(v.get('max_players') or 20)}", f"MODE={v.get('mode') or 'survival'}",
+               f"DIFFICULTY={v.get('difficulty') or 'normal'}", f"ONLINE_MODE={v.get('online_mode') or 'TRUE'}",
+               "ENABLE_RCON=true", "TZ=Europe/Berlin", "UID=1000", "GID=1000"]
+        if (v.get("ops") or "").strip():
+            env.append("OPS=" + re.sub(r"[^\w,]", "", v["ops"]))
+        pub(port, "tcp")
+        env.append("SERVER_PORT=25565")
+        host["PortBindings"] = {f"25565/tcp": [{"HostPort": str(port)}]}
+        exposed.clear(); exposed["25565/tcp"] = {}
+        host["Binds"].append(f"{data_dir}:/data")
+        spec_extra = {"Tty": True, "OpenStdin": True}
+        srv = {"port": port, "password": ""}
+    elif game == "teamspeak":
+        port, qport, fport = _port(v.get("port"), "Sprach-Port"), _port(v.get("query_port"), "Query-Port"), _port(v.get("file_port"), "Dateiport")
+        env = ["TS3SERVER_LICENSE=accept", f"TS3SERVER_DEFAULT_VOICE_PORT={port}", f"TS3SERVER_QUERY_PORT={qport}",
+               f"TS3SERVER_FILETRANSFER_PORT={fport}", "TS3SERVER_QUERY_PROTOCOLS=raw"]
+        pub(port, "udp"); pub(qport, "tcp"); pub(fport, "tcp")
+        host["Binds"].append(f"{data_dir}:/var/ts3server")
+        spec_extra = {}
+        srv = {"port": qport, "password": "", "game_port": port}
     elif game == "wreckfest":
         port = _port(v.get("port"), "Spielport")
         qport, sport = _port(v.get("query_port"), "Query-Port"), _port(v.get("steam_port"), "Steam-Port")

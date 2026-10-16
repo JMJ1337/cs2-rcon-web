@@ -20,6 +20,8 @@ from pydantic import BaseModel, Field
 from . import automation, cache_history, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
+from .games import minecraft as mcmod
+from .games import teamspeak as tsmod
 from .rcon import RconAuthError, RconClient, RconError
 
 log = logging.getLogger("cs2rcon")
@@ -277,6 +279,10 @@ def sf_client(s: dict) -> sfmod.SatisfactoryClient:
     return c
 
 
+def ts_query(s: dict):
+    return tsmod.Query(s["host"], int(s["port"]), s.get("password", ""), int(s["game_port"]) if s.get("game_port") else None)
+
+
 def client_for(s: dict) -> RconClient:
     c = _clients.get(s["id"])
     if c is None:
@@ -359,6 +365,21 @@ async def command(sid: str, data: CommandIn):
         except sfmod.SatisfactoryError as e:
             raise HTTPException(502, str(e))
         return {"output": (d or {}).get("commandResult", "")}
+    if g == "minecraft":
+        if not s.get("container"):
+            raise HTTPException(400, "Minecraft-Konsole braucht den zugeordneten Docker-Container (unter „Bearbeiten“)")
+        try:
+            out = await docker_api.exec_cmd(s["container"], ["rcon-cli", data.command])
+        except docker_api.DockerError as e:
+            raise HTTPException(502, str(e))
+        return {"output": re.sub(r"\x1b\[[0-9;]*m|§.", "", out).strip() or "(keine Ausgabe)"}
+    if g == "teamspeak":
+        try:
+            out = (await ts_query(s).run(data.command))[0]
+        except tsmod.TeamSpeakError as e:
+            raise HTTPException(502, str(e))
+        rows = tsmod.parse(out) if out.strip() else []
+        return {"output": "\n".join(" ".join(f"{k}={v}" for k, v in r.items()) for r in rows) or "OK"}
     if not GAMES[g]["console"]:
         raise HTTPException(400, f"{GAMES[g]['label']} hat keine Remote-Konsole")
     out = await run(s, data.command)
@@ -450,6 +471,14 @@ def join_info(s: dict, password: str | None = None) -> dict:
         p = gp or port
         url = f"steam://connect/{host}:{p}" + (f"/{password}" if password else "")
         return {"address": f"{host}:{p}", "url": url, "hint": "Startet CS2 und verbindet direkt."}
+    if g == "minecraft":
+        p = gp or port
+        return {"address": f"{host}:{p}" if p != 25565 else host, "url": None,
+                "hint": "Minecraft → Multiplayer → Server hinzufügen → diese Adresse eintragen."}
+    if g == "teamspeak":
+        p = gp or 9987
+        return {"address": f"{host}:{p}" if p != 9987 else host, "url": f"ts3server://{host}?port={p}",
+                "hint": "Öffnet TeamSpeak 3 und verbindet direkt."}
     if g == "tf2":
         p = gp or port
         url = f"steam://connect/{host}:{p}" + (f"/{password}" if password else "")
@@ -588,6 +617,10 @@ async def collect_generic(s: dict) -> dict:
             st = await adapters.valheim_status(s["host"], int(s["port"]))
         elif g == "tf2":
             st = await adapters.tf2_status(s["host"], int(s.get("game_port") or s["port"]))
+        elif g == "minecraft":
+            st = await mcmod.status(s["host"], int(s.get("game_port") or s["port"]))
+        elif g == "teamspeak":
+            st = await tsmod.status(ts_query(s))
         elif g == "wreckfest":
             if s.get("container") and docker_api.available():
                 st = await adapters.wreckfest_container_status(s["container"])
@@ -595,7 +628,7 @@ async def collect_generic(s: dict) -> dict:
                 st = await adapters.wreckfest_status(s["host"], int(s["port"]))
         else:
             raise RconError("Unbekanntes Spiel")
-    except (sfmod.SatisfactoryError, adapters.a2s.A2SError) as e:
+    except (sfmod.SatisfactoryError, adapters.a2s.A2SError, mcmod.MinecraftError, tsmod.TeamSpeakError) as e:
         raise RconError(str(e)) from e
     if g == "satisfactory" and not st.get("hostname"):
         q = await scanner.satisfactory_query(s["host"], int(s["port"]))
@@ -1741,6 +1774,21 @@ async def _create_job(job: dict, data: CreateIn, host: str):
                         break
                 except sfmod.SatisfactoryError:
                     continue
+        if data.game == "teamspeak":
+            _job_log(job, "Warte auf das ServerQuery-Passwort und den Admin-Token aus dem Log …")
+            for _ in range(60):
+                await asyncio.sleep(5)
+                try:
+                    lg = await docker_api.logs(b["name"], 400)
+                except docker_api.DockerError:
+                    continue
+                pw = re.search(r'loginname=\s*"serveradmin",\s*password=\s*"([^"]+)"', lg)
+                tok = re.search(r"token=([A-Za-z0-9+]+)", lg)
+                if pw:
+                    await _set_server_fields(srv["id"], password=pw.group(1),
+                                             notes="angelegt vom Spielservermanager" + (f"\nAdmin-Token (Berechtigungsschlüssel): {tok.group(1)}" if tok else ""))
+                    _job_log(job, "ServerQuery-Passwort übernommen" + (" · Admin-Token steht in den Notizen des Servers" if tok else ""))
+                    break
         if data.game == "wreckfest" and b["server"].get("wf_config"):
             _job_log(job, "Wreckfest: Servername, Passwort und Ports werden nach der Installation automatisch eingetragen")
             asyncio.create_task(_wf_after_install(b["name"], b["server"]["wf_config"]))

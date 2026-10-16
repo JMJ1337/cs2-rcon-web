@@ -43,6 +43,22 @@ const COMMANDS = {
       "Spieler": [["kickid <userid>","Kicken (ID aus status)"],["kick <name>","Kicken per Name"],["banid <min> <userid>","Bannen (0 = permanent)"],["writeid","Banliste speichern"]],
     },
   },
+  minecraft: {
+    note: "Befehle ohne / – laufen über rcon-cli im Container.",
+    groups: {
+      "Server": [["list","Wer ist online"],["say <text>","Nachricht an alle"],["save-all","Welt speichern"],["whitelist on","Whitelist an"],["whitelist add <spieler>","Zur Whitelist"],["op <spieler>","Operator machen"],["deop <spieler>","Operator entziehen"],["stop","Server stoppen"]],
+      "Welt": [["time set day","Tag"],["time set night","Nacht"],["weather clear","Klares Wetter"],["difficulty <peaceful|easy|normal|hard>","Schwierigkeit"],["gamerule keepInventory true","Inventar behalten"],["setworldspawn","Spawn setzen"],["seed","Seed anzeigen"]],
+      "Spieler": [["kick <spieler> <grund>","Kicken"],["ban <spieler> <grund>","Bannen"],["pardon <spieler>","Entbannen"],["gamemode creative <spieler>","Kreativmodus"],["gamemode survival <spieler>","Überleben"],["tp <spieler> <ziel>","Teleportieren"],["give <spieler> <item> <anzahl>","Item geben"]],
+    },
+  },
+  teamspeak: {
+    note: "ServerQuery-Befehle (bereits eingeloggt, virtueller Server ausgewählt). Leerzeichen in Werten als \\s schreiben.",
+    groups: {
+      "Server": [["serverinfo","Alle Server-Infos"],["clientlist","Verbundene Clients"],["channellist","Kanäle"],["serveredit virtualserver_name=<name>","Servername ändern"],["serveredit virtualserver_password=<passwort>","Server-Passwort"],["serveredit virtualserver_maxclients=<n>","Max. Clients"],["serveredit virtualserver_welcomemessage=<text>","Begrüßung"]],
+      "Admin": [["privilegekeyadd tokentype=0 tokenid1=6 tokenid2=0","Neuen Admin-Token erzeugen"],["privilegekeylist","Token anzeigen"],["gm msg=<text>","Nachricht an alle Server"],["sendtextmessage targetmode=3 target=1 msg=<text>","Nachricht in den Server-Chat"]],
+      "Clients": [["clientkick clid=<id> reasonid=5 reasonmsg=<grund>","Vom Server kicken"],["clientpoke clid=<id> msg=<text>","Anstupsen"],["banclient clid=<id> time=<sek>","Bannen"],["channelcreate channel_name=<name> channel_flag_permanent=1","Kanal anlegen"]],
+    },
+  },
   wreckfest: {
     note: "Wreckfest hat keine Remote-Konsole. Befehle im Spiel-Chat (T) als Admin oder in der Webkonsole eingeben – mit führendem /.",
     readonly: true,
