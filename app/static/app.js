@@ -149,6 +149,32 @@ function renderServerList(){
   $$(".srv").forEach(el => el.onclick = () => selectServer(servers.find(s => s.id === el.dataset.id)));
 }
 
+/* ================= Last ================= */
+const lvl = p => p >= 85 ? "crit" : p >= 60 ? "warn" : "ok";
+const fmtMem = mb => mb == null ? "–" : mb >= 1024 ? (mb/1024).toFixed(1) + " GB" : mb + " MB";
+async function refreshHost(){
+  let h;
+  try { h = await api("/api/host"); } catch { return; }
+  const cpu = h.cpu, memPct = h.mem_total_mb ? Math.round(h.mem_used_mb / h.mem_total_mb * 100) : null;
+  $("#hlCpu").textContent = cpu != null ? cpu.toFixed(0) + " %" : "–";
+  $("#hlCpuBar").style.width = (cpu || 0) + "%"; $("#hlCpuBar").className = lvl(cpu || 0);
+  $("#hlMem").textContent = memPct != null ? memPct + " %" : "–";
+  $("#hlMemBar").style.width = (memPct || 0) + "%"; $("#hlMemBar").className = lvl(memPct || 0);
+  $("#hlHost").textContent = h.cores ? h.cores + " Kerne" : "";
+  const g = h.games || {};
+  $("#hlSub").innerHTML = `${fmtMem(h.mem_used_mb)} von ${fmtMem(h.mem_total_mb)} · Load ${h.load ? h.load.map(x => x.toFixed(2)).join(" ") : "–"}` +
+    (g.containers ? `<br>Spielserver: ${g.running}/${g.containers} laufen · ${g.cpu_host} % CPU · ${fmtMem(g.mem_mb)}` : "");
+}
+function loadHtml(l){
+  if (!l) return "";
+  if (l.error) return `<div class="loadrow"><span>Last</span><span class="hint">${esc(l.error)}</span><span></span></div>`;
+  if (l.state !== "running") return `<div class="loadrow"><span>Container</span><span style="color:var(--bad)">${esc(l.state || "?")}</span><span></span></div>`;
+  const c = l.cpu_host || 0;
+  return `<div class="loadrow" title="CPU bezogen auf den ganzen Host (${l.cpu ?? "?"} % eines Kerns)"><span>Last</span>
+    <div class="bar"><i class="${lvl(c)}" style="width:${Math.min(100, c)}%"></i></div>
+    <span><b>${c.toFixed(1)} %</b> CPU · <b>${fmtMem(l.mem_mb)}</b></span></div>`;
+}
+
 /* ================= Dashboard ================= */
 async function refreshDash(){
   try { overview = await api("/api/overview"); } catch { return; }
@@ -177,9 +203,10 @@ async function refreshDash(){
         ${Object.entries(o.extra || {}).filter(([k]) => !["Session","Servername"].includes(k)).slice(0, 2).map(([k,v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join("")}
       </div>`) + `
       <div class="bar"><i style="width:${pct}%"></i></div>
+      ${loadHtml(o.load)}
       ${o.auto && o.auto.capped ? `<span class="pill warn">Slots begrenzt auf ${o.max_players} – SLOTS im Stack erhöhen</span>` : ""}
       ${o.unclaimed ? `<span class="pill warn">Satisfactory: noch nicht beansprucht</span>` : ""}`
-      : `<div class="hint">${esc(o.error || (o.online === false ? "offline" : "noch nicht abgefragt"))}</div>`}
+      : `<div class="hint">${esc(o.error || (o.online === false ? "offline" : "noch nicht abgefragt"))}</div>${loadHtml(o.load)}`}
     </div>`;
   }).join("");
   $$(".dcard").forEach(el => el.onclick = () => selectServer(servers.find(s => s.id === el.dataset.id)));
@@ -985,7 +1012,8 @@ async function start(){
   await loadServers();
   showView("dash");
   clearInterval(dashTimer);
-  dashTimer = setInterval(refreshDash, 5000);
+  refreshHost();
+  dashTimer = setInterval(() => { refreshDash(); refreshHost(); }, 5000);
 }
 (async () => {
   const me = await api("/api/me").catch(() => ({authenticated:false}));

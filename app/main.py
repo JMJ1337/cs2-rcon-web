@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import automation, docker_api, scanner, steam, store, templates, users
+from . import automation, docker_api, hoststats, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
 from .rcon import RconAuthError, RconClient, RconError
@@ -45,7 +45,8 @@ COOKIE = "cs2rcon_session"
 
 @asynccontextmanager
 async def lifespan(_app):
-    tasks = [asyncio.create_task(watcher()), asyncio.create_task(scan_loop())] if WATCH_ENABLED else []
+    tasks = [asyncio.create_task(watcher()), asyncio.create_task(scan_loop()),
+             asyncio.create_task(load_loop())] if WATCH_ENABLED else []
     yield
     for t in tasks:
         t.cancel()
@@ -498,8 +499,57 @@ async def overview():
     out = []
     for s in load_servers():
         st = _state.get(s["id"], {})
-        out.append({"server": public(s), **{k: v for k, v in st.items() if not k.startswith("_") and k != "raw"}})
+        item = {"server": public(s), **{k: v for k, v in st.items() if not k.startswith("_") and k != "raw"}}
+        if s.get("container"):
+            item["load"] = _loads.get(s["container"])
+        out.append(item)
     return out
+
+
+# ---------------------------------------------------------------- Last (Host + Container)
+_loads: dict[str, dict] = {}   # Containername -> {cpu, cores, mem_mb, state}
+
+
+async def _container_load(name: str):
+    try:
+        info = await docker_api.inspect(name)
+        running = info.get("State", {}).get("Running")
+        st = await docker_api.stats(name) if running else {"cpu": 0, "mem_mb": 0, "mem_limit_mb": None}
+        cores = hoststats.state.get("cores") or 1
+        _loads[name] = {"state": info.get("State", {}).get("Status"), "cpu": st["cpu"],
+                        "cpu_host": round(st["cpu"] / cores, 1) if st["cpu"] is not None else None,
+                        "mem_mb": st["mem_mb"], "updated": time.time()}
+    except docker_api.DockerError as e:
+        _loads[name] = {"state": "unbekannt", "error": str(e), "updated": time.time()}
+
+
+async def load_loop():
+    """Host-Last alle 5 s, Container-Last aller verknüpften Container alle 10 s."""
+    hoststats.sample()
+    n = 0
+    while True:
+        await asyncio.sleep(5)
+        hoststats.sample()
+        n += 1
+        if n % 2 == 0 and docker_api.available():
+            names = sorted({s["container"] for s in load_servers() if s.get("container")})
+            if names:
+                await asyncio.gather(*(_container_load(x) for x in names))
+            for k in list(_loads):
+                if k not in names:
+                    _loads.pop(k, None)
+
+
+@app.get("/api/host", dependencies=auth)
+async def host_load():
+    h = dict(hoststats.state)
+    if h.get("updated") is None or time.time() - h["updated"] > 15:
+        h = dict(hoststats.sample())
+    games = [v for v in _loads.values() if v.get("cpu") is not None]
+    h["games"] = {"containers": len(_loads), "running": sum(1 for v in _loads.values() if v.get("state") == "running"),
+                  "cpu_host": round(sum(v.get("cpu_host") or 0 for v in games), 1),
+                  "mem_mb": sum(v.get("mem_mb") or 0 for v in games)}
+    return h
 
 
 async def watcher():

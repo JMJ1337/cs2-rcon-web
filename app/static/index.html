@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=3">
+<link rel="stylesheet" href="/static/app.css?v=4">
 </head>
 <body>
 
@@ -29,6 +29,12 @@
       <button class="small" id="btnLogout" title="Abmelden">Logout</button>
     </div>
     <div class="hint" style="padding:8px 16px 0;display:flex;justify-content:space-between;align-items:center"><span id="meName"></span><button class="small" id="btnMyPw">Passwort</button></div>
+    <div class="hostload" id="hostLoad" title="Gesamtlast des Docker-Hosts">
+      <div class="hl-head">Gesamtlast <span id="hlHost"></span></div>
+      <div class="hl-row"><span>CPU</span><div class="bar"><i id="hlCpuBar"></i></div><b id="hlCpu">–</b></div>
+      <div class="hl-row"><span>RAM</span><div class="bar"><i id="hlMemBar"></i></div><b id="hlMem">–</b></div>
+      <div class="hl-sub" id="hlSub"></div>
+    </div>
     <div class="nav">
       <button data-view="dash" class="active">▦ Übersicht aller Server</button>
       <button data-view="players">☺ Spieler &amp; SteamIDs</button>
@@ -436,6 +442,6 @@
 </dialog>
 
 <div id="toast"></div>
-<script src="/static/app.js?v=3"></script>
+<script src="/static/app.js?v=4"></script>
 </body>
 </html>
