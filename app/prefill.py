@@ -203,7 +203,7 @@ def parse_progress(text: str) -> dict:
         if not line:
             continue
         m = re.search(r"\]\s*Starting (.+?)\s*$", line)
-        if m:
+        if m and m.group(1).lower().rstrip("!") != "login":
             cur = {"name": m.group(1), "state": "läuft", "pct": 0.0, "info": ""}
             apps.append(cur)
             continue

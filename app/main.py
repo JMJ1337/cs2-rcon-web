@@ -1002,8 +1002,10 @@ async def cache_metrics():
         asyncio.create_task(depots.run())
     except Exception:  # noqa: BLE001
         out["games_24h"] = []
-    ld = _loads.get(out.get("container") or "") or {}
-    out["net"] = {"rx_bps": ld.get("rx_bps"), "tx_bps": ld.get("tx_bps"), "host_mode": ld.get("net_host")}
+    ld = livestats.data.get(out.get("container") or "") or {}
+    fresh = ld and time.time() - ld.get("t", 0) < 6
+    out["net"] = {"rx_bps": ld.get("rx_bps") if fresh else None, "tx_bps": ld.get("tx_bps") if fresh else None,
+                  "host_mode": bool(ld) and not ld.get("net")}
     hosts = {x["host"] for x in load_servers()}
     for k in ("last_hour", "last_day"):
         if out.get(k, {}).get("clients"):
