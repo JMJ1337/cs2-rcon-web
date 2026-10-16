@@ -17,8 +17,8 @@ RULES = [
      "Speicherplatz voll",
      "Auf dem NAS/Datenträger Platz schaffen (alte Server, Lancache-Limit verkleinern) und den Container neu starten."),
     (None, r"(state is 0x602|state is 0x206|Permission denied|EACCES|Operation not permitted|Access to the path .* is denied)",
-     "Keine Schreibrechte im Datenordner",
-     "Rechte des Datenordners für den Container-Benutzer setzen (z. B. chown -R 1000:1000 <Ordner>; Wreckfest 99:100, TeamSpeak 9987) bzw. auf dem NAS Schreibrechte vergeben."),
+     "Keine Schreibrechte im Datenordner (oder Schreibfehler auf dem NAS)",
+     "SteamCMD meldet 0x602 auch bei Schreibproblemen auf NFS. Rechte des Datenordners für den Container-Benutzer setzen (z. B. chown -R 1000:1000 <Ordner>; Wreckfest 99:100, TeamSpeak 9987) bzw. auf dem NAS Schreibrechte vergeben."),
     (None, r"(Address already in use|bind\(\) failed|Failed to bind|couldn't allocate any server IP port|Could not bind|EADDRINUSE|port is already allocated)",
      "Port ist schon belegt",
      "Ein anderer Server/Container nutzt denselben Port. Ports beim Anlegen nicht doppelt vergeben – Server mit freiem Port neu anlegen oder den anderen stoppen."),
@@ -76,6 +76,7 @@ def analyze(text: str, game: str, since: float | None = None) -> list[dict]:
                 continue
             if rx.search(line):
                 found[title] = {"title": title, "solution": sol, "line": line[:240], "t": t}
+                break           # pro Zeile nur die genaueste Erklärung
     return sorted(found.values(), key=lambda x: -(x["t"] or 0))
 
 
