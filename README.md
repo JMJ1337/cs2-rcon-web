@@ -7,6 +7,19 @@ Weboberfläche zur Verwaltung mehrerer CS2-Server per RCON im LAN – als Docker
 Live-Konsole mit Verlauf · Server-Einstellungen (Cvars lesen & ändern) · Befehle an mehrere Server gleichzeitig ·
 Login per Admin-Passwort. Läuft komplett offline (keine CDNs), also auch in LANs ohne Internet.
 
+**Neu in v2:**
+- **Übersicht aller Server** (Dashboard) mit Map, Modus, Spielern, MatchZy-Status
+- **Automatische Spieleranzahl** je Modus und Map (`sv_visiblemaxplayers`), z. B. Wingman 4, Competitive 10, `aim_*` 2 –
+  einstellbar unter „Automatik & Modi“. Obergrenze ist `SLOTS` im CS2-Stack (Standard jetzt 20).
+- **Workshop-Maps suchen** (Steam Workshop, ohne API-Key), Vorschaubilder, Favoriten, Laden mit Modus
+- **Wettkampfmodus mit MatchZy:** Presets Wingman 2v2 / Competitive 5v5, PUG-Schnellstart ohne Teamliste,
+  Match mit Teams (SteamID64), Bo1/Bo3/Bo5, Veto oder feste Reihenfolge, Match-Steuerung, Verlauf
+- **Spieler & SteamIDs:** SteamID64, `STEAM_0:…`, `[U:1:…]`, Profil-Link oder Steam-Kurzname – Name/Avatar werden geladen
+
+Für Workshop-Suche und SteamID-Auflösung braucht der Docker-Host Internet. Die CS2-Server laden Match-Configs
+per `matchzy_loadmatch_url` direkt von diesem Tool – unter „Automatik & Modi“ die LAN-Adresse eintragen
+(z. B. `http://192.168.200.27:8090`).
+
 ## Repository-Aufbau
 
 | Datei | Zweck |
@@ -63,7 +76,16 @@ Danach: `http://<Docker-Host>:8080` (bzw. `WEB_PORT`).
 | `RCON_TIMEOUT` | `4` | Timeout pro RCON-Befehl (Sek.) |
 | `TZ` | `Europe/Berlin` | Zeitzone |
 
-### Update
+### Automatische Updates
+
+Nach jedem Image-Build setzt die GitHub Action einen Build-Stempel in `portainer-stack.yml`. Damit Portainer das
+automatisch übernimmt, beim RCON-Stack (Repository-Stack) einschalten:
+*GitOps updates* → Mechanism **Polling**, Intervall z. B. `5m`, **Re-pull image** an.
+
+Die CS2-Server-Stacks (`cs2-server/`) besser **ohne** GitOps-Polling betreiben, sonst startet Portainer sie bei
+Repo-Änderungen evtl. mitten im Match neu – dort Updates per Hand („Pull and redeploy“).
+
+### Update von Hand
 
 Code pushen → Action baut neues Image → in Portainer beim Stack **Update the stack** mit
 **„Re-pull image and redeploy“** (bzw. *Pull and redeploy* bei Repository-Stacks).

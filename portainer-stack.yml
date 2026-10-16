@@ -1,6 +1,7 @@
 # Portainer-Stack für CS2 RCON Web
 # Portainer → Stacks → Add stack → "Web editor" (Inhalt einfügen) oder "Repository" (Compose path: portainer-stack.yml)
 # Variablen unten unter "Environment variables" setzen (Vorlage: stack.env).
+# Auto-Update: Repository-Stack mit "GitOps updates" (Polling, z. B. 5m) + "Re-pull image" aktivieren.
 
 services:
   cs2-rcon:
@@ -19,6 +20,7 @@ services:
       - rcon-data:/data
     labels:
       com.groh-pa.description: "CS2 RCON Weboberfläche"
+      com.groh-pa.build: "init"   # wird nach jedem Image-Build automatisch aktualisiert (Auto-Update)
 
 volumes:
   rcon-data:

@@ -21,7 +21,7 @@ services:
       CS2_SERVERNAME: "${NAME:-GROH LAN CS${SRV_NR}}"
       CS2_GAMEALIAS: "${MODUS:-wingman}"
       CS2_STARTMAP: "${MAP:-de_palais}"
-      CS2_MAXPLAYERS: "${SLOTS:-5}"
+      CS2_MAXPLAYERS: "${SLOTS:-20}"   # Obergrenze; das RCON-Tool setzt die sichtbaren Slots je Modus/Map
       CS2_PORT: "${GAME_PORT:?GAME_PORT muss gesetzt sein (27015-27019)}"
       TV_PORT: "${TV_PORT:-2702${SRV_NR}}"
       CS2_RCONPW: "${RCON_PW:?RCON_PW muss gesetzt sein}"
