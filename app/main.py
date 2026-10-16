@@ -1428,7 +1428,15 @@ for c in /serverdata/serverfiles/server_config.cfg /serverdata/serverfiles/serve
   [ -f "$c" ] && { echo "=== $c"; grep -v '^[[:space:]]*#' "$c" | grep -v '^[[:space:]]*$' | grep -iv 'password' | head -80; }
 done
 echo '=== Dateien'; ls -la /serverdata/serverfiles 2>/dev/null | head -40
-for l in $(ls -t /serverdata/serverfiles/*.log /serverdata/serverfiles/*/*.log 2>/dev/null | head -2); do echo "=== $l"; tail -n 60 "$l" | cut -c1-240; done
+for l in $(ls -t /serverdata/serverfiles/*.log /serverdata/serverfiles/log.txt /serverdata/serverfiles/*/*.log 2>/dev/null | head -3); do echo "=== $l"; tail -n 60 "$l" | cut -c1-240; done
+[ -d /serverdata/serverfiles/crash ] && { echo '=== Absturzberichte'; ls -la /serverdata/serverfiles/crash | tail -n 10; }
+if [ -n "$BASH_VERSION" ] || command -v bash >/dev/null; then
+  echo '=== A2S-Test im Container'
+  for p in $(for h in $(cat /proc/net/udp /proc/net/udp6 2>/dev/null | awk 'NR>1 && $2 ~ /:/{split($2,a,":"); print a[2]}' | sort -u); do printf "%d " 0x$h; done); do
+    r=$(bash -c 'exec 3<>/dev/udp/127.0.0.1/'$p' && printf "\xff\xff\xff\xffTSource Engine Query\x00" >&3 && timeout 2 dd bs=1400 count=1 <&3 2>/dev/null | tr -c "[:print:]" "."' 2>/dev/null)
+    echo "$p: ${r:-keine Antwort}"
+  done
+fi
 """
 
 
