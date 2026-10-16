@@ -34,9 +34,28 @@ def load():
     _loaded = True
 
 
-def add(svc: str, ip: str, ts: float, size: int, hit: bool) -> None:
+DEP_CAP = 120   # max. Depots je Stunde
+
+
+def add_depot(ts: float, depot: str, size: int, hit: bool) -> None:
     global _dirty
     hour = int(ts // 3600)
+    b = _h.setdefault(hour, {"hb": 0, "mb": 0, "hr": 0, "mr": 0, "svc": {}})
+    dep = b.setdefault("dep", {})
+    e = dep.get(depot)
+    if e is None:
+        if len(dep) >= DEP_CAP:
+            return
+        e = dep[depot] = [0, 0]
+    e[0 if hit else 1] += size
+    _dirty = True
+
+
+def add(svc: str, ip: str, ts: float, size: int, hit: bool, depot: str | None = None) -> None:
+    global _dirty
+    hour = int(ts // 3600)
+    if depot:
+        add_depot(ts, depot, size, hit)
     b = _h.get(hour)
     if b is None:
         b = _h[hour] = {"hb": 0, "mb": 0, "hr": 0, "mr": 0, "svc": {}}
@@ -67,12 +86,14 @@ def init():
         meta["watermark"] = meta["bf_cut"]
 
 
-def live(svc, ip, ts, size, hit):
+def live(svc, ip, ts, size, hit, depot=None):
     """Live-Zeilen nur zählen, wenn sie neuer als der gespeicherte Stand sind (keine Doppelzählung nach Neustart)."""
     init()
+    if meta.get("dep_cut") is None:
+        meta["dep_cut"] = meta["watermark"]     # ältere Depot-Daten holt der Depot-Rückimport
     if ts <= meta["watermark"]:
         return
-    add(svc, ip, ts, size, hit)
+    add(svc, ip, ts, size, hit, depot)
     meta["watermark_next"] = max(meta.get("watermark_next") or 0, ts)
 
 
@@ -81,9 +102,14 @@ def commit_watermark():
         meta["watermark"] = max(meta["watermark"], meta.pop("watermark_next"))
 
 
-def backfill_line(svc, ip, ts, size, hit):
+def backfill_line(svc, ip, ts, size, hit, depot=None):
     if meta["bf_cut"] is not None and ts < meta["bf_cut"]:
-        add(svc, ip, ts, size, hit)
+        add(svc, ip, ts, size, hit, depot)
+
+
+def depot_backfill_line(ts, depot, size, hit):
+    if depot and meta.get("dep_cut") is not None and ts <= meta["dep_cut"]:
+        add_depot(ts, depot, size, hit)
 
 
 def reset_backfill():
@@ -173,6 +199,10 @@ def series(rng: str) -> dict:
         tot["hit"] += hb; tot["miss"] += mb
         pts.append({"t": h * 3600, "hit": hb, "miss": mb, "rx": rx if has_net else None, "tx": tx if has_net else None})
         h += step
+    deps = defaultdict(lambda: [0, 0])
+    for x in range(first, now_h + 1):
+        for dpt, (a, m) in ((_h.get(x) or {}).get("dep") or {}).items():
+            deps[dpt][0] += a; deps[dpt][1] += m
     ips = defaultdict(int)
     for day, d in _ips.items():
         if day * 24 + 23 >= first:
@@ -190,8 +220,10 @@ def series(rng: str) -> dict:
         "services": sorted(({"name": s, "hit": a, "miss": m} for s, (a, m) in svc.items()),
                            key=lambda x: -(x["hit"] + x["miss"]))[:15],
         "clients": sorted(({"ip": ip, "bytes": v} for ip, v in ips.items()), key=lambda x: -x["bytes"])[:10],
+        "depots": {d: v for d, v in deps.items()},
         "disk": disk,
         "since": meta.get("since"),
         "backfill": {"done": meta["bf_done"], "pos": meta["bf_pos"], "size": meta["bf_size"],
                      "lines": meta["bf_lines"], "error": meta["bf_error"]},
+        "depot_backfill": {"done": meta.get("dbf_done", False), "pos": meta.get("dbf_pos", 0), "size": meta.get("dbf_size", 0)},
     }

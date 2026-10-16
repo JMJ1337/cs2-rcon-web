@@ -56,6 +56,16 @@ def _parse(line: str):
     return m.group("svc"), m.group("ip"), ts, int(m.group("b")), m.group("cache")
 
 
+RE_DEPOT = re.compile(r'"[A-Z]+ /depot/(\d+)/')
+
+
+def depot_of(line: str, svc: str) -> str | None:
+    if svc != "steam":
+        return None
+    m = RE_DEPOT.search(line)
+    return m.group(1) if m else None
+
+
 def ingest(text: str) -> int:
     n = 0
     for line in text.splitlines():
@@ -65,7 +75,7 @@ def ingest(text: str) -> int:
         svc, ip, ts, size, cache = p
         hit = cache == "HIT"
         if hit or cache in ("MISS", "EXPIRED", "STALE", "UPDATING", "REVALIDATED", "BYPASS"):
-            cache_history.live(svc, ip, ts, size, hit)
+            cache_history.live(svc, ip, ts, size, hit, depot_of(line, svc))
         if ts > time.time() - 120:
             _recent.append((ts, size, hit))
         b = _bucket(int(ts // 60))
@@ -206,7 +216,7 @@ async def backfill() -> None:
                 svc, ip, ts, sz, cache = p
                 hit = cache == "HIT"
                 if hit or cache in ("MISS", "EXPIRED", "STALE", "UPDATING", "REVALIDATED", "BYPASS"):
-                    cache_history.backfill_line(svc, ip, ts, sz, hit)
+                    cache_history.backfill_line(svc, ip, ts, sz, hit, depot_of(line, svc))
                     n += 1
             m["bf_pos"] += end
             m["bf_lines"] += n
@@ -265,3 +275,49 @@ async def poll_storage() -> None:
         storage["updated"] = time.time()
     finally:
         storage["running"] = False
+
+
+_dbf_running = False
+
+
+async def backfill_depots() -> None:
+    """Einmalig: Steam-Depots (= welches Spiel) aus dem alten access.log nachtragen."""
+    global _dbf_running
+    cache_history.init()
+    m = cache_history.meta
+    name = state["container"]
+    if _dbf_running or m.get("dbf_done") or not name or m.get("dep_cut") is None:
+        return
+    _dbf_running = True
+    try:
+        size_out = (await docker_api.exec_cmd(name, ["stat", "-c", "%s", LOG])).strip()
+        size = int(size_out) if size_out.isdigit() else 0
+        m.setdefault("dbf_pos", 0)
+        if not m.get("dbf_size"):
+            m["dbf_size"] = size
+        if size < m["dbf_pos"]:
+            m["dbf_done"] = True
+            return
+        while m["dbf_pos"] < m["dbf_size"]:
+            length = min(BF_CHUNK, m["dbf_size"] - m["dbf_pos"])
+            data = await docker_api.exec_cmd(name, ["sh", "-c", f"tail -c +{m['dbf_pos'] + 1} {LOG} | head -c {length} | grep '/depot/' ; echo '#END'"])
+            # grep liefert nur Steam-Depot-Zeilen; Position über die gelesene Länge (Zeilengrenze am Ende ignorieren)
+            for line in data.splitlines():
+                if line.startswith("#END"):
+                    continue
+                p = _parse(line)
+                if not p:
+                    continue
+                svc, ip, ts, sz, cache = p
+                hit = cache == "HIT"
+                if hit or cache in ("MISS", "EXPIRED", "STALE", "UPDATING", "REVALIDATED", "BYPASS"):
+                    cache_history.depot_backfill_line(ts, depot_of(line, svc), sz, hit)
+            m["dbf_pos"] += length
+            cache_history.maybe_save()
+            await asyncio.sleep(0.1)
+        m["dbf_done"] = True
+        cache_history.maybe_save(force=True)
+    except (docker_api.DockerError, ValueError):
+        pass
+    finally:
+        _dbf_running = False

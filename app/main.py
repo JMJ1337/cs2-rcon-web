@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import automation, cache_history, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
+from . import automation, cache_history, depots, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
 from .games import minecraft as mcmod
@@ -762,6 +762,9 @@ async def load_loop():
             if cache_stats.state["container"] and not st_["running"] and (st_["updated"] is None or time.time() - st_["updated"] > 1800):
                 st_["updated"] = st_["updated"] or 0.0
                 asyncio.create_task(cache_stats.poll_storage())
+            if (cache_stats.state["container"] and cache_history.meta["bf_done"] and not cache_history.meta.get("dbf_done")
+                    and not cache_stats._dbf_running):
+                asyncio.create_task(cache_stats.backfill_depots())
             if cache_stats.state["container"] and not cache_history.meta["bf_done"] and not cache_stats._bf_running:
                 asyncio.create_task(cache_stats.backfill())
             cache_history.maybe_save()
@@ -975,6 +978,11 @@ async def cache_metrics():
     if cache_stats.state["updated"] is None:
         await cache_stats.poll(automation.get_settings().get("cache_container") or "")
     out = cache_stats.summary()
+    try:
+        out["games_24h"] = depots.games(cache_history.series("24h").get("depots") or {})[:6]
+        asyncio.create_task(depots.run())
+    except Exception:  # noqa: BLE001
+        out["games_24h"] = []
     ld = _loads.get(out.get("container") or "") or {}
     out["net"] = {"rx_bps": ld.get("rx_bps"), "tx_bps": ld.get("tx_bps"), "host_mode": ld.get("net_host")}
     hosts = {x["host"] for x in load_servers()}
@@ -1102,6 +1110,8 @@ async def cache_history_api(range: str = "30d"):
     out["error"] = cache_stats.state["error"]
     out["disk_now"] = cache_stats.state["disk"]
     out["storage"] = {k: v for k, v in cache_stats.storage.items() if k != "running"} | {"busy": cache_stats.storage["running"]}
+    out["games"] = depots.games(out.pop("depots", {}) or {})[:30]
+    asyncio.create_task(depots.run())
     out["clients"] = await netnames.annotate(out["clients"], {x["host"] for x in load_servers()})
     return out
 

@@ -319,3 +319,4 @@ body:not(.g-wreckfest) #wfPanel{display:none!important}
 .problem b{color:var(--warn,#e5a50a)}
 .problem.info{border-color:var(--line);background:transparent}
 .problem.info b{color:var(--muted)}
+.gcap{height:28px;width:auto;border-radius:4px;flex:none}

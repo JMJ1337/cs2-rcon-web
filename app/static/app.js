@@ -395,6 +395,18 @@ function storageCard(st, disk){
     ${pct != null ? `<div class="bar" style="margin-top:6px"><i class="${lvl(pct)}" style="width:${pct}%"></i></div>` : ""}
     <div class="s">${pct != null ? pct + " % vom Limit · " : ""}Logs ${fmtBytes(logs)}${st.max_age ? " · max. Alter " + esc(st.max_age) : ""}</div></div>`;
 }
+function gamesTable(list, label){
+  if (!list || !list.length) return "";
+  const max = Math.max(1, ...list.map(g => g.hit + g.miss));
+  return `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:6px">Welche Spiele wurden geladen? <span class="hint">(Steam, ${esc(label)})</span></h2>
+    <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Spiel</th><th>gesamt</th><th>aus dem Cache</th><th>aus dem Internet</th><th></th></tr></thead><tbody>
+    ${list.map(g => { const tot = g.hit + g.miss, p = tot ? Math.round(g.hit / tot * 100) : 0;
+      return `<tr><td><div class="row" style="gap:8px;flex-wrap:nowrap">${g.app ? `<img class="gcap" src="https://cdn.cloudflare.steamstatic.com/steam/apps/${g.app}/capsule_sm_120.jpg" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}
+        <div><b>${esc(g.name)}</b>${g.app ? `<div class="hint mono">App ${g.app}${g.depots > 1 ? " · " + g.depots + " Depots" : ""}</div>` : `<div class="hint">wird ermittelt …</div>`}</div></div></td>
+        <td class="mono">${fmtBytes(tot)}</td><td class="mono" style="color:var(--ok)">${fmtBytes(g.hit)}</td><td class="mono">${fmtBytes(g.miss)}</td>
+        <td style="min-width:140px"><div class="cachebar" title="${p} % aus dem Cache"><i style="width:${(tot / max * 100).toFixed(1)}%;background:linear-gradient(90deg,var(--ok) ${p}%,#8a7a66 ${p}%)"></i></div></td></tr>`; }).join("")}
+    </tbody></table></div></div>`;
+}
 function savedCard(bytes, label){
   return `<div class="card savedcard"><div class="k">Traffic gespart${label ? " · " + label : ""}</div><div class="v" style="color:var(--ok)">${fmtBytes(bytes || 0)}</div>
     <div class="s">nicht erneut aus dem Internet geladen</div></div>`;
@@ -429,6 +441,7 @@ async function refreshCache(){
     ${svc ? `<div class="panel" style="padding:12px 16px"><h2 style="margin-bottom:6px">Was wurde ausgeliefert? <span class="hint">(letzte 24 h, nach Dienst)</span> <a href="#" class="hint" style="float:right" onclick="showView('cache');return false">Verlauf bis 1 Jahr →</a></h2>
       <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Dienst</th><th>aus dem Cache</th><th>aus dem Internet</th><th>gesamt</th><th>Trefferquote</th><th></th></tr></thead><tbody>${svc}</tbody></table></div></div>`
       : `<div class="hint" style="margin-bottom:14px">In den letzten 24 Stunden wurde nichts über den Lancache geladen.</div>`}
+    ${gamesTable(c.games_24h, "letzte 24 h")}
   </div>`;
 }
 
@@ -1708,6 +1721,8 @@ async function loadCacheHistory(){
       <div class="row hint" style="justify-content:space-between;margin-top:4px"><span>↓ gesamt ${fmtBytes(c.points.reduce((a, p) => a + (p.rx || 0), 0))}</span><span>↑ gesamt ${fmtBytes(c.points.reduce((a, p) => a + (p.tx || 0), 0))}</span></div></div>` : ""}
     ${c.services.length ? `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:6px">Was wurde gecacht? <span class="hint">(${CACHE_RANGES[c.range]}, nach Dienst)</span></h2>
       <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Dienst</th><th>aus dem Cache</th><th>aus dem Internet</th><th>gesamt</th><th>Trefferquote</th><th></th></tr></thead><tbody>${svcRows(c.services)}</tbody></table></div></div>` : ""}
+    ${gamesTable(c.games, CACHE_RANGES[c.range])}
+    ${c.depot_backfill && !c.depot_backfill.done && c.depot_backfill.size ? `<div class="hint" style="margin:-8px 0 14px">Spiele aus dem alten Log werden nachgetragen … ${Math.floor(c.depot_backfill.pos / c.depot_backfill.size * 100)} %</div>` : ""}
     ${(c.storage && c.storage.logs && c.storage.logs.length) ? `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:6px">Ordner im Lancache-Container <span class="hint">${c.storage.updated ? "gemessen " + new Date(c.storage.updated * 1000).toLocaleString("de-DE") : ""}</span></h2>
       <table class="cachetable"><tbody>
         <tr><td class="mono">/data/cache</td><td class="mono">${fmtBytes(c.storage.cache_bytes)}</td><td class="hint">${c.storage.limit_raw ? "Limit " + esc(c.storage.limit_raw) : ""}</td></tr>
