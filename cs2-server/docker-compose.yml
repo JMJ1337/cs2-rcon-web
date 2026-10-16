@@ -1,6 +1,8 @@
 # GROH CS2 Server mit MatchZy – EIN Server pro Stack
-# Für jeden weiteren Server: neuen Stack mit diesem Inhalt anlegen,
-# nur die Environment variables ändern (SRV_NR, Ports, Name, Token ...).
+# Für jeden weiteren Server: neuen Stack mit eigenem Namen (cs2-1, cs2-2 ...) anlegen.
+# Pflicht-Variablen pro Server: SRV_NR, GAME_PORT, TOKEN, RCON_PW
+#   Server 1: GAME_PORT=27015 · 2: 27016 · 3: 27017 · 4: 27018 · 5: 27019
+# Automatisch (überschreibbar): NAME = "GROH LAN CS<SRV_NR>", TV_PORT = 2702<SRV_NR>
 # Portainer: Stacks → Add stack → Repository → Compose path: cs2-server/docker-compose.yml
 # Variablen-Vorlage: cs2-server/stack.env
 # Installation liegt auf dem NAS: /mnt/cs/server<SRV_NR>  (NFS-Mount 192.168.200.13:/volume1/Grohlan/cs)
@@ -8,22 +10,22 @@
 services:
   cs2:
     image: xbird/cs2-matchzy:latest
-    container_name: cs2-dedicated-CS${SRV_NR}
+    container_name: cs2-dedicated-CS${SRV_NR:?SRV_NR muss gesetzt sein}
     restart: unless-stopped
     dns:
       - 192.168.200.27        # Lancache-DNS: Updates kommen nur einmal aus dem Internet
     stdin_open: true          # Konsole: docker attach --sig-proxy=false cs2-dedicated-CS<Nr>
     tty: true
     environment:
-      SRCDS_TOKEN: "${TOKEN}"
-      CS2_SERVERNAME: "${NAME}"
+      SRCDS_TOKEN: "${TOKEN:?TOKEN muss gesetzt sein}"
+      CS2_SERVERNAME: "${NAME:-GROH LAN CS${SRV_NR}}"
       CS2_GAMEALIAS: "${MODUS:-wingman}"
       CS2_STARTMAP: "${MAP:-de_palais}"
       CS2_MAXPLAYERS: "${SLOTS:-5}"
-      CS2_PORT: "${GAME_PORT}"
-      TV_PORT: "${TV_PORT}"
-      CS2_RCONPW: "${RCON_PW}"
-      CS2_PW: "${SERVER_PW}"
+      CS2_PORT: "${GAME_PORT:?GAME_PORT muss gesetzt sein (27015-27019)}"
+      TV_PORT: "${TV_PORT:-2702${SRV_NR}}"
+      CS2_RCONPW: "${RCON_PW:?RCON_PW muss gesetzt sein}"
+      CS2_PW: "${SERVER_PW:-}"
       CS2_MAPGROUP: "mg_active"
       CS2_BOT_QUOTA: "${BOTS:-0}"
       STEAMAPPVALIDATE: "0"
@@ -42,6 +44,6 @@ services:
     ports:
       - "${GAME_PORT}:${GAME_PORT}/tcp"   # TCP = RCON (für die RCON-Weboberfläche)
       - "${GAME_PORT}:${GAME_PORT}/udp"
-      - "${TV_PORT}:${TV_PORT}/udp"
+      - "${TV_PORT:-2702${SRV_NR}}:${TV_PORT:-2702${SRV_NR}}/udp"
     volumes:
       - /mnt/cs/server${SRV_NR}:/home/steam/cs2-dedicated/
