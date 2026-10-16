@@ -1,0 +1,21 @@
+services:
+  cs2-rcon:
+    build: .
+    image: cs2-rcon-web:latest
+    container_name: cs2-rcon-web
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      ADMIN_PASSWORD: "bitte-aendern"   # Login-Passwort der Weboberfläche
+      SESSION_HOURS: "24"               # wie lange ein Login gültig bleibt
+      RCON_TIMEOUT: "4"                 # Sekunden
+      TZ: Europe/Berlin
+    volumes:
+      - rcon-data:/data                 # Serverliste (servers.json) bleibt erhalten
+    # Laufen die CS2-Server auf demselben Host (z. B. auch in Docker mit network_mode: host)?
+    # Dann statt "ports" einfach:
+    # network_mode: host
+
+volumes:
+  rcon-data:

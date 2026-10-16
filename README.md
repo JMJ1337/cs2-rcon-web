@@ -1,0 +1,95 @@
+# CS2 RCON Web
+
+Weboberfläche zur Verwaltung mehrerer CS2-Server per RCON im LAN – als Docker-Container.
+
+**Funktionen:** Serververwaltung · Live-Status & Spielerliste (inkl. Kick) · Schnellaktionen
+(Warmup, Restart, Pause, Teams tauschen, Bots …) · Map-/Modus-Wechsel & Workshop-Maps ·
+Live-Konsole mit Verlauf · Server-Einstellungen (Cvars lesen & ändern) · Befehle an mehrere Server gleichzeitig ·
+Login per Admin-Passwort. Läuft komplett offline (keine CDNs), also auch in LANs ohne Internet.
+
+## Repository-Aufbau
+
+| Datei | Zweck |
+|---|---|
+| `app/` | Backend (FastAPI + RCON-Client) und Weboberfläche |
+| `Dockerfile` | Image-Definition |
+| `.github/workflows/docker.yml` | baut bei jedem Push auf `main` bzw. Tag `v*` ein Image (amd64 + arm64) nach `ghcr.io` |
+| `portainer-stack.yml` | Stack für Portainer (zieht das fertige Image) |
+| `stack.env` | Vorlage für die Stack-Variablen |
+| `docker-compose.yml` | lokal selbst bauen ohne Registry (`docker compose up -d --build`) |
+
+## 1. Repo auf GitHub anlegen
+
+1. Auf GitHub ein neues, leeres Repository `cs2-rcon-web` anlegen (privat oder öffentlich, **ohne** README).
+2. Lokal:
+   ```bash
+   git remote add origin https://github.com/<NAME>/cs2-rcon-web.git
+   git push -u origin main
+   ```
+3. Unter **Actions** läuft „Docker-Image bauen“ (~3–5 Min.). Danach gibt es das Image
+   `ghcr.io/<name>/cs2-rcon-web:latest` (Name immer kleingeschrieben).
+4. **Image-Sichtbarkeit:** Neue Pakete auf ghcr.io sind privat. Entweder
+   - unter *Profil → Packages → cs2-rcon-web → Package settings → Change visibility* auf **Public** stellen, oder
+   - privat lassen und in Portainer eine Registry hinterlegen (siehe unten).
+
+Versionen: `git tag v1.0.0 && git push --tags` erzeugt zusätzlich die Tags `1.0.0` und `1.0`.
+
+## 2. Stack in Portainer
+
+**Variante A – Repository (empfohlen, Updates per Klick):**
+*Stacks → Add stack → Repository*
+- Repository URL: `https://github.com/<NAME>/cs2-rcon-web`
+- Reference: `refs/heads/main` · Compose path: `portainer-stack.yml`
+- Bei privatem Repo: *Authentication* aktivieren, GitHub-Benutzer + Personal Access Token (Scope `repo`)
+- *Environment variables* → „Load variables from .env file“ → `stack.env` hochladen und anpassen,
+  mindestens **`IMAGE`** und **`ADMIN_PASSWORD`**
+- Optional *GitOps updates* aktivieren (Polling oder Webhook), dann deployt Portainer Änderungen selbst.
+
+**Variante B – Web editor:** Inhalt von `portainer-stack.yml` einfügen, Variablen wie oben setzen.
+
+**Privates Image:** *Registries → Add registry → Custom registry* – URL `ghcr.io`, Benutzer = GitHub-Name,
+Passwort = Personal Access Token mit Scope `read:packages`.
+
+Danach: `http://<Docker-Host>:8080` (bzw. `WEB_PORT`).
+
+### Stack-Variablen
+
+| Variable | Standard | Bedeutung |
+|---|---|---|
+| `IMAGE` | `ghcr.io/dein-github-name/cs2-rcon-web:latest` | Image (z. B. `:1.0.0` zum Festpinnen) |
+| `ADMIN_PASSWORD` | – (Pflicht) | Login-Passwort der Weboberfläche |
+| `WEB_PORT` | `8080` | Port auf dem Docker-Host |
+| `SESSION_HOURS` | `24` | Gültigkeit eines Logins |
+| `RCON_TIMEOUT` | `4` | Timeout pro RCON-Befehl (Sek.) |
+| `TZ` | `Europe/Berlin` | Zeitzone |
+
+### Update
+
+Code pushen → Action baut neues Image → in Portainer beim Stack **Update the stack** mit
+**„Re-pull image and redeploy“** (bzw. *Pull and redeploy* bei Repository-Stacks).
+Die Serverliste bleibt im Volume `cs2-rcon-data` erhalten.
+
+## CS2-Server vorbereiten
+
+RCON ist bei CS2 standardmäßig aus. Der Dedicated Server braucht:
+
+- Startparameter **`-usercon`**
+- in der `server.cfg` (oder per Startparameter `+rcon_password ...`): `rcon_password "geheim"`
+- TCP-Port 27015 (bzw. euer `-port`) muss vom Docker-Host aus erreichbar sein (Firewall!).
+
+In der Weboberfläche dann „+ Server hinzufügen“ → IP, Port, RCON-Passwort → „Verbindung testen“.
+
+## Hinweise
+
+- Die Serverliste liegt im Volume unter `/data/servers.json`. RCON-Passwörter stehen dort im Klartext –
+  für ein LAN okay, die Weboberfläche aber nicht ins Internet freigeben.
+- Laufen die CS2-Server auf demselben Host mit `network_mode: host`, im Tool die Host-IP eintragen.
+- Spielmodus-Wechsel nutzt `game_type`/`game_mode` + `map` (lädt die Map neu). Ohne Modus wird `changelevel` verwendet.
+- Workshop-Maps (`host_workshop_map`) brauchen Internet am CS2-Server.
+
+## Lokal entwickeln
+
+```bash
+pip install -r requirements.txt
+DATA_DIR=./data ADMIN_PASSWORD=test uvicorn app.main:app --reload --port 8080
+```

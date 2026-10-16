@@ -1,0 +1,25 @@
+# Portainer-Stack für CS2 RCON Web
+# Portainer → Stacks → Add stack → "Web editor" (Inhalt einfügen) oder "Repository" (Compose path: portainer-stack.yml)
+# Variablen unten unter "Environment variables" setzen (Vorlage: stack.env).
+
+services:
+  cs2-rcon:
+    image: ${IMAGE:-ghcr.io/dein-github-name/cs2-rcon-web:latest}
+    container_name: cs2-rcon-web
+    restart: unless-stopped
+    pull_policy: always
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD muss gesetzt sein}
+      SESSION_HOURS: ${SESSION_HOURS:-24}
+      RCON_TIMEOUT: ${RCON_TIMEOUT:-4}
+      TZ: ${TZ:-Europe/Berlin}
+    volumes:
+      - rcon-data:/data
+    labels:
+      com.groh-pa.description: "CS2 RCON Weboberfläche"
+
+volumes:
+  rcon-data:
+    name: cs2-rcon-data
