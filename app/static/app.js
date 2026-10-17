@@ -160,8 +160,12 @@ function showLogin(){ stopPoll(); clearInterval(dashTimer); clearInterval(pubTim
 
 /* ================= Öffentliche Serverliste (ohne Login) ================= */
 let pubTimer = null, pubData = null, pubIconsLoaded = false;
-function showPublic(){
-  stopPoll(); clearInterval(dashTimer); me = null;
+let pubLoggedIn = false;
+function showPublic(loggedIn = false){
+  stopPoll(); clearInterval(dashTimer);
+  pubLoggedIn = loggedIn === true;
+  if (!pubLoggedIn) me = null;
+  $("#btnPubLogin").textContent = pubLoggedIn ? "← Zur Verwaltung" : "Anmelden";
   $("#app").classList.add("hidden"); $("#login").classList.add("hidden"); $("#pub").classList.remove("hidden");
   refreshPublic();
   clearInterval(pubTimer); pubTimer = setInterval(() => { if (!document.hidden) refreshPublic(); }, 10000);
@@ -198,7 +202,8 @@ function renderPublic(){
   }).join("");
   $$("#pubGrid [data-pcopy]").forEach(b => b.onclick = () => copyText(b.dataset.pcopy));
 }
-$("#btnPubLogin").onclick = () => showLogin();
+$("#btnPubLogin").onclick = () => pubLoggedIn ? start() : showLogin();
+$("#btnPubView").onclick = () => showPublic(true);
 $("#btnBackPub").onclick = () => showPublic();
 $("#loginForm").addEventListener("submit", async e => {
   e.preventDefault(); $("#loginErr").textContent = "";
