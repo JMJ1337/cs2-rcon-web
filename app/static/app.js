@@ -205,10 +205,11 @@ function renderPublic(){
     const j = x.join || {};
     const meta = [x.mode ? esc(x.mode) : "", x.version ? "v" + esc(x.version) : ""].filter(Boolean).join(" · ");
     const thumb = MAP_GAMES.has(x.game) && x.online ? mapThumb({map: x.map, workshop: x.workshop, map_image: x.map_image, map_title: x.map_label}, x.game) : "";
-    return `<div class="pubcard${x.online || x.sleeping ? "" : " off"}" style="--gc:${g.color}" data-pub="${esc(x.id)}" tabindex="0" title="Details: Spieler, Rotation">
+    return `<div class="pubcard${x.online || x.sleeping || x.install ? "" : " off"}" style="--gc:${g.color}" data-pub="${esc(x.id)}" tabindex="0" title="Details: Spieler, Rotation">
       ${thumb ? `<div class="pubthumb">${thumb}<span class="pubmap">${esc(x.map_label || x.map || "")}</span></div>` : ""}
       <div class="pubtop">${gameTile(x.game, 18)}<div class="pubname"><b title="${esc(x.name)}">${esc(x.name)}</b><span class="hint">${esc(g.label)}</span></div>
-        <span class="pill ${x.online ? "ok" : ""}">${x.online ? `● ${x.players ?? 0}${x.max_players ? "/" + x.max_players : ""} Spieler` : x.sleeping ? "💤 schläft" : "offline"}</span></div>
+        <span class="pill ${x.online ? "ok" : ""}">${x.online ? `● ${x.players ?? 0}${x.max_players ? "/" + x.max_players : ""} Spieler` : x.sleeping ? "💤 schläft" : x.install ? "⬇ wird installiert" : "offline"}</span></div>
+      ${x.install ? `<div class="pubinst"><div class="bar"><i style="width:${Math.min(100, x.install.pct)}%"></i></div><span>${esc(x.install.label)} · ${Math.round(x.install.pct)} %${x.install.eta ? ` · fertig ca. ${etaClock(x.install.eta)} Uhr` : ""}</span></div>` : ""}
       ${x.sleeping ? `<div class="pubjoin"><button class="small primary" data-pwake="${esc(x.id)}">Aufwecken</button><span class="hint">Server ruht, weil niemand drauf war – startet in ${x.sleeping === "pause" ? "1–2 Sekunden" : "ca. 1–3 Minuten"}.</span></div>` : ""}
       ${x.map && x.map !== "–" && x.online ? `<div class="pubmapline">${esc(x.map_label || x.map)}</div>` : ""}
       ${meta ? `<div class="hint pubmeta">${meta}</div>` : ""}
@@ -2117,9 +2118,10 @@ async function renderHistory(){
 
 /* ================= Installation / Update / Fehler ================= */
 const fmtEta = s => s == null ? "" : s >= 3600 ? `${Math.floor(s/3600)} h ${Math.round(s%3600/60)} min` : s >= 60 ? `${Math.round(s/60)} min` : `${s} s`;
+const etaClock = s => s ? new Date(Date.now() + s * 1000).toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit"}) : "";
 function progressText(p){
   return `${p.label} · ${p.pct.toFixed(1)} % · ${fmtBytes(p.done)} / ${fmtBytes(p.total)}` +
-    (p.rate ? ` · ${fmtRate(p.rate)}` : "") + (p.eta ? ` · noch ${fmtEta(p.eta)}` : "");
+    (p.rate ? ` · ${fmtRate(p.rate)}` : "") + (p.eta ? ` · noch ${fmtEta(p.eta)} (fertig ca. ${etaClock(p.eta)} Uhr)` : "");
 }
 function installHtml(inst){
   if (!inst) return "";

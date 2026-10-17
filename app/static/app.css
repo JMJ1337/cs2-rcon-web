@@ -432,3 +432,7 @@ a.btn{display:inline-flex;align-items:center;gap:4px;text-decoration:none;border
 .pubcache{margin-left:10px;font-size:12px;color:var(--muted);white-space:nowrap}
 .pubcache .cdot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:5px;vertical-align:1px}
 .pubcache.off .cdot{background:var(--bad)}
+
+.pubinst{display:grid;gap:4px;font-size:12px;color:var(--muted)}
+.pubinst .bar{height:6px}
+.pubinst .bar i{background:var(--ct)}

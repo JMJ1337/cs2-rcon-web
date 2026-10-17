@@ -224,6 +224,14 @@ def _map_image(g: str, st: dict) -> str | None:
     return mapimages.image_for(g, st.get("map"), st.get("workshop"), track)
 
 
+def _public_install(s: dict) -> dict | None:
+    p = ((install_watch.state.get(s.get("container") or "") or {}).get("progress")) if s.get("container") else None
+    if not p:
+        return None
+    return {"label": p.get("label") or "Installation", "pct": round(p.get("pct") or 0, 1), "eta": p.get("eta"),
+            "phase": p.get("phase"), "total": p.get("total")}
+
+
 _rot_cache: dict[str, tuple[float, list]] = {}
 
 
@@ -283,7 +291,8 @@ async def public_servers(request: Request):
         except Exception:  # noqa: BLE001
             join = None
         out.append({"id": s["id"], "game": g, "name": st.get("hostname") or s.get("name") or g,
-                    "online": bool(st.get("online")), "sleeping": (_asleep.get(s["id"]) or {}).get("mode"), "players": st.get("humans"),
+                    "online": bool(st.get("online")), "sleeping": (_asleep.get(s["id"]) or {}).get("mode"),
+                    "install": _public_install(s), "players": st.get("humans"),
                     "max_players": st.get("max_players"), "map": st.get("map"),
                     "map_label": wfd.track_name(st.get("map")) if g == "wreckfest" else (mapimages.workshop_title(st.get("map")) or st.get("map")),
                     "map_image": _map_image(g, st),
