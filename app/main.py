@@ -609,7 +609,7 @@ async def _matchzy_info(s: dict) -> dict:
     """MatchZy-Erkennung (gecacht 5 Min.) + optional get5_status."""
     st = _state.setdefault(s["id"], {})
     mz = st.get("_matchzy")
-    if not mz or time.time() - mz["checked"] > 300:
+    if not mz or (time.time() - mz["checked"] > 300 and not mz.get("unloaded")):
         try:
             out = await client_for(s).execute("css_plugins list")
         except RconError:
@@ -618,8 +618,8 @@ async def _matchzy_info(s: dict) -> dict:
         mz = {"installed": bool(re.search(r"matchzy", out, re.I)), "version": m.group(1) if m else None,
               "checked": time.time()}
         st["_matchzy"] = mz
-    info = {"installed": mz["installed"], "version": mz["version"], "match": None}
-    if mz["installed"]:
+    info = {"installed": mz["installed"], "version": mz.get("version"), "match": None, "unloaded": bool(mz.get("unloaded"))}
+    if mz["installed"] and not mz.get("unloaded"):
         try:
             out = await client_for(s).execute("get5_status")
             j = out[out.find("{"):out.rfind("}") + 1] if "{" in out else ""
@@ -836,6 +836,86 @@ def _mode_hostname(s: dict, hostname: str | None, mode_label: str, settings: dic
     return re.sub(r'["\\;]', "", name).strip()[:63] or None
 
 
+_mz_off: dict[str, float] = {}          # Server -> MatchZy von uns entladen (Zeitpunkt)
+
+
+async def _auto_matchzy(s: dict, c, mode: dict | None) -> None:
+    """MatchZy nur in Competitive/Wingman: in anderen Modi stören Ready-System/Warmup – dann entladen, zurück wieder laden."""
+    key = (mode or {}).get("key")
+    if key is None:
+        return
+    comp = key in COMPETITIVE_MODES
+    if comp:
+        if s["id"] in _mz_off:
+            out = await c.execute("css_plugins load MatchZy")
+            _mz_off.pop(s["id"], None)
+            _state.get(s["id"], {}).pop("_matchzy", None)
+            log.info("%s: Wettkampfmodus – MatchZy geladen (%s)", s["name"], out.strip()[:80])
+        return
+    if s["id"] in _mz_off:
+        if _mz_off[s["id"]] > time.time():       # gerade für ein Match geladen
+            return
+        if not (_state.get(s["id"], {}).get("_matchzy") or {}).get("unloaded"):
+            _mz_off.pop(s["id"], None)           # wieder geladen (Match vorbei?) -> neu bewerten
+        else:
+            return
+    mz = await _matchzy_info(s)
+    if not mz.get("installed"):
+        return
+    state = ((mz.get("match") or {}).get("state") or "none").lower()
+    if state not in ("none", "pre_veto", ""):
+        return                                    # laufendes Match nie unterbrechen
+    await c.execute("css_plugins unload MatchZy")
+    _mz_off[s["id"]] = time.time()
+    st = _state.setdefault(s["id"], {})
+    st["_matchzy"] = {**(st.get("_matchzy") or {}), "installed": True, "unloaded": True, "checked": time.time()}
+    log.info("%s: Modus %s – MatchZy entladen", s["name"], key)
+
+
+async def ensure_matchzy(s: dict) -> None:
+    """Vor einem Match MatchZy laden, falls wir es im Freizeit-Modus entladen hatten."""
+    if s["id"] in _mz_off:
+        try:
+            await client_for(s).execute("css_plugins load MatchZy")
+        except RconError:
+            pass
+        _mz_off[s["id"]] = time.time() + 3600      # eine Stunde lang nicht wieder entladen (Match läuft an)
+        _state.get(s["id"], {}).pop("_matchzy", None)
+        await asyncio.sleep(2)
+
+
+_bots_set: dict[str, int] = {}          # Server -> von uns gesetzte bot_quota
+COMPETITIVE_MODES = {"competitive", "wingman", "premier"}
+
+
+async def _auto_bots(s: dict, c, st: dict, cv: dict, mode: dict | None, slots: int | None) -> str | None:
+    """Nicht-kompetitive Modi: Ist nur ein Spieler da, mit Bots auffüllen; ab dem zweiten Spieler wieder entfernen."""
+    humans = st.get("humans") or 0
+    key = (mode or {}).get("key")
+    try:
+        quota = int(float(cv.get("bot_quota") or 0))
+    except ValueError:
+        quota = 0
+    if key in COMPETITIVE_MODES or key is None:
+        if s["id"] in _bots_set and quota:
+            await c.execute("bot_quota 0; bot_kick")
+            _bots_set.pop(s["id"], None)
+            return "Wettkampfmodus – Bots entfernt"
+        return None
+    want = max(2, min(int(slots or 10), 10)) if humans == 1 else 0
+    if want and quota != want:
+        await c.execute(f"bot_quota_mode fill; bot_quota {want}; bot_difficulty 2")
+        _bots_set[s["id"]] = want
+        log.info("%s: allein auf dem Server – mit Bots auf %s aufgefüllt", s["name"], want)
+        return f"Mit Bots auf {want} aufgefüllt (nur 1 Spieler)"
+    if not want and s["id"] in _bots_set and quota:
+        await c.execute("bot_quota 0; bot_kick")
+        _bots_set.pop(s["id"], None)
+        log.info("%s: %s Spieler – Bots entfernt", s["name"], humans)
+        return "Bots entfernt"
+    return f"Bots aktiv ({quota})" if s["id"] in _bots_set and quota else None
+
+
 async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = False) -> dict:
     """Status + wichtige Cvars lesen, optional Spieleranzahl automatisch setzen."""
     if game_of(s) != "cs2":
@@ -857,6 +937,14 @@ async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = 
         await c.execute(f"sv_visiblemaxplayers {target}")
         applied, visible = target, target
         log.info("%s: sv_visiblemaxplayers %s (%s)", s["name"], target, reason)
+    bots_auto = None
+    if apply_auto and settings.get("auto_matchzy", True):
+        try:
+            await _auto_matchzy(s, c, mode)
+        except RconError:
+            pass
+    if apply_auto and s.get("auto_bots", True) and settings.get("auto_bots", True):
+        bots_auto = await _auto_bots(s, c, st, cv, mode, target or visible)
     ws = _last_workshop.get(s["id"])
     base = automation.map_basename(st["map"])
     if ws:
@@ -876,7 +964,7 @@ async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = 
         "game_type": cv["game_type"], "game_mode": cv["game_mode"],
         "visible_players": visible, "maxrounds": cv["mp_maxrounds"],
         "password_set": bool(cv["sv_password"]), "join_password": cv["sv_password"] or "", "bot_quota": cv["bot_quota"],
-        "auto": {"enabled": auto_on, "target": target, "reason": reason, "capped": capped, "applied": applied},
+        "auto": {"enabled": auto_on, "target": target, "reason": reason, "capped": capped, "applied": applied, "bots": bots_auto},
         "join": join_info(s, cv["sv_password"] or None),
         "workshop": ws,
         "updated": time.time(),
@@ -1950,6 +2038,8 @@ class SettingsIn(BaseModel):
     hostname_pattern: str | None = Field(None, max_length=60)
     names_pattern: str | None = Field(None, max_length=60)
     internet_host: str | None = Field(None, max_length=120)
+    auto_bots: bool | None = None
+    auto_matchzy: bool | None = None
     container_dns: str | None = Field(None, max_length=100)
 
 
@@ -2150,6 +2240,7 @@ class PugIn(BaseModel):
 async def pug_start(sid: str, data: PugIn):
     """MatchZy ohne Teamliste: jeder darf joinen, Start sobald genug Spieler .ready sind."""
     s = get_server(sid)
+    await ensure_matchzy(s)
     p = MATCH_PRESETS.get(data.preset)
     if not p:
         raise HTTPException(400, "Unbekanntes Preset")
@@ -2228,6 +2319,7 @@ async def match_preview(sid: str, data: MatchIn):
 @app.post("/api/servers/{sid}/match", dependencies=auth)
 async def match_start(sid: str, data: MatchIn, request: Request):
     s = get_server(sid)
+    await ensure_matchzy(s)
     cfg = build_match(data)
     token = secrets.token_urlsafe(12)
     store.save(f"matches/{token}.json", cfg)
@@ -2255,6 +2347,7 @@ async def list_matches():
 @app.post("/api/matches/{token}/reload/{sid}", dependencies=auth)
 async def match_reload(token: str, sid: str):
     s = get_server(sid)
+    await ensure_matchzy(s)
     m = next((x for x in store.load("matches.json", []) if x["token"] == token), None)
     if not m:
         raise HTTPException(404, "Match nicht gefunden")

@@ -807,7 +807,7 @@ async function refreshDash(){
   $("#dashGrid").innerHTML = byGame.map(([g, items]) => `<div class="dsect"><h3 class="dhead">${gameTile(g, 16)}${esc(GAMES[g].label)} <span class="hint">${items.filter(o => o.online).length}/${items.length} online</span></h3><div class="dash">` + items.map(o => {
     const s = o.server, slots = o.visible_players > 0 ? o.visible_players : (o.max_players || 0);
     const pct = slots ? Math.min(100, Math.round((o.humans||0) / slots * 100)) : 0;
-    const mz = o.matchzy && o.matchzy.match ? `${esc(o.matchzy.match.team1||"")} vs ${esc(o.matchzy.match.team2||"")} · ${esc(o.matchzy.match.state||"")}` : (o.matchzy && o.matchzy.installed ? "kein Match geladen" : "–");
+    const mz = o.matchzy && o.matchzy.match ? `${esc(o.matchzy.match.team1||"")} vs ${esc(o.matchzy.match.team2||"")} · ${esc(o.matchzy.match.state||"")}` : (o.matchzy && o.matchzy.unloaded ? "aus (Freizeitmodus)" : o.matchzy && o.matchzy.installed ? "kein Match geladen" : "–");
     return `<div class="dcard" data-id="${esc(s.id)}">
       <div class="top">${gameLogo(gameOf(s))}${led(o)}<b>${esc(s.name)}</b>${o.online && o.join ? (o.join.url ? `<a class="joinbtn" href="${esc(o.join.url)}" title="Beitreten: ${esc(o.join.address)}" data-stop>▶ Beitreten</a>` : `<span class="joinbtn" data-copy="${esc(o.join.address)}" title="${esc(o.join.hint)}">⧉ ${esc(o.join.address)}</span>`) : `<span class="hint mono">${esc(s.host)}:${esc(s.port)}</span>`}</div>
       ${o.online ? `<div class="dbody">${mapThumb(o, gameOf(s))}` + (gameOf(s) === "cs2" ? `
@@ -934,10 +934,10 @@ async function refreshStatus(){
     $("#stPlayers").textContent = `${st.humans ?? st.players.length} / ${slots ?? "?"}` + (st.bots ? ` +${st.bots}` : "");
     const a = st.auto || {};
     $("#stAuto").textContent = !a.enabled ? `Automatik aus · max. ${st.max_players}` :
-      a.target ? `Auto: ${a.target} Slots (${a.reason})${a.capped ? " – begrenzt durch SLOTS" : ""}` : `Auto: ${a.reason}`;
+      (a.target ? `Auto: ${a.target} Slots (${a.reason})${a.capped ? " – begrenzt durch SLOTS" : ""}` : `Auto: ${a.reason}`) + (a.bots ? ` · ${a.bots}` : "");
     $("#stAuto").style.color = a.capped ? "var(--accent)" : "";
     const mz = st.matchzy || {};
-    $("#stMz").textContent = mz.installed ? (mz.match ? `${mz.match.team1 || "?"} vs ${mz.match.team2 || "?"}` : "bereit") : "nicht erkannt";
+    $("#stMz").textContent = mz.unloaded ? "aus (Freizeitmodus)" : mz.installed ? (mz.match ? `${mz.match.team1 || "?"} vs ${mz.match.team2 || "?"}` : "bereit") : "nicht erkannt";
     $("#stMzSub").textContent = mz.installed ? (mz.match ? `Status: ${mz.match.state || "?"}${mz.match.score1 != null ? ` · ${mz.match.score1}:${mz.match.score2}` : ""}` : (mz.version ? "v" + mz.version : "kein Match geladen")) : "";
     $("#stHost").textContent = `${st.hostname || ""} · max. ${st.max_players ?? "?"} Slots (Stack) · Bots: ${st.bot_quota ?? "?"}`;
     renderPlayers(st.players);
@@ -1407,6 +1407,7 @@ function renderAuto(){
   $("#setHostnamePattern").value = settings.hostname_pattern ?? "CS #{nr} {mode}";
   $("#setNamesPattern").value = settings.names_pattern ?? "{game} #{nr} {mode}";
   $("#setInternetHost").value = settings.internet_host || "";
+  $("#setAutoBots").checked = settings.auto_bots !== false; $("#setAutoMz").checked = settings.auto_matchzy !== false;
   $("#setContainerDns").value = settings.container_dns || "";
   $$("[data-mdel]").forEach(b => b.onclick = () => { readAuto(); settings.modes.splice(+b.dataset.mdel, 1); renderAuto(); });
   $$("[data-rdel]").forEach(b => b.onclick = () => { readAuto(); settings.map_rules.splice(+b.dataset.rdel, 1); renderAuto(); });
@@ -1425,7 +1426,7 @@ $("#btnAutoSave").onclick = async () => {
       public_url: $("#setPublicUrl").value.trim(), watch_interval: parseInt($("#setInterval").value, 10) || 10,
       scan_interval: Math.max(0, parseInt($("#setScanInterval").value, 10) || 0), scan_subnets: $("#setScanSubnets").value.trim(),
       games_base: $("#setGamesBase").value.trim(), cache_container: $("#setCacheContainer").value.trim(),
-      hostname_pattern: $("#setHostnamePattern").value.trim(), names_pattern: $("#setNamesPattern").value.trim(), internet_host: $("#setInternetHost").value.trim(), container_dns: $("#setContainerDns").value.trim()}});
+      hostname_pattern: $("#setHostnamePattern").value.trim(), names_pattern: $("#setNamesPattern").value.trim(), internet_host: $("#setInternetHost").value.trim(), auto_bots: $("#setAutoBots").checked, auto_matchzy: $("#setAutoMz").checked, container_dns: $("#setContainerDns").value.trim()}});
     renderAuto(); refreshModeSelects(); toast("Gespeichert – wird beim nächsten Prüfen angewendet");
   } catch(err){ toast(err.message, true); }
 };

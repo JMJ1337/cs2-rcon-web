@@ -39,6 +39,8 @@ DEFAULT_SETTINGS = {
     "hostname_pattern": "CS #{nr} {mode}",       # CS2-Servername nach Modus (leer = aus)
     "names_pattern": "{game} #{nr} {mode}",      # alle anderen Spiele, z. B. „TF2 #1 Payload“, „Valheim #1“ (leer = aus)
     "container_dns": "",        # DNS für neue Spielserver-Container (leer = Lancache-DNS automatisch)
+    "auto_bots": True,          # CS2: allein auf dem Server -> Bots (nicht in Competitive/Wingman)
+    "auto_matchzy": True,       # CS2: MatchZy nur in Competitive/Wingman geladen
 }
 
 
@@ -58,7 +60,7 @@ def get_settings() -> dict:
 def save_settings(data: dict) -> dict:
     cur = get_settings()
     for k in ("modes", "map_rules", "public_url", "internet_host", "watch_interval", "scan_interval", "scan_subnets",
-              "games_base", "cache_container", "hostname_pattern", "names_pattern", "container_dns"):
+              "games_base", "cache_container", "hostname_pattern", "names_pattern", "container_dns", "auto_bots", "auto_matchzy"):
         if k in data:
             cur[k] = data[k]
     store.save(SETTINGS_FILE, cur)
