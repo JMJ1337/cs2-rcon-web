@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import automation, cache_history, depots, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
+from . import automation, cache_history, configfiles, depots, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
 from .games import minecraft as mcmod
@@ -104,7 +104,7 @@ def require_auth(request: Request):
         raise HTTPException(403, "Nur Ansicht – keine Berechtigung für Änderungen")
     admin_only = (path.startswith(ADMIN_PATHS) and not (path == "/api/settings" and method == "GET")) or \
         (method in ("POST", "PUT", "DELETE") and re.fullmatch(r"/api/servers(/[\w-]+)?", path)) or \
-        re.fullmatch(r"/api/servers/[\w-]+/(delete(-preview)?|container/(diag|use-lancache|steamfix|env)|wreckfest/.*)", path)
+        re.fullmatch(r"/api/servers/[\w-]+/(delete(-preview)?|container/(diag|use-lancache|steamfix|env)|wreckfest/.*|config(/file)?|satisfactory/options)", path)
     if admin_only and level < 3:
         raise HTTPException(403, "Nur für Administratoren")
     request.state.user = u
@@ -1937,44 +1937,173 @@ async def container_steamfix(sid: str):
     return {"ok": code == 0, "output": out[-2000:]}
 
 
+ENV_KEYS = {
+    "_ich777": [("GAME_PARAMS", "Startparameter"), ("VALIDATE", "Dateien beim Start prüfen (true/leer)")],
+    "valheim": [("SERVER_NAME", "Servername"), ("SERVER_PASS", "Passwort (min. 5 Zeichen)"), ("WORLD_NAME", "Welt"),
+                ("SERVER_PUBLIC", "Öffentlich gelistet (true/false)"), ("SERVER_ARGS", "Zusätzliche Argumente (z. B. -crossplay -preset casual)"),
+                ("BACKUPS_MAX_COUNT", "Anzahl Backups")],
+    "minecraft": [("MOTD", "Servername (MOTD)"), ("MAX_PLAYERS", "Max. Spieler"), ("MEMORY", "Arbeitsspeicher (z. B. 6G)"),
+                  ("VERSION", "Version (LATEST oder z. B. 1.21.4)"), ("TYPE", "Typ (PAPER, VANILLA, FABRIC, FORGE …)"),
+                  ("DIFFICULTY", "Schwierigkeit"), ("MODE", "Spielmodus"), ("OPS", "Operatoren (kommagetrennt)"),
+                  ("ONLINE_MODE", "online-mode (TRUE/FALSE)"), ("VIEW_DISTANCE", "Sichtweite")],
+    "tf2": [("SRCDS_MAXPLAYERS", "Max. Spieler"), ("SRCDS_STARTMAP", "Startmap"), ("SRCDS_PW", "Server-Passwort"),
+            ("SRCDS_TOKEN", "Steam-Token (GSLT)"), ("SRCDS_TICKRATE", "Tickrate"), ("SRCDS_FPSMAX", "Max. FPS")],
+    "teamspeak": [("TS3SERVER_DEFAULT_VOICE_PORT", "Sprach-Port")],
+    "factorio": [("SAVE_NAME", "Spielstand"), ("LOAD_LATEST_SAVE", "Letzten Spielstand laden (true/false)")],
+    "satisfactory": [("MAXPLAYERS", "Max. Spieler"), ("AUTOSAVENUM", "Anzahl Autosaves"), ("SKIPUPDATE", "Updates überspringen (true/false)")],
+    "enshrouded": [("SERVER_NAME", "Servername"), ("SERVER_PASSWORD", "Passwort"), ("SERVER_SLOTS", "Max. Spieler")],
+    "projectzomboid": [("SRV_NAME", "Servername"), ("ADMIN_PWD", "Admin-Passwort")],
+    "vrising": [("SERVER_NAME", "Servername"), ("WORLD_NAME", "Welt")],
+    "dontstarve": [("CLUSTER_TOKEN", "Klei-Server-Token")],
+}
+
+
+def _env_keys(game: str, env: list[str]) -> list[tuple[str, str]]:
+    keys = list(ENV_KEYS.get(game, []))
+    if any(e.startswith("GAME_ID=") for e in env):
+        keys = keys + [k for k in ENV_KEYS["_ich777"] if k[0] not in {x[0] for x in keys}]
+    return keys
+
+
 class EnvIn(BaseModel):
-    key: str = Field(pattern=r"^[A-Z_][A-Z0-9_]{0,40}$")
-    value: str = Field("", max_length=500)
+    env: dict[str, str]
 
 
 @app.post("/api/servers/{sid}/container/env", dependencies=auth)
 async def container_set_env(sid: str, data: EnvIn):
-    """Eine Umgebungsvariable (z. B. GAME_PARAMS) ändern – Container wird mit gleichen Daten neu erstellt."""
+    """Umgebungsvariablen ändern – Container wird mit gleichen Daten neu erstellt (nur vom Tool angelegte Container)."""
+    s = get_server(sid)
     name = _container_of(sid)
     try:
         info = await docker_api.inspect(name)
         if ((info.get("Config") or {}).get("Labels") or {}).get("gsm.managed") != "1":
-            raise HTTPException(400, "Nur für Container, die dieses Tool angelegt hat")
+            raise HTTPException(400, "Nur für Container, die dieses Tool angelegt hat – sonst im Portainer-Stack ändern")
+        allowed = {k for k, _ in _env_keys(game_of(s), (info.get("Config") or {}).get("Env") or [])}
+        changes = {k: str(v)[:500].replace("\n", " ") for k, v in data.env.items() if k in allowed}
+        if not changes:
+            return {"ok": True, "changed": 0}
 
         def mutate(cfg, hc):
-            env = [e for e in (cfg.get("Env") or []) if not e.startswith(data.key + "=")]
-            env.append(f"{data.key}={data.value}")
+            env = [e for e in (cfg.get("Env") or []) if e.split("=", 1)[0] not in changes]
+            env += [f"{k}={v}" for k, v in changes.items()]
             cfg["Env"] = env
         await docker_api.recreate(name, mutate)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    drop_client(sid)
+    return {"ok": True, "changed": len(changes)}
+
+
+@app.get("/api/servers/{sid}/container/env", dependencies=auth)
+async def container_get_env(sid: str):
+    s = get_server(sid)
+    name = _container_of(sid)
+    try:
+        info = await docker_api.inspect(name)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    envl = (info.get("Config") or {}).get("Env") or []
+    cur = dict(e.split("=", 1) for e in envl if "=" in e)
+    keys = _env_keys(game_of(s), envl)
+    return {"fields": [{"key": k, "label": lbl, "value": cur.get(k, ""), "present": k in cur} for k, lbl in keys],
+            "env": {k: cur[k] for k in ("GAME_PARAMS", "GAME_ID", "VALIDATE") if k in cur},
+            "managed": ((info.get("Config") or {}).get("Labels") or {}).get("gsm.managed") == "1"}
+
+
+# ---------------------------------------------------------------- Konfigurationsdateien
+@app.get("/api/servers/{sid}/config", dependencies=auth)
+async def config_list(sid: str):
+    s = get_server(sid)
+    return {"files": [{"path": f["path"], "label": f["label"], "fmt": f["fmt"], "form": bool(f.get("fields")),
+                       "fields": f.get("fields") or []} for f in configfiles.files_for(game_of(s))],
+            "container": bool(s.get("container"))}
+
+
+@app.get("/api/servers/{sid}/config/file", dependencies=auth)
+async def config_read(sid: str, path: str):
+    s = get_server(sid)
+    try:
+        return await configfiles.read(_container_of(sid), game_of(s), path)
+    except configfiles.ConfigError as e:
+        raise HTTPException(400, str(e))
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+
+
+class ConfigWrite(BaseModel):
+    path: str
+    content: str | None = None
+    values: dict | None = None
+    restart: bool = False
+
+
+@app.put("/api/servers/{sid}/config/file", dependencies=auth)
+async def config_write(sid: str, data: ConfigWrite):
+    s = get_server(sid)
+    name = _container_of(sid)
+    g = game_of(s)
+    try:
+        content = data.content
+        if data.values is not None:
+            cur = await configfiles.read(name, g, data.path)
+            content = configfiles.apply(cur["spec"], cur["content"], data.values)
+        if content is None:
+            raise HTTPException(400, "Nichts zu speichern")
+        await configfiles.write(name, g, data.path, content)
+        if data.restart:
+            await docker_api.action(name, "restart")
+    except configfiles.ConfigError as e:
+        raise HTTPException(400, str(e))
     except docker_api.DockerError as e:
         raise HTTPException(502, str(e))
     drop_client(sid)
     return {"ok": True}
 
 
-@app.get("/api/servers/{sid}/container/env", dependencies=auth)
-async def container_get_env(sid: str):
-    name = _container_of(sid)
+# ---------------------------------------------------------------- Satisfactory-Optionen (offizielle API)
+SF_OPTS = [("FG.DSAutoPause", "Pausieren ohne Spieler", "bool"), ("FG.DSAutoSaveOnDisconnect", "Speichern, wenn jemand geht", "bool"),
+           ("FG.AutosaveInterval", "Autosave alle (s)", "number"), ("FG.ServerRestartTimeSlot", "Täglicher Neustart (Min. nach Mitternacht)", "number"),
+           ("FG.NetworkQuality", "Netzwerkqualität (0–3)", "number"), ("FG.SendGameplayData", "Spieldaten an Coffee Stain senden", "bool")]
+
+
+@app.get("/api/servers/{sid}/satisfactory/options", dependencies=auth)
+async def sf_options(sid: str):
+    s = get_server(sid)
+    if game_of(s) != "satisfactory":
+        raise HTTPException(400, "Nur für Satisfactory")
     try:
-        info = await docker_api.inspect(name)
-    except docker_api.DockerError as e:
+        c = sf_client(s)
+        d = await c.call("GetServerOptions")
+        st = await c.call("QueryServerState")
+    except sfmod.SatisfactoryError as e:
         raise HTTPException(502, str(e))
-    env = {}
-    for e in (info.get("Config") or {}).get("Env") or []:
-        k, _, v = e.partition("=")
-        if k in ("GAME_PARAMS", "GAME_ID", "VALIDATE"):
-            env[k] = v
-    return {"env": env, "managed": ((info.get("Config") or {}).get("Labels") or {}).get("gsm.managed") == "1"}
+    opts = (d or {}).get("serverOptions") or {}
+    gs = (st or {}).get("serverGameState") or {}
+    return {"fields": [{"key": k, "label": l, "type": t, "value": opts.get(k)} for k, l, t in SF_OPTS],
+            "session": gs.get("activeSessionName"), "name": s.get("name")}
+
+
+class SfOptsIn(BaseModel):
+    options: dict[str, str] = {}
+    server_name: str | None = Field(None, max_length=64)
+    client_password: str | None = Field(None, max_length=64)
+
+
+@app.put("/api/servers/{sid}/satisfactory/options", dependencies=auth)
+async def sf_options_put(sid: str, data: SfOptsIn):
+    s = get_server(sid)
+    try:
+        c = sf_client(s)
+        opts = {k: str(v) for k, v in data.options.items() if k in {o[0] for o in SF_OPTS}}
+        if opts:
+            await c.call("ApplyServerOptions", {"UpdatedServerOptions": opts})
+        if data.server_name:
+            await c.call("RenameServer", {"ServerName": data.server_name})
+        if data.client_password is not None:
+            await c.call("SetClientPassword", {"Password": data.client_password})
+    except sfmod.SatisfactoryError as e:
+        raise HTTPException(502, str(e))
+    return {"ok": True}
 
 
 @app.get("/api/servers/{sid}/container/logs", dependencies=auth)

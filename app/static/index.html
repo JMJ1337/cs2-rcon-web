@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=40">
+<link rel="stylesheet" href="/static/app.css?v=41">
 </head>
 <body>
 
@@ -295,6 +295,7 @@
           <button data-tab="match" class="cs2only">Wettkampf</button>
           <button data-tab="console">Konsole</button>
           <button data-tab="settings" class="srconly">Einstellungen</button>
+          <button data-tab="config" class="needcontainer adminonly">Konfiguration</button>
           <button data-tab="container" class="needcontainer">Container</button>
           <button id="btnJoin" class="primary hidden" title="Spiel starten und mit diesem Server verbinden">▶ Beitreten</button>
           <button id="btnCopyAddr" class="hidden" title="Adresse kopieren">⧉ <span id="joinAddr"></span></button>
@@ -467,6 +468,29 @@
       </div>
 
       <!-- Container -->
+      <div class="content hidden" id="tab-config">
+        <div class="panel hidden" id="cfgSf">
+          <h2>Satisfactory-Einstellungen <span class="hint">über die offizielle Server-API, sofort aktiv</span></h2>
+          <div class="cfggrid" id="cfgSfFields"></div>
+          <div class="row" style="margin-top:10px"><button class="primary" id="btnSfSave">Übernehmen</button></div>
+        </div>
+        <div class="panel hidden" id="cfgEnv">
+          <h2>Server-Einstellungen <span class="hint" id="cfgEnvHint"></span></h2>
+          <div class="cfggrid" id="cfgEnvFields"></div>
+          <div class="row" style="margin-top:10px"><button class="primary" id="btnEnvSave">Übernehmen &amp; Container neu erstellen</button></div>
+        </div>
+        <div class="panel" id="cfgFilesPanel">
+          <h2>Konfigurationsdateien</h2>
+          <div class="row" style="margin-bottom:10px"><select id="cfgFile" style="flex:1"></select><button id="btnCfgReload">Neu laden</button></div>
+          <div id="cfgForm"></div>
+          <details id="cfgRaw" style="margin-top:10px"><summary class="hint" style="cursor:pointer">Datei direkt bearbeiten</summary>
+            <textarea id="cfgText" class="mono" spellcheck="false" style="width:100%;min-height:320px;margin-top:8px"></textarea>
+            <div class="row" style="margin-top:8px"><button id="btnCfgSaveRaw">Datei speichern</button><button class="primary" id="btnCfgSaveRawRestart">Speichern &amp; Server neu starten</button></div>
+          </details>
+          <div class="hint" id="cfgHint" style="margin-top:8px"></div>
+        </div>
+      </div>
+
       <div class="content hidden" id="tab-container">
         <div class="cards">
           <div class="card"><div class="k">Container</div><div class="v" id="ctName" style="font-size:16px">–</div><div class="s" id="ctImage"></div></div>
@@ -610,6 +634,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=40"></script>
+<script src="/static/app.js?v=41"></script>
 </body>
 </html>

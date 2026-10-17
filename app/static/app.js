@@ -693,7 +693,8 @@ $$("#tabs [data-tab]").forEach(b => b.onclick = () => setTab(b.dataset.tab));
 function setTab(t){
   tab = t;
   $$("#tabs [data-tab]").forEach(b => b.classList.toggle("active", b.dataset.tab===t));
-  ["overview","maps","match","console","settings","container"].forEach(x => $("#tab-"+x).classList.toggle("hidden", x!==t));
+  ["overview","maps","match","console","settings","container","config"].forEach(x => $("#tab-"+x).classList.toggle("hidden", x!==t));
+  if (t === "config") loadConfigTab();
   stopPoll(); stopCt();
   if (t === "container"){ refreshContainer(); ctTimer = setInterval(refreshContainer, 5000); }
   if (t === "overview"){ refreshStatus(); pollTimer = setInterval(refreshStatus, 5000); }
@@ -2070,7 +2071,88 @@ $("#btnSteamFix").onclick = async () => {
 };
 $("#btnCtParams").onclick = async () => {
   if (!confirm("Container mit neuen Startparametern neu erstellen?")) return;
-  try { await api(`/api/servers/${current.id}/container/env`, {body: {key: "GAME_PARAMS", value: $("#ctParams").value.trim()}}); toast("Übernommen – Server startet neu"); }
+  try { await api(`/api/servers/${current.id}/container/env`, {body: {env: {GAME_PARAMS: $("#ctParams").value.trim()}}}); toast("Übernommen – Server startet neu"); }
   catch (e) { toast(e.message, true); }
 };
 setInterval(() => { if (view === "server" && current && tab === "container") loadCtEnv(); else if (!current || ctEnvFor !== (current && current.id)) ctEnvFor = null; }, 1500);
+
+/* ================= Konfiguration (Umgebung, Dateien, Satisfactory-API) ================= */
+let cfgFiles = [], cfgCur = null;
+function cfgInput(f, v, attr){
+  const [key, label, type, opts] = f;
+  if (type === "bool") return `<div class="chk"><input type="checkbox" ${attr}="${esc(key)}" ${v === true || v === "true" || v === "1" || v === 1 ? "checked" : ""}><span>${esc(label)}</span></div>`;
+  if (type === "select") return `<div><label>${esc(label)}</label><select ${attr}="${esc(key)}">${opts.map(o => `<option ${String(v) === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></div>`;
+  return `<div><label>${esc(label)}</label><input ${attr}="${esc(key)}" value="${esc(v ?? "")}" ${type === "number" ? 'inputmode="decimal"' : ""} spellcheck="false"></div>`;
+}
+const readInputs = attr => { const o = {}; $$(`[${attr}]`).forEach(el => o[el.getAttribute(attr)] = el.type === "checkbox" ? el.checked : el.value); return o; };
+async function loadConfigTab(){
+  if (!current) return;
+  const sid = current.id, g = gameOf(current);
+  // Satisfactory-API
+  $("#cfgSf").classList.toggle("hidden", g !== "satisfactory");
+  if (g === "satisfactory"){
+    try {
+      const r = await api(`/api/servers/${sid}/satisfactory/options`);
+      $("#cfgSfFields").innerHTML = cfgInput(["_name", "Servername", "text"], r.name, "data-sf") + cfgInput(["_pw", "Spieler-Passwort (leer lassen = unverändert)", "text"], "", "data-sf")
+        + r.fields.map(f => cfgInput([f.key, f.label, f.type], f.value, "data-sf")).join("");
+    } catch (e) { $("#cfgSfFields").innerHTML = `<div class="hint">${esc(e.message)}</div>`; }
+  }
+  // Umgebungsvariablen
+  try {
+    const r = await api(`/api/servers/${sid}/container/env`);
+    const fields = r.fields.filter(f => f.present || r.managed);
+    $("#cfgEnv").classList.toggle("hidden", !fields.length);
+    $("#cfgEnvHint").textContent = r.managed ? "Container wird beim Übernehmen mit denselben Daten neu erstellt" : "nur lesbar – Container gehört zu einem Portainer-Stack, dort ändern";
+    $("#cfgEnvFields").innerHTML = fields.map(f => cfgInput([f.key, f.label, "text"], f.value, "data-env")).join("");
+    $$("[data-env]").forEach(el => el.disabled = !r.managed);
+    $("#btnEnvSave").classList.toggle("hidden", !r.managed);
+  } catch { $("#cfgEnv").classList.add("hidden"); }
+  // Dateien
+  try {
+    const r = await api(`/api/servers/${sid}/config`);
+    cfgFiles = r.files;
+    $("#cfgFilesPanel").classList.toggle("hidden", !cfgFiles.length);
+    $("#cfgFile").innerHTML = cfgFiles.map((f, i) => `<option value="${i}">${esc(f.label)}${f.form ? " – Formular" : ""}</option>`).join("");
+    if (cfgFiles.length) await loadCfgFile();
+  } catch (e) { $("#cfgHint").textContent = e.message; }
+}
+async function loadCfgFile(){
+  const f = cfgFiles[+$("#cfgFile").value || 0]; if (!f) return;
+  $("#cfgHint").textContent = "wird gelesen …"; $("#cfgForm").innerHTML = "";
+  try {
+    const r = await api(`/api/servers/${current.id}/config/file?path=${encodeURIComponent(f.path)}`);
+    cfgCur = {f, r};
+    $("#cfgText").value = r.content || "";
+    $("#cfgHint").innerHTML = r.exists ? `<span class="mono">${esc(f.path)}</span> · Vor jedem Speichern wird eine Sicherung <span class="mono">.bak</span> angelegt.` : `Datei gibt es noch nicht (<span class="mono">${esc(f.path)}</span>) – entsteht meist beim ersten Start. Du kannst sie hier anlegen.`;
+    $("#cfgRaw").open = !f.form;
+    if (f.form && r.exists){
+      $("#cfgForm").innerHTML = `<div class="cfggrid">${f.fields.map(x => cfgInput(x, r.values[x[0]], "data-cf2")).join("")}</div>
+        <div class="row" style="margin-top:10px"><button id="btnCfgForm">Speichern</button><button class="primary" id="btnCfgFormRestart">Speichern &amp; Server neu starten</button></div>`;
+      $("#btnCfgForm").onclick = () => saveCfgForm(false);
+      $("#btnCfgFormRestart").onclick = () => saveCfgForm(true);
+    }
+  } catch (e) { $("#cfgHint").textContent = e.message; }
+}
+async function saveCfgForm(restart){
+  try { await api(`/api/servers/${current.id}/config/file`, {method: "PUT", body: {path: cfgCur.f.path, values: readInputs("data-cf2"), restart}}); toast(restart ? "Gespeichert – Server startet neu" : "Gespeichert (wirkt nach Neustart)"); loadCfgFile(); }
+  catch (e) { toast(e.message, true); }
+}
+async function saveCfgRaw(restart){
+  try { await api(`/api/servers/${current.id}/config/file`, {method: "PUT", body: {path: cfgCur.f.path, content: $("#cfgText").value, restart}}); toast(restart ? "Gespeichert – Server startet neu" : "Gespeichert"); loadCfgFile(); }
+  catch (e) { toast(e.message, true); }
+}
+$("#cfgFile").onchange = loadCfgFile;
+$("#btnCfgReload").onclick = loadCfgFile;
+$("#btnCfgSaveRaw").onclick = () => saveCfgRaw(false);
+$("#btnCfgSaveRawRestart").onclick = () => saveCfgRaw(true);
+$("#btnEnvSave").onclick = async () => {
+  if (!confirm("Container mit den neuen Einstellungen neu erstellen? (Daten bleiben erhalten)")) return;
+  try { const r = await api(`/api/servers/${current.id}/container/env`, {body: {env: readInputs("data-env")}}); toast(r.changed ? "Übernommen – Server startet neu" : "Keine Änderung"); }
+  catch (e) { toast(e.message, true); }
+};
+$("#btnSfSave").onclick = async () => {
+  const v = readInputs("data-sf"), options = {};
+  Object.entries(v).forEach(([k, x]) => { if (!k.startsWith("_")) options[k] = typeof x === "boolean" ? (x ? "True" : "False") : x; });
+  try { await api(`/api/servers/${current.id}/satisfactory/options`, {method: "PUT", body: {options, server_name: v._name || null, client_password: v._pw ? v._pw : null}}); toast("Übernommen"); loadConfigTab(); }
+  catch (e) { toast(e.message, true); }
+};

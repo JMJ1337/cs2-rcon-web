@@ -100,9 +100,11 @@ async def stats(name: str) -> dict:
             "mem_limit_mb": round(mem.get("limit", 0) / 1048576) or None, "net_rx": rx, "net_tx": tx}
 
 
-async def exec_cmd(name: str, cmd: list[str], timeout: float = 30) -> str:
-    e = (await _req("POST", f"/containers/{name}/exec",
-                    json={"Cmd": cmd, "AttachStdout": True, "AttachStderr": True, "Tty": False})).json()
+async def exec_cmd(name: str, cmd: list[str], timeout: float = 30, user: str = "") -> str:
+    body = {"Cmd": cmd, "AttachStdout": True, "AttachStderr": True, "Tty": False}
+    if user:
+        body["User"] = user
+    e = (await _req("POST", f"/containers/{name}/exec", json=body)).json()
     r = await _req("POST", f"/exec/{e['Id']}/start", json={"Detach": False, "Tty": False}, timeout=timeout)
     return _demux(r.content)
 
