@@ -157,7 +157,7 @@ CATALOG.update({
                 "+maxplayers 24 +map dod_avalanche +sv_lan 1", 27073),
     "dods": _src("Day of Defeat: Source", "DoD:S", "#7d8b3f", 300, "dods", "232290", "+maxplayers 24 +map dod_avalanche +sv_lan 1", 27074),
     "tfc": _src("Team Fortress Classic", "TFC", "#b5562b", 20, "tf", "90 +app_set_config '90 mod tfc'", "+maxplayers 24 +map 2fort +sv_lan 1", 27075),
-    "hldm": _src("Half-Life Deathmatch", "HLDM", "#e07b1a", 70, "hl", "90", "+maxplayers 16 +map crossfire +sv_lan 1", 27076),
+    "hldm": _src("Half-Life Deathmatch", "HLDM", "#e07b1a", 70, "hldm", "90", "+maxplayers 16 +map crossfire +sv_lan 1", 27076),
     "hl2dm": _src("Half-Life 2: Deathmatch", "HL2DM", "#f08c1a", 320, "hl2dm", "232370", "+maxplayers 16 +map dm_lockdown +sv_lan 1", 27077),
     "svencoop": _src("Sven Co-op", "Sven", "#4a7fb5", 225840, "svencoop", "276060",
                      "+maxplayers 16 +map hl_c00.bsp +servercfgfile servers/server.cfg", 27078),
