@@ -2611,4 +2611,10 @@ async def index():
     return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
 
+# allgemeine Container-Aktion (/container/{act}) erst nach den speziellen Routen prüfen
+_generic = [r for r in app.router.routes if getattr(r, "path", "") == "/api/servers/{sid}/container/{act}"]
+for _r in _generic:
+    app.router.routes.remove(_r)
+    app.router.routes.append(_r)
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
