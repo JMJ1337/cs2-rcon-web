@@ -729,6 +729,19 @@ async function loadSizes(refresh){
   sizesAt = Date.now();
   try { serverSizes = await api("/api/serversizes" + (refresh ? "?refresh=1" : "")); } catch {}
 }
+// kleine Lastbalken je Server (CPU vom Host, RAM-Anteil am Host, Netz an der Leitung) aus den Sekundenwerten
+function szLoad(sid){
+  const d = lastLive && lastLive.servers && lastLive.servers[sid];
+  if (!d || d.running === false) return `<div class="szload off"><span class="hint">läuft nicht${(overview.find(o => o.server.id === sid) || {}).sleeping ? " (Ruhemodus)" : ""}</span></div>`;
+  const tot = lastLive.mem_total_mb || 0, net = (d.rx_bps || 0) + (d.tx_bps || 0);
+  const cpu = Math.min(100, d.cpu_host || 0), mem = tot && d.mem_mb != null ? Math.min(100, d.mem_mb / tot * 100) : 0, nw = Math.min(100, net / LINK_BPS * 100);
+  const bar = (label, pct, txt, cls, tip) => `<div class="szl" title="${esc(tip)}"><span>${label}</span><div class="bar"><i class="${cls}" style="width:${pct > 0 ? Math.max(2, pct) : 0}%"></i></div><b>${txt}</b></div>`;
+  return `<div class="szload">
+    ${bar("CPU", cpu, (d.cpu_host ?? 0).toFixed(1) + " %", lvl(cpu), "Anteil an der gesamten CPU des Servers")}
+    ${bar("RAM", mem, d.mem_mb != null ? fmtMem(d.mem_mb) : "–", lvl(mem), "Arbeitsspeicher des Containers (Balken = Anteil am RAM des Servers)")}
+    ${bar("Netz", nw, d.rx_bps != null ? `↓${fmtRate(d.rx_bps)} ↑${fmtRate(d.tx_bps || 0)}` : "–", "net", "Netzwerk des Containers (Balken = Anteil an der Leitung)")}
+  </div>`;
+}
 function sizesHtml(){
   const z = serverSizes;
   if (!z) return "";
@@ -740,7 +753,7 @@ function sizesHtml(){
     return `<div class="szrow" title="${esc(where)}${x.partial ? "\n≈ einige Ordner waren nicht lesbar – Wert eher zu klein" : ""}">
       <span class="szname"><span class="gtile" style="background:${g.color || "#8aa4c8"};width:14px;height:14px">${gicon(x.game, 10)}</span>${esc(x.name)}</span>
       <div class="bar"><i style="width:${Math.max(1, x.bytes / max * 100)}%;background:${x.nfs_bytes ? "var(--ct)" : "#8aa4c8"}"></i></div>
-      <b>${x.partial ? "≈ " : ""}${fmtBytes(x.bytes)}</b></div>`;
+      <b>${x.partial ? "≈ " : ""}${fmtBytes(x.bytes)}</b></div>${szLoad(x.id)}`;
   }).join("");
   const local = z.total - z.nfs_total;
   return `<div class="szbox"><div class="mlab" style="margin-bottom:6px"><span>Installierte Spielserver</span>
