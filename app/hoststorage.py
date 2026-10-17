@@ -54,7 +54,7 @@ def script(s: dict) -> str:
         "#   sudo bash iscsi-einbinden.sh",
         "set -euo pipefail",
         f"PORTAL={q(port)}",
-        f"TARGET={q(t) if t else '\"\"   # leer = erstes gefundenes Ziel'}",
+        f"TARGET={q(t) if t else '\"\"'}",
         f"MNT={q(s['mountpoint'])}",
         f"FS={s['fs']}",
         f"LABEL={q(s['label'])}",
@@ -66,7 +66,8 @@ def script(s: dict) -> str:
         "",
         "echo '== 2. Ziele suchen'",
         "iscsiadm -m discovery -t sendtargets -p \"$PORTAL\"",
-        "[ -n \"$TARGET\" ] || TARGET=$(iscsiadm -m discovery -t sendtargets -p \"$PORTAL\" | head -1 | awk '{print $2}' || true)",
+        "if [ -z \"$TARGET\" ]; then echo 'Bitte das Ziel (IQN) auf der Speicher-Seite eintragen – nie automatisch das erste nehmen (Hyper-V-LUNs!)'; exit 1; fi",
+        "case \"$TARGET\" in *HyperV*|*Target-1.*) echo \"Ziel $TARGET sieht nach Hyper-V aus – abgebrochen\"; exit 1;; esac",
         "echo \"Ziel: $TARGET\"",
     ]
     if s.get("chap_user"):
