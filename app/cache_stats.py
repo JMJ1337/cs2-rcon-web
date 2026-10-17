@@ -144,6 +144,16 @@ async def poll(preferred: str = "") -> None:
         state["error"] = str(e)
 
 
+async def reset() -> None:
+    """Live-Zähler leeren und das Zugriffslog des Lancache leeren (alte Einträge gehören zum alten Cache)."""
+    name = state.get("container")
+    state.update(offset=0, buckets={})
+    _recent.clear()
+    if name:
+        await docker_api.exec_cmd(name, ["sh", "-c", f": > {LOG}"])
+    storage.update(measured=None, cache_bytes=None, updated=None)
+
+
 def summary() -> dict:
     now_min = int(time.time() // 60)
 

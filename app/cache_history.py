@@ -124,6 +124,19 @@ def reset_backfill():
     meta.update(bf_pos=0, bf_lines=0, bf_error=None, since=None)
 
 
+def reset_all() -> None:
+    """Neuer Cache: gesamten Verlauf verwerfen; nichts Älteres mehr aus dem Log nachimportieren."""
+    global _dirty
+    load()
+    now = float(time.time())
+    _h.clear(); _ips.clear(); _disk.clear()
+    meta.update(watermark=now, bf_cut=now, bf_done=True, bf_pos=0, bf_size=0, bf_lines=0, bf_error=None, since=now,
+                dep_cut=now, dbf_done=True, reset_at=now)
+    meta.pop("watermark_next", None)
+    _dirty = True
+    maybe_save(force=True)
+
+
 def add_net(rx_bytes: float, tx_bytes: float) -> None:
     """Netzwerk des Lancache-Containers (rx = aus dem Internet geholt, tx = an Clients ausgeliefert)."""
     global _dirty

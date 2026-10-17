@@ -2641,3 +2641,9 @@ async function refreshDisks(){
   }).join("");
 }
 
+
+$("#btnCacheReset").onclick = async () => {
+  if (!confirm("Gesamten Lancache-Verlauf, Trefferquote und „Welche Spiele wurden geladen“ zurücksetzen?\nDer Cache selbst bleibt unverändert.")) return;
+  try { await api("/api/cache/reset", {method: "POST"}); toast("Statistik zurückgesetzt"); if (typeof loadCacheHistory === "function") loadCacheHistory(); refreshCache(); }
+  catch (e){ toast(e.message, true); }
+};

@@ -93,7 +93,7 @@ def token_user(token: str | None) -> dict | None:
     return u
 
 
-ADMIN_PATHS = ("/api/users", "/api/settings", "/api/prefill", "/api/storage", "/api/scan", "/api/cache/measure", "/api/docker/image-check")
+ADMIN_PATHS = ("/api/users", "/api/settings", "/api/prefill", "/api/storage", "/api/scan", "/api/cache/measure", "/api/cache/reset", "/api/docker/image-check")
 
 # Benötigte Rechtestufe für Server-Unterseiten (users.LEVELS): 1 sehen, 2 bedienen, 3 verwalten, 4 anlegen/löschen
 _MANAGE_RX = re.compile(r"(config(/file)?|files(/.*)?|saves/load|container(/(env|diag|use-lancache|steamfix))?|wreckfest/.*|sleep/config|"
@@ -1841,6 +1841,18 @@ async def container_use_lancache(sid: str):
         raise HTTPException(502, str(e))
     drop_client(sid)
     return {"ok": True, "dns": dns}
+
+
+@app.post("/api/cache/reset", dependencies=auth)
+async def cache_reset():
+    """Statistik zurücksetzen (z. B. nach Umzug auf einen neuen, leeren Cache)."""
+    cache_history.reset_all()
+    try:
+        await cache_stats.reset()
+    except docker_api.DockerError as e:
+        raise HTTPException(502, f"Verlauf gelöscht, Log konnte nicht geleert werden: {e}")
+    asyncio.create_task(cache_stats.poll_storage(True))
+    return {"ok": True}
 
 
 @app.get("/api/cache/history", dependencies=auth)
