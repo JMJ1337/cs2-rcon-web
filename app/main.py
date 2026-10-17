@@ -3252,7 +3252,7 @@ B=$(du -sk . 2>/dev/null | cut -f1)
 echo "TOTAL $T ${B:-0}"
 ( while sleep 10; do echo "BYTES $(du -sk /copydst 2>/dev/null | cut -f1)"; done ) &
 W=$!
-cp -ruv /copysrc/. /copydst/ 2>&1 | awk '/->/{n++; if (n % 100 == 0) {print "COPIED " n; fflush()}} /cannot|denied|No space/{print "ERR " $0; fflush()}'
+stdbuf -oL cp -ruv /copysrc/. /copydst/ 2>&1 | awk '/->/{n++; if (n % 100 == 0) {print "COPIED " n; fflush()}} /cannot|denied|No space/{print "ERR " $0; fflush()}'
 kill $W 2>/dev/null
 echo "COPIED_FINAL $(find /copydst -type f 2>/dev/null | wc -l)"
 echo DONE
@@ -3349,7 +3349,8 @@ async def _create_job(job: dict, data: CreateIn, host: str):
     try:
         b = templates.build(data.game, data.values, data.data_dir)
         _job_log(job, f"Ordner vorbereiten: {', '.join(b['dirs'])}")
-        own = f" && chown -R {b['uid']}:{b['gid']} /target" if b["uid"] else ""
+        resumed = job.get("stage") not in (None, "start")
+        own = f" && chown -R {b['uid']}:{b['gid']} /target" if b["uid"] and not resumed else ""
         for d in b["dirs"]:
             await docker_api.run_helper([f"{d}:/target"], ["sh", "-c", f"mkdir -p /target{own} && echo ok"])
         _job_log(job, f"Image laden: {b['image']} (kann beim ersten Mal dauern)")
