@@ -670,7 +670,17 @@ async def collect_generic(s: dict) -> dict:
             c = catmod.CATALOG[g]
             kind = c["status"][0]
             if kind == "a2s":
-                st = await adapters.generic_a2s_status(s["host"], int(s["port"]), c["label"])
+                try:
+                    st = await adapters.generic_a2s_status(s["host"], int(s["port"]), c["label"])
+                except adapters.a2s.A2SError:
+                    if not (s.get("container") and docker_api.available()):
+                        raise
+                    cport = next((p[4] for p in c["ports"] if p[0] == c["status"][1]), None)
+                    try:
+                        info = await adapters.a2s.info_inside(s["container"], cport)
+                    except docker_api.DockerError as e:
+                        raise adapters.a2s.A2SError(str(e)) from e
+                    st = adapters.from_info(info, c["label"], "Abfrage im Container (von außen keine Antwort)")
             elif kind == "tcp":
                 st = await adapters.tcp_status(s["host"], int(s["port"]), c["label"])
             elif kind == "ac":

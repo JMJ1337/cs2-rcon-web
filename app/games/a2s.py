@@ -1,5 +1,6 @@
 """Steam A2S-Abfrage (UDP) – für Valheim & Co. ohne RCON."""
 import asyncio
+import re
 import struct
 
 HEADER = b"\xFF\xFF\xFF\xFF"
@@ -52,8 +53,18 @@ def _cstr(b: bytes, i: int):
     return b[i:j].decode("utf-8", "replace"), j + 1
 
 
+def parse_info(b: bytes) -> dict:
+    if b[:1] != b"I":
+        raise A2SError("Unerwartete A2S_INFO-Antwort")
+    return _parse_info(b)
+
+
 async def info(host: str, port: int, timeout: float = 3.0) -> dict:
     b = await _request(host, port, b"TSource Engine Query\x00", timeout)
+    return parse_info(b)
+
+
+def _parse_info(b: bytes) -> dict:
     if b[:1] != b"I":
         raise A2SError("Unerwartete A2S_INFO-Antwort")
     i = 2
@@ -97,3 +108,25 @@ async def players(host: str, port: int, timeout: float = 3.0) -> list[dict]:
         i += 8
         out.append({"name": name, "score": score, "time": int(dur)})
     return out
+
+
+INSIDE_SH = r"""
+P=%d
+q() { exec 3<>/dev/udp/127.0.0.1/$P || exit 1; printf "$1" >&3; timeout 2 dd bs=1400 count=1 <&3 2>/dev/null | od -An -v -tx1 | tr -d ' \n'; exec 3>&-; }
+R=$(q '\xff\xff\xff\xffTSource Engine Query\x00')
+if [ "${R:8:2}" = "41" ]; then C=${R:10:8}; E=$(echo $C | sed 's/../\\x&/g'); R=$(q "\\xff\\xff\\xff\\xffTSource Engine Query\\x00$E"); fi
+echo "$R"
+"""
+
+
+async def info_inside(container: str, port: int) -> dict:
+    """A2S direkt im Container abfragen (wenn die Abfrage von außen per NAT nicht durchkommt)."""
+    from .. import docker_api
+    out = await docker_api.exec_cmd(container, ["bash", "-c", INSIDE_SH % int(port)], timeout=10)
+    hx = re.sub(r"[^0-9a-f]", "", out.strip().splitlines()[-1] if out.strip() else "")
+    if len(hx) < 12:
+        raise A2SError("Keine Antwort im Container")
+    b = bytes.fromhex(hx)
+    if b[:4] != HEADER:
+        raise A2SError("Ungültige Antwort im Container")
+    return parse_info(b[4:])

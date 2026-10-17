@@ -293,3 +293,13 @@ async def factorio_container_status(container: str) -> dict:
             "players": [{"name": n, "time": ""} for n in names], "version": None, "hostname": None,
             "mode": {"key": "factorio", "label": "Factorio"},
             "extra": {"Quelle": "Server-Log – RCON-Port nicht freigegeben (Konsole ohne RCON nicht möglich)"}, "updated": time.time()}
+
+
+def from_info(info: dict, label: str, note: str = "") -> dict:
+    bots = info.get("bots") or 0
+    return {
+        "map": info.get("map") or "–", "humans": max(0, info["players"] - bots), "bots": bots, "max_players": info["max_players"],
+        "players": [], "version": info.get("version"), "hostname": info["name"], "mode": {"key": "game", "label": label},
+        "extra": {k: v for k, v in {"Map": info.get("map"), "Version": info.get("version"), "Hinweis": note}.items() if v},
+        "updated": time.time(),
+    }
