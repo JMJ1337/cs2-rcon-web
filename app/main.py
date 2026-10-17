@@ -1199,6 +1199,22 @@ async def live_loop():
         await asyncio.sleep(1)
 
 
+def _lan_client_tx(lh: dict) -> float | None:
+    """Was der Host wirklich an LAN-Clients sendet: Netzwerkkarte minus Schreiben aufs NAS (iSCSI-LUN und NFS).
+    Sonst zählt der Prefill sich selbst – er lässt den Lancache auf die iSCSI-LUN schreiben, das geht als Upload raus."""
+    if lh.get("source") != "host" or lh.get("tx_bps") is None:
+        return None
+    io = livestats.io or {}
+    storage = sum(m.get("write_bps") or 0 for m in io.get("mounts") or [])
+    try:
+        dev = (hoststorage.mount_status(hoststorage.settings()["mountpoint"]).get("device") or "").rsplit("/", 1)[-1]
+    except Exception:  # noqa: BLE001
+        dev = ""
+    if dev:
+        storage += sum(d.get("write_bps") or 0 for d in io.get("disks") or [] if dev.startswith(d["name"]))
+    return max(0.0, lh["tx_bps"] - storage * 1.08)       # +8 % für iSCSI/TCP-Overhead
+
+
 async def load_loop():
     """Host-Last alle 2,5 s, Container-Last/Netz und Lancache alle 5 s."""
     n = 0
@@ -1237,8 +1253,7 @@ async def load_loop():
                 dls = [x["name"] for x in load_servers() if x.get("container") and
                        ((install_watch.state.get(x["container"]) or {}).get("progress") or {}).get("phase") == "downloading"]
                 lh = livestats.host
-                await prefill.yield_check(cd.get("tx_bps"), pd.get("rx_bps"), dls,
-                                          lh.get("tx_bps") if lh.get("source") == "host" else None)
+                await prefill.yield_check(cd.get("tx_bps"), pd.get("rx_bps"), dls, _lan_client_tx(lh))
             except docker_api.DockerError:
                 pass
             except Exception:  # noqa: BLE001

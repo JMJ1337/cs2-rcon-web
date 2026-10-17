@@ -275,12 +275,15 @@ async def yield_check(cache_tx: float | None, prefill_rx: float | None, others_d
     pr = 0 if is_paused else (prefill_rx or 0)
     others = max(0.0, (cache_tx or 0) - pr)
     # Toleranz: Cache-Sendung und Prefill-Empfang werden nicht exakt gleichzeitig gemessen
-    busy = others > max(limit, 0.3 * pr) or bool(others_downloading) or (lan_tx is not None and lan_tx > limit)
+    lan_busy = lan_tx is not None and lan_tx > limit
+    busy = others > max(limit, 0.3 * pr) or bool(others_downloading) or lan_busy
     if busy:
         auto["busy"] += 1; auto["quiet"] = 0
     else:
         auto["quiet"] += 1; auto["busy"] = 0
-    if not is_paused and auto["busy"] >= 2:
+    # nur LAN-Upload (geschätzt, Plattenschreiben puffert stoßweise) -> erst nach 20 s pausieren
+    need = 4 if lan_busy and not (others > max(limit, 0.3 * pr) or others_downloading) else 2
+    if not is_paused and auto["busy"] >= need:
         await pause(True)
         why = ("Server-Update: " + ", ".join(others_downloading)) if others_downloading else \
             (f"LAN-Clients laden {lan_tx / 1e6:.1f} MB/s" if lan_tx and lan_tx > limit else f"andere laden {others / 1e6:.1f} MB/s über den Cache")
