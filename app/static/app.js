@@ -308,6 +308,40 @@ function updateLoadRow(el, d){
   if (q(".lr-rx") && d.rx_bps != null){ q(".lr-rx").style.width = nb(d.rx_bps) + "%"; tween(q(".lr-rxv"), d.rx_bps, v => "↓ " + fmtRate(v)); }
   if (q(".lr-tx") && d.tx_bps != null){ q(".lr-tx").style.width = nb(d.tx_bps) + "%"; tween(q(".lr-txv"), d.tx_bps, v => "↑ " + fmtRate(v)); }
 }
+// Antwortzeiten als ein Balken: der am stärksten belastete Teil (NAS, lokale Platte, Netz) bestimmt die Füllung.
+// 100 % = deutlich überlastet (NAS 50 ms, Platte 100 ms, 2 % TCP-Wiederholungen).
+const LAT_LIMIT = {nas: 50, disk: 100, tcp: 2};
+let latHold = {};
+function latencyRow(io){
+  const bar = $("#hlLatBar"), val = $("#hlLat"), row = $("#hlLatRow");
+  if (!bar) return;
+  if (!io || !io.available){ row.classList.add("hidden"); return; }
+  row.classList.remove("hidden");
+  const now = Date.now(), parts = [];
+  // NAS: nach Anfragen gewichteter Schnitt; ohne Anfragen den letzten Wert 10 s halten
+  let ops = 0, sum = 0;
+  for (const m of io.mounts || []) if (m.rtt_ms != null && m.ops_s > 0){ ops += m.ops_s; sum += m.rtt_ms * m.ops_s; }
+  if (ops > 0) latHold.nas = {v: sum / ops, t: now};
+  const nas = latHold.nas && now - latHold.nas.t < 10000 ? latHold.nas.v : null;
+  if (nas != null) parts.push({k: "NAS", ms: nas, s: nas / LAT_LIMIT.nas});
+  const busy = (io.disks || []).filter(d => d.await_ms != null && d.iops > 0.5);
+  if (busy.length){ const d = busy.reduce((a, b) => b.await_ms > a.await_ms ? b : a); latHold.disk = {v: d.await_ms, n: d.name, u: d.util, t: now}; }
+  const dk = latHold.disk && now - latHold.disk.t < 10000 ? latHold.disk : null;
+  if (dk) parts.push({k: "Platte " + dk.n, ms: dk.v, s: Math.max(dk.v / LAT_LIMIT.disk, (dk.u || 0) / 100 * 0.9), extra: ` · ${Math.round(dk.u || 0)} % belegt`});
+  const rt = io.tcp ? io.tcp.retrans_pct : null;
+  if (rt != null) parts.push({k: "TCP-Wiederholungen", pct: rt, s: rt / LAT_LIMIT.tcp});
+  if (!parts.length){ bar.style.width = "0%"; bar.className = "ok"; val.textContent = "ruhig"; row.title = "Antwortzeiten: gerade keine Zugriffe auf NAS/Platte"; return; }
+  const worst = parts.reduce((a, b) => b.s > a.s ? b : a);
+  const pct = Math.max(2, Math.min(100, worst.s * 100));
+  bar.style.width = pct + "%"; bar.className = lvl(pct);
+  const msParts = parts.filter(p => p.ms != null);
+  const shown = (worst.ms != null ? worst : msParts.reduce((a, b) => !a || b.ms > a.ms ? b : a, null));
+  if (shown) tween(val, shown.ms, v => (v < 10 ? v.toFixed(1) : Math.round(v)) + " ms"); else val.textContent = worst.pct.toFixed(1) + " %";
+  val.style.color = pct >= 85 ? "var(--bad)" : pct >= 60 ? "var(--accent)" : "";
+  row.title = "Antwortzeiten (Balken = am stärksten belasteter Teil)\n" + parts.map(p =>
+    `${p === worst ? "▶ " : "   "}${p.k}: ${p.ms != null ? p.ms.toFixed(1) + " ms" : p.pct.toFixed(2) + " %"}${p.extra || ""}`).join("\n")
+    + `\nGrenzen für vollen Balken: NAS ${LAT_LIMIT.nas} ms, Platte ${LAT_LIMIT.disk} ms, TCP ${LAT_LIMIT.tcp} %`;
+}
 let liveBusy = false, lastLive = null;
 async function liveTick(){
   if (liveBusy || document.hidden) return;
@@ -324,6 +358,7 @@ async function liveTick(){
       tween($("#hlNetDown"), n.rx_bps, v => fmtRate(v)); tween($("#hlNetUp"), n.tx_bps, v => fmtRate(v));
       $("#hlNetTotRow").title = n.source === "host" ? "Netzwerkkarten des Docker-Hosts" : "Summe der Container (Host-Netz nicht eingebunden)";
     }
+    latencyRow(L.io);
     if (L.cache && L.cache.tx_bps != null && !$("#hlNetRow").classList.contains("hidden")){
       $("#hlNetBar").style.width = bw(L.cache.tx_bps) + "%"; tween($("#hlNet"), L.cache.tx_bps, v => fmtRate(v));
     }
