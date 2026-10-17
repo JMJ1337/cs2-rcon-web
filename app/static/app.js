@@ -197,12 +197,13 @@ function renderPublic(){
   $("#pubGrid").innerHTML = r.servers.map((x, i) => {
     const g = GAMES[x.game] || r.games[x.game] || {label: x.game, color: "#888"};
     const j = x.join || {};
-    const meta = [x.map && x.map !== "–" ? esc(x.map_label || x.map) : "", x.mode ? esc(x.mode) : "", x.version ? "v" + esc(x.version) : ""].filter(Boolean).join(" · ");
+    const meta = [x.mode ? esc(x.mode) : "", x.version ? "v" + esc(x.version) : ""].filter(Boolean).join(" · ");
     const thumb = MAP_GAMES.has(x.game) && x.online ? mapThumb({map: x.map, workshop: x.workshop}, x.game) : "";
     return `<div class="pubcard${x.online ? "" : " off"}" style="--gc:${g.color}" data-pub="${esc(x.id)}" tabindex="0" title="Details: Spieler, Rotation">
       ${thumb ? `<div class="pubthumb">${thumb}<span class="pubmap">${esc(x.map_label || x.map || "")}</span></div>` : ""}
       <div class="pubtop">${gameTile(x.game, 18)}<div class="pubname"><b title="${esc(x.name)}">${esc(x.name)}</b><span class="hint">${esc(g.label)}</span></div>
         <span class="pill ${x.online ? "ok" : ""}">${x.online ? `● ${x.players ?? 0}${x.max_players ? "/" + x.max_players : ""} Spieler` : "offline"}</span></div>
+      ${x.map && x.map !== "–" && x.online ? `<div class="pubmapline">${esc(x.map_label || x.map)}</div>` : ""}
       ${meta ? `<div class="hint pubmeta">${meta}</div>` : ""}
       <div class="pubjoin">
         ${j.address ? `<button class="small" data-pcopy="${esc(j.address)}" title="Adresse kopieren">⧉ <span class="mono">${esc(j.address)}</span></button>` : ""}
@@ -811,13 +812,13 @@ async function refreshDash(){
       <div class="top">${gameLogo(gameOf(s))}${led(o)}<b>${esc(s.name)}</b>${o.online && o.join ? (o.join.url ? `<a class="joinbtn" href="${esc(o.join.url)}" title="Beitreten: ${esc(o.join.address)}" data-stop>▶ Beitreten</a>` : `<span class="joinbtn" data-copy="${esc(o.join.address)}" title="${esc(o.join.hint)}">⧉ ${esc(o.join.address)}</span>`) : `<span class="hint mono">${esc(s.host)}:${esc(s.port)}</span>`}</div>
       ${o.online ? `<div class="dbody">${mapThumb(o, gameOf(s))}` + (gameOf(s) === "cs2" ? `
       <div class="kv">
-        <span>Map</span><span title="${esc(o.map)}">${esc((o.workshop && o.workshop.title) || o.map || "?")}</span>
+        <span>Map</span><span class="kvmap" title="${esc(o.map)}">${esc((o.workshop && o.workshop.title) || o.map || "?")}</span>
         <span>Modus</span><span>${esc(o.mode ? o.mode.label : "?")}</span>
         <span>Spieler</span><span>${o.humans ?? 0} / ${slots || "?"}${o.bots ? ` (+${o.bots} Bots)` : ""}</span>
         <span>MatchZy</span><span>${mz}</span>
       </div>` : `
       <div class="kv">
-        <span>${worldLabel(gameOf(s))}</span><span>${esc(o.map || "–")}</span>
+        <span>${worldLabel(gameOf(s))}</span><span class="kvmap">${esc(o.track_name || o.map || "–")}</span>
         <span>Spieler</span><span>${o.players_unknown ? "– (Spiel meldet keine Spielerzahl)" : `${o.humans ?? 0}${o.max_players ? " / " + o.max_players : ""}`}</span>
         ${Object.entries(o.extra || {}).filter(([k]) => !["Session","Servername","Strecke"].includes(k)).slice(0, 2).map(([k,v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join("")}
       </div>`) + `</div>
