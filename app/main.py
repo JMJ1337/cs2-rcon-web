@@ -752,7 +752,7 @@ def join_info(s: dict, password: str | None = None) -> dict:
         # Daher Spiel starten und im Server-Browser des Spiels nach dem Namen suchen.
         p = gp or 33540
         return {"address": f"{host}:{p}", "url": "steam://run/228380",
-                "hint": "Startet Wreckfest – dann Mehrspieler → Server-Browser und nach dem Servernamen suchen."
+                "hint": "Startet Wreckfest – dann Mehrspieler → Server-Browser → Reiter „LAN“ (oder Online, nach dem Servernamen suchen)."
                         + (f" Passwort: {password}" if password else "")}
     if g == "satisfactory":
         p = gp or port
@@ -787,7 +787,7 @@ def _server_nr(s: dict, hostname: str | None) -> int:
     for txt in (hostname or "", s.get("name") or ""):
         if m := re.search(r"#\s*(\d+)", txt):
             return int(m.group(1))
-        if m := re.match(r"^Groh\b.*?\s(\d+)\s*$", txt, re.I):     # „Groh Wettkampf 2“
+        if m := re.match(r"^Groh\b.*?\s(\d+)\s*$", txt, re.I):     # alter Name „Groh Wettkampf 2“
             return int(m.group(1))
     if m := re.search(r"(\d+)\s*$", s.get("container") or ""):
         return int(m.group(1))
@@ -796,7 +796,7 @@ def _server_nr(s: dict, hostname: str | None) -> int:
 
 
 def _auto_name(s: dict, hostname: str | None, mode_label: str = "") -> str | None:
-    """Einheitlicher Servername für alle Spiele außer CS2: z. B. „TF2#1 Payload“, „Wreckfest#2 Derby“."""
+    """Einheitlicher Servername für alle Spiele außer CS2: z. B. „TF2 #1 Payload“, „Wreckfest #2 Derby“, „Valheim #1“."""
     if not s.get("mode_name", True):
         return None
     pattern = (automation.get_settings().get("names_pattern") or "").strip()
@@ -804,7 +804,7 @@ def _auto_name(s: dict, hostname: str | None, mode_label: str = "") -> str | Non
         return None
     g = game_of(s)
     short = (GAMES.get(g) or {}).get("short") or g
-    # ohne Modus (Valheim, Satisfactory …) steht dort der Spielname: „Groh Valheim 1“
+    # ohne {game} im Muster und ohne Modus steht dort der Spielname
     mode = mode_label or ((GAMES.get(g) or {}).get("short") if "{game}" not in pattern else "") or ""
     name = pattern.replace("{game}", short).replace("{nr}", str(_server_nr(s, hostname))).replace("{mode}", mode)
     name = re.sub(r'["\\;]', "", re.sub(r"\s+", " ", name)).strip(" -·|")[:63]
@@ -1346,6 +1346,33 @@ async def app_icon(appid: int):
         raise HTTPException(404, "kein Icon")
     return FileResponse(f, media_type="image/png" if f.read_bytes()[:4] == b"\x89PNG" else "image/jpeg",
                         headers={"Cache-Control": "public, max-age=2592000, immutable"})
+
+
+LOGO_URLS = {"teamspeak": "https://icons.duckduckgo.com/ip3/teamspeak.com.ico",
+             "minecraft": "https://icons.duckduckgo.com/ip3/minecraft.net.ico"}
+
+
+@app.get("/api/logo/{key}")
+async def logo(key: str):
+    """Logos von Spielen ohne Steam-Icon (TeamSpeak, Minecraft) – einmal holen, dann lokal ausliefern."""
+    url = LOGO_URLS.get(key)
+    if not url:
+        raise HTTPException(404, "unbekannt")
+    depots.ICON_DIR.mkdir(parents=True, exist_ok=True)
+    f = depots.ICON_DIR / f"logo_{key}.img"
+    if not (f.exists() and f.stat().st_size > 0):
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10, follow_redirects=True, headers={"User-Agent": "Spielservermanager"}) as cl:
+                r = await cl.get(url)
+            if r.status_code != 200 or len(r.content) < 50:
+                raise HTTPException(404, "Logo nicht erreichbar")
+            f.write_bytes(r.content)
+        except httpx.HTTPError as e:
+            raise HTTPException(404, "Logo nicht erreichbar") from e
+    data = f.read_bytes()
+    mt = "image/png" if data[:4] == b"\x89PNG" else "image/svg+xml" if data.lstrip()[:4] in (b"<svg", b"<?xm") else "image/x-icon"
+    return Response(data, media_type=mt, headers={"Cache-Control": "public, max-age=2592000"})
 
 
 def _likely_apps() -> list[int]:
@@ -3024,8 +3051,9 @@ async def wf_config_get(sid: str):
     q = vals.get("query_port", "")
     binds = (info.get("HostConfig") or {}).get("PortBindings") or {}
     q_host = ((binds.get(f"{q}/udp") or [{}])[0] or {}).get("HostPort")
-    lan_ok = q.isdigit() and (26900 <= int(q) <= 26905 or (27015 <= int(q) <= 27020)) and q_host == q
-    return {"exists": text is not None, "values": vals, "labels": WF_KEYS, "lan_ok": lan_ok,
+    host_net = (info.get("HostConfig") or {}).get("NetworkMode") == "host"
+    lan_ok = q.isdigit() and (26900 <= int(q) <= 26905 or (27015 <= int(q) <= 27020)) and (q_host == q or host_net)
+    return {"exists": text is not None, "values": vals, "labels": WF_KEYS, "lan_ok": lan_ok, "host_net": host_net,
             "managed": (info.get("Config", {}).get("Labels") or {}).get("gsm.managed") == "1"}
 
 
@@ -3150,6 +3178,41 @@ async def wf_lan_fix(sid: str):
         raise HTTPException(502, str(e))
     await _set_server_fields(sid, port=q, game_port=gport)
     return {"ok": True, "query_port": q, "steam_port": sport, "game_port": gport}
+
+
+@app.post("/api/servers/{sid}/wreckfest/hostnet", dependencies=auth)
+async def wf_hostnet(sid: str):
+    """Wreckfest ins Host-Netzwerk: Die LAN-Suche des Spiels nutzt UDP-Broadcasts, die Docker-Portfreigaben nicht weiterleiten."""
+    s = _wf_server(sid)
+    name = s["container"]
+    try:
+        info = await docker_api.inspect(name)
+        if (info.get("Config", {}).get("Labels") or {}).get("gsm.managed") != "1":
+            raise HTTPException(400, "Nur für Container, die dieses Tool angelegt hat – sonst im Stack network_mode: host setzen")
+        text = await _wf_read(name)
+        vals = _wf_values(text or "")
+        hc0 = info.get("HostConfig") or {}
+        web = (((hc0.get("PortBindings") or {}).get("8080/tcp") or [{}])[0] or {}).get("HostPort")
+        used = await docker_api.used_host_ports()
+        for k in ("game_port", "query_port", "steam_port"):
+            p = vals.get(k, "")
+            own = {int(b["HostPort"]) for lst in (hc0.get("PortBindings") or {}).values() for b in (lst or []) if str(b.get("HostPort", "")).isdigit()}
+            if p.isdigit() and int(p) in used and int(p) not in own:
+                raise HTTPException(409, f"Port {p} ist auf dem Host schon belegt – erst „LAN-Sichtbarkeit einrichten“")
+
+        def mutate(cfg, hc):
+            hc["NetworkMode"] = "host"
+            hc["PortBindings"] = {}
+            hc.pop("Dns", None)
+            cfg["ExposedPorts"] = {}
+            env = [e for e in (cfg.get("Env") or []) if not e.startswith("GOTTY_PARAMS=")]
+            if web:   # Webkonsole (gotty) sonst auf 8080 – dort läuft auf dem Host schon etwas
+                env.append(f"GOTTY_PARAMS=-w --port {web} --title-format Wreckfest")
+            cfg["Env"] = env
+        await docker_api.recreate(name, mutate)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------- Speicher / iSCSI (nur Planung + lesende Prüfung)

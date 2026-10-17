@@ -83,7 +83,7 @@ const STEAM_APPS = {tf2: 440, cs2: 730, factorio: 427520, satisfactory: 526870, 
 const appOf = g => STEAM_APPS[g] || (GAMES[g] && GAMES[g].appid) || null;
 const steamImg = (g, file) => appOf(g) ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${appOf(g)}/${file}` : "";
 var ICONS_URL = {apps: {}, games: {}};
-const OTHER_LOGOS = {minecraft: "https://www.minecraft.net/favicon.ico", teamspeak: "https://www.teamspeak.com/favicon.ico"};
+const OTHER_LOGOS = {minecraft: "/api/logo/minecraft", teamspeak: "/api/logo/teamspeak"};
 function gameLogo(g){
   const src = steamImg(g, "capsule_sm_120.jpg") || OTHER_LOGOS[g] || "";
   return src ? `<span class="glogo"><img src="${src}" alt="${esc(GAMES[g]?.label || g)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add('fail')">${gbadge(g)}</span>` : gbadge(g);
@@ -1404,8 +1404,8 @@ function renderAuto(){
   $("#setScanSubnets").value = settings.scan_subnets || "";
   $("#setGamesBase").value = settings.games_base || "/mnt/grohlan";
   $("#setCacheContainer").value = settings.cache_container || "";
-  $("#setHostnamePattern").value = settings.hostname_pattern ?? "Groh {mode} {nr}";
-  $("#setNamesPattern").value = settings.names_pattern ?? "Groh {mode} {nr}";
+  $("#setHostnamePattern").value = settings.hostname_pattern ?? "CS #{nr} {mode}";
+  $("#setNamesPattern").value = settings.names_pattern ?? "{game} #{nr} {mode}";
   $("#setInternetHost").value = settings.internet_host || "";
   $("#setContainerDns").value = settings.container_dns || "";
   $$("[data-mdel]").forEach(b => b.onclick = () => { readAuto(); settings.modes.splice(+b.dataset.mdel, 1); renderAuto(); });
@@ -1583,11 +1583,23 @@ async function loadWfConfig(force){
   if (!r.exists){ $("#wfFields").innerHTML = `<div class="hint">Server installiert sich noch – Einstellungen erscheinen danach.</div>`; $("#wfLan").innerHTML = ""; return; }
   const v = r.values;
   $("#wfFields").innerHTML = WF_FIELDS.map(([k, l]) => `<div><label>${esc(l)}</label><input data-wf="${k}" value="${esc(v[k] ?? "")}" ${k === "gamemode" ? 'list="wfModes"' : ""}></div>`).join("");
-  $("#wfLan").innerHTML = r.lan_ok
-    ? `<span class="pill ok">LAN-Suche: Query-Port ${esc(v.query_port)} – im Spiel unter „LAN“ sichtbar</span> <span class="hint">Spielport ${esc(v.game_port || "")}</span>`
+  $("#wfLan").innerHTML = r.lan_ok && r.host_net
+    ? `<span class="pill ok">LAN-Suche: Host-Netzwerk, Query-Port ${esc(v.query_port)} – im Spiel unter „LAN“ sichtbar</span> <span class="hint">Spielport ${esc(v.game_port || "")}</span>`
+    : r.lan_ok
+    ? `<div class="pill warn" style="margin-bottom:6px">Ports stimmen, aber die LAN-Suche findet den Server noch nicht</div>
+       <div class="hint" style="margin-bottom:6px">Wreckfest sucht im LAN per Broadcast – den leitet Docker an Container mit Portfreigaben nicht weiter. Abhilfe: Container ins Host-Netzwerk legen.</div>
+       ${r.managed ? `<button class="primary" id="btnWfHost">Host-Netzwerk aktivieren (Container wird neu erstellt)</button>` : `<span class="hint">Im Portainer-Stack <span class="mono">network_mode: host</span> setzen.</span>`}`
     : `<div class="pill warn" style="margin-bottom:6px">Im LAN-Reiter von Wreckfest nicht sichtbar (Query-Port ${esc(v.query_port || "?")})</div>
        <div class="hint" style="margin-bottom:6px">Wreckfest wird in der LAN-Suche nur auf den Query-Ports 26900–26905 bzw. 27015–27020 gefunden – letztere belegen die CS2-Server.</div>
        ${r.managed ? `<button class="primary" id="btnWfLan">LAN-Sichtbarkeit einrichten (Container wird neu erstellt)</button>` : `<span class="hint">Container nicht vom Tool angelegt – query_port in server_config.cfg und Port-Freigabe selbst anpassen.</span>`}`;
+  const hb = $("#btnWfHost");
+  if (hb) hb.onclick = async () => {
+    if (!confirm("Wreckfest-Container wird gestoppt und im Host-Netzwerk neu erstellt (Daten bleiben). Fortfahren?")) return;
+    hb.disabled = true; hb.textContent = "wird umgestellt …";
+    try { await api(`/api/servers/${current.id}/wreckfest/hostnet`, {method: "POST"}); toast("Host-Netzwerk aktiv – Server startet, danach im Spiel unter „LAN“ suchen"); }
+    catch (e) { toast(e.message, true); }
+    loadWfConfig(true);
+  };
   const lb = $("#btnWfLan");
   if (lb) lb.onclick = async () => {
     if (!confirm("Wreckfest-Container wird gestoppt und mit neuen Ports neu erstellt (Daten bleiben). Fortfahren?")) return;
