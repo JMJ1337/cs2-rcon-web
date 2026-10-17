@@ -21,7 +21,25 @@ class _Proto(asyncio.DatagramProtocol):
         self.queue.put_nowait(exc)
 
 
+# Nach einem Timeout 45 s keine UDP-Pakete an diese Adresse senden: Sonst hält jede Abfrage einen veralteten
+# Conntrack-Eintrag am Leben (entstanden, als der Container-Port kurz nicht veröffentlicht war) und Docker leitet nie weiter.
+_backoff: dict[tuple, float] = {}
+BACKOFF_S = 45
+
+
 async def _request(host: str, port: int, payload: bytes, timeout: float, challenge_ok=True) -> bytes:
+    import time as _t
+    if _backoff.get((host, port), 0) > _t.time():
+        raise A2SError(f"Keine Antwort von {host}:{port} (UDP) – nächste Abfrage in {int(_backoff[(host, port)] - _t.time())} s")
+    try:
+        return await _request_raw(host, port, payload, timeout, challenge_ok)
+    except A2SError as e:
+        if "Keine Antwort" in str(e):
+            _backoff[(host, port)] = _t.time() + BACKOFF_S
+        raise
+
+
+async def _request_raw(host: str, port: int, payload: bytes, timeout: float, challenge_ok=True) -> bytes:
     loop = asyncio.get_running_loop()
     transport, proto = await loop.create_datagram_endpoint(_Proto, remote_addr=(host, port))
     try:
