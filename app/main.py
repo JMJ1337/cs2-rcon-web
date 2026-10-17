@@ -4144,6 +4144,14 @@ async def create_server(data: CreateIn, request: Request):
     if dup:
         raise HTTPException(400, "Port doppelt angegeben: " + ", ".join(dup))
     host = (data.host or "").strip() or _docker_host_ip(request)
+    try:   # öffentliche IP als Server-Adresse taugt nicht (RCON/Status laufen im LAN) -> LAN-Adresse der anderen Server
+        if not ipaddress.ip_address(host).is_private:
+            lan = [x["host"] for x in load_servers() if re.fullmatch(r"\d+\.\d+\.\d+\.\d+", x.get("host") or "")
+                   and ipaddress.ip_address(x["host"]).is_private]
+            if lan:
+                host = max(set(lan), key=lan.count)
+    except ValueError:
+        pass
     data.values["_host"] = host
     jid = secrets.token_hex(6)
     job = {"id": jid, "game": data.game, "log": [], "step": "", "done": False, "error": None, "server_id": None,

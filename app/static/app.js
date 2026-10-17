@@ -1895,7 +1895,11 @@ async function initCreate(){
     <div class="hint">Kopiert die Installation eines vorhandenen Servers ins neue Datenverzeichnis, bevor er startet. SteamCMD prüft danach nur noch Unterschiede. Quelle sollte fertig installiert sein.</div></div>`);
   const upd = () => { const name = ($('[data-cf="name"]') || {}).value || ""; $("#createDataDir").value = t.data_default.replace("{base}", tpl.games_base || settings.games_base || "/mnt/grohlan").replace("{n}", n).replace("{name}", name); };
   upd(); $('[data-cf="name"]').addEventListener("input", upd);
-  $("#createHost").value = (settings.public_url || "").replace(/^https?:\/\//, "").split(/[:/]/)[0] || location.hostname;
+  // Adresse der Spielserver: LAN-IP – auch wenn die Seite gerade über die Internet-Adresse geöffnet ist
+  const isPriv = h => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.)/.test(h);
+  const lanHosts = servers.map(x => x.host).filter(isPriv);
+  const common = lanHosts.sort((a, b) => lanHosts.filter(x => x === b).length - lanHosts.filter(x => x === a).length)[0];
+  $("#createHost").value = (settings.public_url || "").replace(/^https?:\/\//, "").split(/[:/]/)[0] || (isPriv(location.hostname) ? location.hostname : common || location.hostname);
   $("#createHint").textContent = `Image: ${t.image} · Der Ordner wird auf dem Docker-Host angelegt und für UID ${t.uid} beschreibbar gemacht. Ports: automatisch die nächsten freien gewählt (${sug.used.length} Ports sind bereits belegt) – vor dem Anlegen wird nochmals auf Überschneidungen geprüft.`;
   const usedSet = new Set(sug.used);
   $$('[data-cf$="port"]').forEach(i => i.addEventListener("input", () => {
