@@ -596,8 +596,40 @@ function hostPanelHtml(){
       ${netPanelCell(m, "Netzwerk gesamt")}
       ${metricsData._cache && metricsData._cache.samples ? netPanelCell(metricsData._cache, "Lancache") : ""}
       ${ioCells()}
-    </div>${ioTable()}</div></div>`;
+    </div>${ioTable()}${sizesHtml()}</div></div>`;
 }
+// Größe der installierten Spielserver (vor allem auf der NFS-Freigabe), alle 30 min vom Server neu gemessen
+let serverSizes = null, sizesAt = 0;
+async function loadSizes(refresh){
+  if (!refresh && Date.now() - sizesAt < 60000 && serverSizes && !serverSizes.busy) return;
+  sizesAt = Date.now();
+  try { serverSizes = await api("/api/serversizes" + (refresh ? "?refresh=1" : "")); } catch {}
+}
+function sizesHtml(){
+  const z = serverSizes;
+  if (!z) return "";
+  if (!z.items.length) return `<div class="hint" style="margin-top:12px">Größe der Spielserver: ${z.busy || !z.updated ? "wird gemessen … (kann bei vielen Dateien auf dem NAS einige Minuten dauern)" : "keine Datenordner gefunden"}</div>`;
+  const max = Math.max(...z.items.map(x => x.bytes), 1);
+  const rows = z.items.map(x => {
+    const g = GAMES[x.game] || {};
+    const where = x.paths.map(p => `${p.path} (${fmtBytes(p.bytes)}${p.nfs ? ", NFS " + p.device : ", lokal"})`).join("\n");
+    return `<div class="szrow" title="${esc(where)}${x.partial ? "\n≈ einige Ordner waren nicht lesbar – Wert eher zu klein" : ""}">
+      <span class="szname"><span class="gtile" style="background:${g.color || "#8aa4c8"};width:14px;height:14px">${gicon(x.game, 10)}</span>${esc(x.name)}</span>
+      <div class="bar"><i style="width:${Math.max(1, x.bytes / max * 100)}%;background:${x.nfs_bytes ? "var(--ct)" : "#8aa4c8"}"></i></div>
+      <b>${x.partial ? "≈ " : ""}${fmtBytes(x.bytes)}</b></div>`;
+  }).join("");
+  const local = z.total - z.nfs_total;
+  return `<div class="szbox"><div class="mlab" style="margin-bottom:6px"><span>Installierte Spielserver</span>
+      <b>NFS-Freigabe ${fmtBytes(z.nfs_total)}${local > 0 ? ` · lokal ${fmtBytes(local)}` : ""}${z.nfs_free != null ? ` · NAS frei ${fmtBytes(z.nfs_free)}` : ""}</b></div>
+    ${rows}
+    <div class="hint" style="margin-top:6px">Gemessen ${z.updated ? new Date(z.updated * 1000).toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit"}) : "–"} Uhr${z.busy ? " · misst gerade neu …" : ""} ·
+      <a href="#" id="szRefresh">jetzt neu messen</a> · Balken blau = auf dem NAS, grau = lokal</div></div>`;
+}
+document.addEventListener("click", async e => {
+  if (e.target.id !== "szRefresh") return;
+  e.preventDefault(); await loadSizes(true); toast("Größen werden neu gemessen – dauert je nach Datenmenge einige Minuten");
+  if (view === "dash") $("#hostPanel").innerHTML = hostPanelHtml();
+});
 AX.ms = v => (v >= 100 ? Math.round(v) : Math.round(v * 10) / 10) + " ms";
 AX.pct2 = v => (Math.round(v * 100) / 100) + " %";
 function ioCells(){
@@ -645,7 +677,7 @@ function metricsHtml(sid, color){
 /* ================= Dashboard ================= */
 async function refreshDash(){
   try { overview = await api("/api/overview"); } catch { return; }
-  await loadMetrics();
+  await Promise.all([loadMetrics(), loadSizes()]);
   if (view === "dash") $("#hostPanel").innerHTML = hostPanelHtml();
   renderServerList();
   if (view !== "dash") return;

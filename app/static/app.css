@@ -354,3 +354,10 @@ a.btn{display:inline-flex;align-items:center;padding:7px 12px;border-radius:7px;
 .btn-up span{display:inline-flex;padding:4px 8px;border:1px solid var(--line);border-radius:6px;cursor:pointer}
 a.btn-link{display:inline-flex;align-items:center;padding:3px 7px;border:1px solid var(--line);border-radius:6px;text-decoration:none;color:inherit;font-size:12px}
 #hlDisks .hl-row span{max-width:90px;overflow:hidden;text-overflow:ellipsis}
+
+.szbox{margin-top:14px;padding-top:12px;border-top:1px solid var(--line,#2a2f3a)}
+.szrow{display:grid;grid-template-columns:minmax(120px,220px) 1fr 80px;align-items:center;gap:10px;font-size:12px;padding:2px 0}
+.szrow .szname{display:flex;align-items:center;gap:6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.szrow .gtile{flex:none;display:inline-grid;place-items:center;border-radius:4px}
+.szrow b{font-family:var(--mono);font-weight:500;text-align:right}
+@media (max-width:600px){.szrow{grid-template-columns:110px 1fr 70px}}

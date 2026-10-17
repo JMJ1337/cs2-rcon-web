@@ -1090,6 +1090,76 @@ async def _poll_disks():
         _disks["busy"] = False
 
 
+_sizes: dict = {"items": [], "t": 0.0, "busy": False, "error": None}
+SIZES_EVERY = 1800
+
+
+async def _poll_sizes():
+    """Größe der Datenordner aller Spielserver (du im Hilfs-Container, nur lesend) und ob sie auf NFS liegen."""
+    if _sizes["busy"]:
+        return
+    _sizes["busy"] = True
+    try:
+        per: list[tuple[dict, list[str]]] = []
+        for s_ in load_servers():
+            c = s_.get("container")
+            if not c:
+                continue
+            try:
+                info = await docker_api.inspect(c)
+            except docker_api.DockerError:
+                continue
+            src = [m.get("Source") for m in info.get("Mounts") or []
+                   if m.get("Source") and m.get("Type") in ("bind", "volume")
+                   and not (m.get("Destination") or "").startswith(("/var/run", "/etc", "/proc", "/sys", "/dev"))
+                   and not m["Source"].startswith(("/var/run", "/etc", "/proc", "/sys", "/dev", "/run"))]
+            if src:
+                per.append((s_, src))
+        paths = sorted({p for _, ps in per for p in ps})
+        if not paths:
+            _sizes.update(items=[], t=time.time(), error=None)
+            return
+        script = "for p in \"$@\"; do d=\"/h$p\"; s=$(du -sk \"$d\" 2>/tmp/e | cut -f1); e=$(grep -c . /tmp/e); " \
+                 "f=$(df -P \"$d\" 2>/dev/null | tail -1 | awk '{printf \"%s\\t%.0f\\t%s\", $1, $4*1024, $6}'); printf '%s\\t%s\\t%s\\t%s\\n' \"$p\" \"${s:-0}\" \"$e\" \"$f\"; done; true"
+        out = await docker_api.run_helper(["/:/h:ro"], ["sh", "-c", script, "sh", *paths], timeout=1500)
+        info_p: dict[str, dict] = {}
+        for line in out.splitlines():
+            q = line.split("\t")
+            if len(q) >= 6 and q[1].isdigit():
+                info_p[q[0]] = {"bytes": int(q[1]) * 1024, "errors": int(q[2]) if q[2].isdigit() else 0, "device": q[3],
+                                "avail": int(q[4]) if q[4].isdigit() else None, "mount": q[5][2:] or "/",
+                                "nfs": ":" in q[3] or q[3].startswith("//")}
+        items = []
+        for s_, ps in per:
+            parts = [dict(path=p, **info_p[p]) for p in ps if p in info_p]
+            if not parts:
+                continue
+            items.append({"id": s_["id"], "name": s_.get("name") or s_["id"], "game": s_.get("game"),
+                          "bytes": sum(x["bytes"] for x in parts), "nfs_bytes": sum(x["bytes"] for x in parts if x["nfs"]),
+                          "partial": any(x["errors"] for x in parts), "paths": parts})
+        items.sort(key=lambda x: -x["bytes"])
+        _sizes.update(items=items, t=time.time(), error=None)
+    except docker_api.DockerError as e:
+        _sizes["error"] = str(e)
+        _sizes["t"] = time.time() - SIZES_EVERY + 300   # in 5 min erneut versuchen
+    finally:
+        _sizes["busy"] = False
+
+
+@app.get("/api/serversizes", dependencies=auth)
+async def server_sizes(refresh: bool = False):
+    if docker_api.available() and (refresh or time.time() - _sizes["t"] > SIZES_EVERY):
+        asyncio.create_task(_poll_sizes())
+    nfs = {}
+    for it in _sizes["items"]:
+        for p in it["paths"]:
+            if p["nfs"]:
+                nfs.setdefault(p["device"].split(":")[0] + ":" + p["mount"], p["avail"])
+    return {"items": _sizes["items"], "updated": _sizes["t"] or None, "busy": _sizes["busy"], "error": _sizes["error"],
+            "total": sum(x["bytes"] for x in _sizes["items"]), "nfs_total": sum(x["nfs_bytes"] for x in _sizes["items"]),
+            "nfs_free": max(nfs.values(), default=None) if nfs else None}
+
+
 @app.get("/api/disks", dependencies=auth)
 async def disks():
     if time.time() - _disks["t"] > 120 and docker_api.available():
