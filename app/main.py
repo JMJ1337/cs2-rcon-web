@@ -1896,9 +1896,9 @@ set -e
 SC=/serverdata/steamcmd/steamcmd.sh
 [ -x "$SC" ] || { echo "steamcmd nicht gefunden"; exit 1; }
 echo "== Lade als Windows (Plattform-Workaround) …"
-$SC +force_install_dir /serverdata/serverfiles +login anonymous +@sSteamCmdForcePlatformType windows +app_update $GAME_ID +quit | grep -E "Success|Error|ERROR" || true
+$SC +@sSteamCmdForcePlatformType windows +force_install_dir /serverdata/serverfiles +login anonymous +app_info_update 1 +app_update $GAME_ID validate +quit | grep -E "Success|Error|ERROR" || true
 echo "== Lade als Linux und prüfe …"
-$SC +force_install_dir /serverdata/serverfiles +login anonymous +@sSteamCmdForcePlatformType linux +app_update $GAME_ID validate +quit | grep -E "Success|Error|ERROR" || true
+$SC +@sSteamCmdForcePlatformType linux +force_install_dir /serverdata/serverfiles +login anonymous +app_info_update 1 +app_update $GAME_ID validate +quit | grep -E "Success|Error|ERROR" || true
 echo "== Rechte zurücksetzen ($OWNER)"
 chown -R "$OWNER" /serverdata/serverfiles /serverdata/steamcmd 2>/dev/null || true
 """
