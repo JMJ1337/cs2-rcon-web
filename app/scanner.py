@@ -23,6 +23,10 @@ IMAGE_HINTS = {
     "cs2": ["cs2", "counter-strike"], "factorio": ["factorio"],
     "satisfactory": ["satisfactory"], "valheim": ["valheim"], "wreckfest": ["wreckfest"], "tf2": ["tf2", "team-fortress", "teamfortress"],
     "minecraft": ["minecraft"], "teamspeak": ["teamspeak", "ts3"],
+    "l4d2": ["steamcmd:l4d2"], "garrysmod": ["steamcmd:garrysmod"], "insurgency": ["insurgencysandstorm"], "quakelive": ["quakelive"],
+    "killingfloor2": ["killingfloor2"], "7dtd": ["steamcmd:7dtd"], "projectzomboid": ["projectzomboid"], "palworld": ["palworld"],
+    "vrising": ["vrising"], "abioticfactor": ["abioticfactor"], "dontstarve": ["steamcmd:dontstarve"], "enshrouded": ["enshrouded"],
+    "assettocorsa": ["steamcmd:assettocorsa"], "terraria": ["terraria"], "openttd": ["openttd"], "amongus": ["impostor"],
 }
 
 state = {"running": False, "last": None, "subnets": [], "results": [], "error": None, "duration": None}

@@ -17,11 +17,12 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import automation, cache_history, depots, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
+from . import automation, cache_history, depots, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
 from .games import minecraft as mcmod
 from .games import teamspeak as tsmod
+from .games import catalog as catmod
 from .rcon import RconAuthError, RconClient, RconError
 
 log = logging.getLogger("cs2rcon")
@@ -90,7 +91,7 @@ def token_user(token: str | None) -> dict | None:
     return u
 
 
-ADMIN_PATHS = ("/api/users", "/api/create", "/api/settings", "/api/prefill")
+ADMIN_PATHS = ("/api/users", "/api/create", "/api/settings", "/api/prefill", "/api/storage")
 
 
 def require_auth(request: Request):
@@ -496,6 +497,14 @@ def join_info(s: dict, password: str | None = None) -> dict:
         p = gp or port
         url = f"steam://connect/{host}:{p}" + (f"/{password}" if password else "")
         return {"address": f"{host}:{p}", "url": url, "hint": "Startet CS2 und verbindet direkt."}
+    if g in catmod.CATALOG:
+        c = catmod.CATALOG[g]
+        p = gp or port
+        if c["join"][0] == "steam":
+            return {"address": f"{host}:{p}", "url": f"steam://connect/{host}:{p}" + (f"/{password}" if password else ""),
+                    "hint": f"Startet {c['label']} über Steam und verbindet direkt."}
+        return {"address": f"{host}:{p}", "url": f"steam://run/{c['appid']}" if c.get("appid") and c["join"][0] == "addr" and c.get("image", "").startswith("ghcr.io/ich777") else None,
+                "hint": c.get("hint") or f"Im Spiel {c['label']} → Mehrspieler → Server/IP hinzufügen: {host}:{p}"}
     if g == "minecraft":
         p = gp or port
         return {"address": f"{host}:{p}" if p != 25565 else host, "url": None,
@@ -647,6 +656,27 @@ async def collect_generic(s: dict) -> dict:
                 st = await adapters.tf2_status(s["host"], int(s.get("game_port") or s["port"]))
         elif g == "minecraft":
             st = await mcmod.status(s["host"], int(s.get("game_port") or s["port"]))
+        elif g in catmod.CATALOG:
+            c = catmod.CATALOG[g]
+            kind = c["status"][0]
+            if kind == "a2s":
+                st = await adapters.generic_a2s_status(s["host"], int(s["port"]), c["label"])
+            elif kind == "tcp":
+                st = await adapters.tcp_status(s["host"], int(s["port"]), c["label"])
+            elif kind == "ac":
+                st = await adapters.ac_status(s["host"], int(s["port"]))
+            else:
+                if not s.get("container"):
+                    raise RconError("Kein Container zugeordnet – Status nicht ermittelbar")
+                try:
+                    info = await docker_api.inspect(s["container"])
+                except docker_api.DockerError as e:
+                    raise RconError(str(e)) from e
+                if not (info.get("State") or {}).get("Running"):
+                    raise RconError("Container läuft nicht")
+                st = {"map": "–", "humans": 0, "bots": 0, "max_players": 0, "players": [], "version": None, "hostname": None,
+                      "mode": {"key": "game", "label": c["label"]}, "extra": {"Container": "läuft"}, "updated": time.time(),
+                      "players_unknown": True}
         elif g == "teamspeak":
             if not s.get("password") and s.get("container") and docker_api.available():
                 await _ts_password_from_logs(s)
@@ -996,7 +1026,8 @@ async def server_metrics(minutes: int = 360):
     return out
 
 
-GAME_APPS = {"cs2": 730, "tf2": 440, "valheim": 892970, "wreckfest": 228380, "factorio": 427520, "satisfactory": 526870}
+GAME_APPS = {"cs2": 730, "tf2": 440, "valheim": 892970, "wreckfest": 228380, "factorio": 427520, "satisfactory": 526870,
+             **{k: c["appid"] for k, c in catmod.CATALOG.items() if c.get("appid")}}
 
 
 @app.get("/api/gameicons", dependencies=auth)
@@ -2151,6 +2182,50 @@ async def wf_lan_fix(sid: str):
     return {"ok": True, "query_port": q, "steam_port": sport, "game_port": gport}
 
 
+# ---------------------------------------------------------------- Speicher / iSCSI (nur Planung + lesende Prüfung)
+@app.get("/api/storage", dependencies=auth)
+async def storage_get():
+    st = hoststorage.settings()
+    io = livestats.io or {}
+    mnt = hoststorage.mount_status(st["mountpoint"])
+    dev = (mnt.get("device") or "").rsplit("/", 1)[-1]
+    disk = next((d for d in io.get("disks") or [] if dev.startswith(d["name"])), None) if dev else None
+    return {"settings": {**st, "chap_pw": "••••" if st.get("chap_pw") else ""}, "mount": mnt, "disk": disk,
+            "mounts": hoststorage.iscsi_disks(), "script": hoststorage.script(st)}
+
+
+class StorageIn(BaseModel):
+    portal: str = Field("", max_length=100)
+    target: str = Field("", max_length=223)
+    chap_user: str = Field("", max_length=64)
+    chap_pw: str | None = Field(None, max_length=64)
+    fs: str = "ext4"
+    mountpoint: str = Field("/mnt/lancache", max_length=120)
+    format: bool = True
+    label: str = Field("lancache", max_length=20)
+    purpose: str = "lancache"
+    old_path: str = Field("/mnt/cachenew", max_length=120)
+
+
+@app.put("/api/storage", dependencies=auth)
+async def storage_put(data: StorageIn):
+    d = data.model_dump()
+    if d.get("chap_pw") in (None, "••••"):
+        d.pop("chap_pw")
+    try:
+        hoststorage.save(d)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return await storage_get()
+
+
+@app.get("/api/storage/script", dependencies=auth)
+async def storage_script():
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(hoststorage.script(hoststorage.settings()),
+                             headers={"Content-Disposition": 'attachment; filename="iscsi-einbinden.sh"'})
+
+
 # ---------------------------------------------------------------- SteamPrefill
 _prefill_files: dict = {"files": [], "t": 0.0}
 
@@ -2357,6 +2432,7 @@ async def create_server(data: CreateIn, request: Request):
     if dup:
         raise HTTPException(400, "Port doppelt angegeben: " + ", ".join(dup))
     host = (data.host or "").strip() or _docker_host_ip(request)
+    data.values["_host"] = host
     jid = secrets.token_hex(6)
     job = {"id": jid, "game": data.game, "log": [], "step": "", "done": False, "error": None, "server_id": None}
     _jobs[jid] = job

@@ -80,7 +80,8 @@ const ICONS = {
 const gicon = (g, size=16) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[g] || ICONS._}</svg>`;
 // Originalbilder der Spiele (live von Steam geladen; offline -> eigenes Symbol)
 const STEAM_APPS = {tf2: 440, cs2: 730, factorio: 427520, satisfactory: 526870, valheim: 892970, wreckfest: 228380};
-const steamImg = (g, file) => STEAM_APPS[g] ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${STEAM_APPS[g]}/${file}` : "";
+const appOf = g => STEAM_APPS[g] || (GAMES[g] && GAMES[g].appid) || null;
+const steamImg = (g, file) => appOf(g) ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${appOf(g)}/${file}` : "";
 var ICONS_URL = {apps: {}, games: {}};
 const OTHER_LOGOS = {minecraft: "https://www.minecraft.net/favicon.ico", teamspeak: "https://www.teamspeak.com/favicon.ico"};
 function gameLogo(g){
@@ -175,6 +176,7 @@ function showView(v){
   if (v === "auto") renderAuto();
   if (v === "cache"){ loadCacheLive(); loadCacheHistory(); loadDnsCheck(); }
   if (v === "prefill"){ pfLoaded = false; loadPrefill(); }
+  if (v === "storage") loadStorage(true);
 }
 
 /* ================= Serverliste ================= */
@@ -635,7 +637,7 @@ async function refreshDash(){
       </div>` : `
       <div class="kv">
         <span>${worldLabel(gameOf(s))}</span><span>${esc(o.map || "–")}</span>
-        <span>Spieler</span><span>${o.humans ?? 0}${o.max_players ? " / " + o.max_players : ""}</span>
+        <span>Spieler</span><span>${o.players_unknown ? "– (Spiel meldet keine Spielerzahl)" : `${o.humans ?? 0}${o.max_players ? " / " + o.max_players : ""}`}</span>
         ${Object.entries(o.extra || {}).filter(([k]) => !["Session","Servername","Strecke"].includes(k)).slice(0, 2).map(([k,v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join("")}
       </div>`) + `</div>
       <div class="bar"><i style="width:${pct}%"></i></div>
@@ -657,7 +659,7 @@ async function refreshDash(){
 }
 
 /* ================= Server-Ansicht ================= */
-const VIEWS = ["dash","players","auto","server","scan","create","users","cache","prefill"];
+const VIEWS = ["dash","players","auto","server","scan","create","users","cache","prefill","storage"];
 function applyGameClasses(s){
   const g = gameOf(s), meta = GAMES[g] || {};
   document.body.classList.toggle("g-other", g !== "cs2");
@@ -2014,3 +2016,32 @@ $("#pfSaveOpts").onclick = async () => {
   catch (e) { toast(e.message, true); }
 };
 setInterval(() => { if (view === "prefill" && !document.hidden) loadPrefill(); }, 2000);
+
+/* ================= Speicher / iSCSI ================= */
+async function loadStorage(fill){
+  let d;
+  try { d = await api("/api/storage"); } catch (e) { toast(e.message, true); return; }
+  const s = d.settings;
+  if (fill){
+    $("#stoPortal").value = s.portal || ""; $("#stoTarget").value = s.target || ""; $("#stoUser").value = s.chap_user || "";
+    $("#stoPw").value = s.chap_pw || ""; $("#stoMnt").value = s.mountpoint || ""; $("#stoFs").value = s.fs || "ext4";
+    $("#stoLabel").value = s.label || ""; $("#stoPurpose").value = s.purpose || "lancache"; $("#stoOld").value = s.old_path || "";
+    $("#stoFormat").checked = !!s.format;
+  }
+  const m = d.mount || {}, dk = d.disk;
+  $("#stoCards").innerHTML = `
+    <div class="card"><div class="k">${esc(s.mountpoint)}</div><div class="v" style="color:${m.mounted ? "var(--ok)" : "inherit"}">${m.mounted ? "eingehängt" : m.mounted === false ? "nicht eingehängt" : "unbekannt"}</div>
+      <div class="s">${m.mounted ? esc(m.device + " · " + m.fstype) : esc(m.error || "Skript noch nicht ausgeführt")}</div></div>
+    <div class="card"><div class="k">Zugriffszeit (Platte)</div><div class="v">${dk && dk.await_ms != null ? dk.await_ms + " ms" : "–"}</div><div class="s">${dk ? "Auslastung " + dk.util + " %" : "nach dem Einbinden sichtbar"}</div></div>
+    <div class="card"><div class="k">Ziel</div><div class="v" style="font-size:14px;white-space:normal">${esc(s.target || "wird gesucht")}</div><div class="s">${esc(s.portal || "Portal fehlt")}</div></div>`;
+  $("#stoMounts").innerHTML = (d.mounts || []).length ? `<table class="cachetable"><thead><tr><th>Pfad</th><th>Gerät</th><th>Typ</th><th></th></tr></thead><tbody>${d.mounts.map(x => `<tr><td class="mono">${esc(x.path)}</td><td class="mono">${esc(x.device)}</td><td class="mono">${esc(x.fstype)}</td><td class="hint">${x.network ? "Netzwerkfreigabe (NFS/SMB)" : x.device.startsWith("/dev/") ? "Blockgerät (lokal oder iSCSI)" : ""}</td></tr>`).join("")}</tbody></table>` : `<div class="hint">Keine Daten (Host-/proc im Stack eingebunden?).</div>`;
+  $("#stoScript").textContent = d.script;
+}
+$("#stoSave").onclick = async () => {
+  const body = {portal: $("#stoPortal").value.trim(), target: $("#stoTarget").value.trim(), chap_user: $("#stoUser").value.trim(),
+    chap_pw: $("#stoPw").value, mountpoint: $("#stoMnt").value.trim(), fs: $("#stoFs").value, label: $("#stoLabel").value.trim(),
+    purpose: $("#stoPurpose").value, old_path: $("#stoOld").value.trim(), format: $("#stoFormat").checked};
+  try { await api("/api/storage", {method: "PUT", body}); toast("Gespeichert – Skript aktualisiert"); loadStorage(true); } catch (e) { toast(e.message, true); }
+};
+$("#stoCopy").onclick = async () => { try { await navigator.clipboard.writeText($("#stoScript").textContent); toast("Skript kopiert"); } catch { toast("Kopieren nicht möglich – bitte herunterladen", true); } };
+setInterval(() => { if (view === "storage" && !document.hidden) loadStorage(false); }, 5000);

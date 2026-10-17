@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=37">
+<link rel="stylesheet" href="/static/app.css?v=39">
 </head>
 <body>
 
@@ -46,6 +46,7 @@
       <button data-view="players">☺ Spieler &amp; SteamIDs</button>
       <button data-view="cache">⛁ Lancache-Verlauf</button>
       <button data-view="prefill" class="adminonly">⇩ SteamPrefill</button>
+      <button data-view="storage" class="adminonly">🖴 Speicher (iSCSI)</button>
       <button data-view="scan">⌕ Netzwerk-Scan <span class="pill hidden" id="scanBadge"></span></button>
       <button data-view="create" class="adminonly">＋ Neuen Server anlegen</button>
       <button data-view="users" class="adminonly">☰ Benutzer</button>
@@ -78,6 +79,46 @@
       <div class="topbar"><div><div class="title">Lancache-Verlauf</div><div class="sub" id="cacheSub">wird geladen …</div></div>
         <div style="margin-left:auto" class="row"><span class="hint">Zeitraum</span><div class="seg" id="cacheRangeSeg"><button data-crange="24h">24 h</button><button data-crange="7d">7 Tage</button><button data-crange="30d">30 Tage</button><button data-crange="90d">90 Tage</button><button data-crange="365d">1 Jahr</button></div></div></div>
       <div class="content" style="max-width:none"><div id="cacheLive"></div><div id="cacheHist"></div><div id="cacheDns"></div></div>
+    </section>
+
+    <!-- Speicher / iSCSI -->
+    <section id="view-storage" class="hidden">
+      <div class="topbar"><div><div class="title">Speicher (iSCSI)</div><div class="sub">LUN vom NAS als lokalen Datenträger einbinden – z. B. für den Lancache-Cache</div></div></div>
+      <div class="content" style="max-width:1200px">
+        <div class="cards" id="stoCards"></div>
+        <div class="grid2">
+          <div class="panel">
+            <h2>Einstellungen</h2>
+            <div class="stogrid">
+              <div><label>NAS / iSCSI-Portal</label><input id="stoPortal" placeholder="192.168.200.13 (Port 3260)"></div>
+              <div><label>Ziel (IQN, leer = erstes gefundenes)</label><input id="stoTarget" placeholder="iqn.2000-01.com.synology:…"></div>
+              <div><label>CHAP-Benutzer (optional)</label><input id="stoUser" autocomplete="off"></div>
+              <div><label>CHAP-Passwort</label><input id="stoPw" type="password" autocomplete="new-password"></div>
+              <div><label>Mountpunkt auf dem Server</label><input id="stoMnt" placeholder="/mnt/lancache"></div>
+              <div><label>Dateisystem</label><select id="stoFs"><option value="ext4">ext4 (empfohlen)</option><option value="xfs">xfs (große Caches)</option></select></div>
+              <div><label>Bezeichnung</label><input id="stoLabel" maxlength="12"></div>
+              <div><label>Verwendung</label><select id="stoPurpose"><option value="lancache">Lancache-Cache</option><option value="games">Spielserver-Daten</option><option value="other">sonstiges</option></select></div>
+              <div><label>Bisheriger Cache-Ordner</label><input id="stoOld" placeholder="/mnt/cachenew"></div>
+              <div style="display:flex;align-items:end"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="stoFormat" style="width:auto"> leere LUN formatieren</label></div>
+            </div>
+            <div class="row" style="margin-top:12px"><button class="primary" id="stoSave">Speichern &amp; Skript erzeugen</button></div>
+            <div class="hint" style="margin-top:10px">Auf der Synology: SAN Manager → iSCSI → LUN anlegen (Thick, für Cache gern 1–4 TB) → Ziel erstellen und den Initiator des Servers erlauben (steht nach Schritt 1 im Skript). Netzwerk: wenn möglich eigene NIC/VLAN und MTU 9000 auf beiden Seiten.</div>
+          </div>
+          <div class="panel">
+            <h2>Einbinden auf dem Docker-Host</h2>
+            <ol class="stosteps">
+              <li>Skript herunterladen und auf den Docker-Host kopieren (oder unten kopieren).</li>
+              <li>Per SSH ausführen: <code>sudo bash iscsi-einbinden.sh</code> – formatiert nur nach Eingabe von <b>JA</b>.</li>
+              <li>Im Lancache-Stack den Cache-Pfad auf den neuen Mountpunkt umstellen und neu deployen.</li>
+              <li>Diese Seite zeigt dann, ob alles eingehängt ist, und die Zugriffszeiten im Vergleich zu NFS.</li>
+            </ol>
+            <div class="row"><a class="btn primary" id="stoDl" href="/api/storage/script" download="iscsi-einbinden.sh">⇩ Skript herunterladen</a><button id="stoCopy">Kopieren</button></div>
+            <div class="hint" style="margin-top:8px">Aus Sicherheitsgründen führt die Weboberfläche selbst keine root-Befehle auf dem Host aus.</div>
+          </div>
+        </div>
+        <div class="panel" style="margin-top:16px"><h2>Eingehängte Datenträger unter /mnt</h2><div id="stoMounts"></div></div>
+        <div class="panel" style="margin-top:16px"><details><summary class="hint" style="cursor:pointer">Skript anzeigen</summary><pre class="pflog" id="stoScript"></pre></details></div>
+      </div>
     </section>
 
     <!-- SteamPrefill -->
@@ -563,6 +604,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=37"></script>
+<script src="/static/app.js?v=39"></script>
 </body>
 </html>

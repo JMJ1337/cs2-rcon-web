@@ -112,6 +112,12 @@ TEMPLATES = {
     },
 }
 
+from .games import catalog as _catalog  # noqa: E402
+
+for _k, _c in _catalog.CATALOG.items():
+    TEMPLATES[_k] = {"label": _c["label"], "image": _c["image"], "uid": _c["uid"], "gid": _c.get("gid", _c["uid"]),
+                     "data_default": "{base}/" + _k + "/{name}", "fields": _catalog.fields(_k), "hint": _c.get("hint", "")}
+
 # Port-Vergabe: (Feld, Startport, Schrittweite, belegte Ports pro Server)
 PORT_PLAN = {
     "cs2": [("port", 27015, 1, 1), ("tv_port", 27020, 1, 1)],
@@ -123,6 +129,10 @@ PORT_PLAN = {
     "teamspeak": [("port", 9987, 1, 1), ("query_port", 10011, 1, 1), ("file_port", 30033, 1, 1)],
     "wreckfest": [("port", 33540, 1, 1), ("query_port", 26900, 1, 1), ("steam_port", 27115, 1, 1), ("web_port", 9028, 1, 1)],
 }
+
+
+for _k in _catalog.CATALOG:
+    PORT_PLAN[_k] = _catalog.port_plan(_k)
 
 
 def suggest_ports(game: str, used: set[int]) -> dict:
@@ -258,6 +268,33 @@ def build(game: str, v: dict, data_dir: str) -> dict:
         host["Binds"].append(f"{data_dir}:/var/ts3server")
         spec_extra = {}
         srv = {"port": qport, "password": "", "game_port": port}
+    elif game in _catalog.CATALOG:
+        c = _catalog.CATALOG[game]
+        vals = {f: _port(v.get(f), lbl) for f, lbl, *_ in c["ports"]}
+        sub = {"data": data_dir, "params": (v.get("params") if v.get("params") is not None else c.get("params", "")),
+               "steam_user": v.get("steam_user") or "", "steam_pw": v.get("steam_pw") or "", "host": v.get("_host") or "",
+               "port": vals.get("port", ""), **{f[0]: v.get(f[0]) or "" for f in c.get("fields", [])}}
+        env = [e.format(**sub) for e in c["env"]]
+        for f, _lbl, _d, protos, cport in c["ports"]:
+            for proto in protos.split(","):
+                exposed[f"{cport}/{proto}"] = {}
+                host["PortBindings"][f"{cport}/{proto}"] = [{"HostPort": str(vals[f])}]
+        if c.get("web"):
+            wport = _port(v.get("web_port"), "Webkonsole")
+            exposed["8080/tcp"] = {}
+            host["PortBindings"]["8080/tcp"] = [{"HostPort": str(wport)}]
+        host["Binds"] += [b.format(data=data_dir) for b in c["binds"]]
+        spec_extra = {}
+        if c.get("cmd"):
+            spec_extra["Cmd"] = c["cmd"]
+        if c.get("tty"):
+            spec_extra.update(Tty=True, OpenStdin=True)
+        st = c["status"]
+        sp = vals.get(st[1]) if len(st) > 1 and st[1] in vals else vals.get("port")
+        jp = vals.get(c["join"][1]) or vals.get("port")
+        srv = {"port": sp, "password": "", "game_port": jp}
+        if c.get("web"):
+            srv["web_url"] = f"http://{{host}}:{wport}"
     elif game == "wreckfest":
         port = _port(v.get("port"), "Spielport")
         qport, sport = _port(v.get("query_port"), "Query-Port"), _port(v.get("steam_port"), "Steam-Port")

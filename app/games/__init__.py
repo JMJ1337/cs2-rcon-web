@@ -52,6 +52,21 @@ GAMES = {
 }
 
 
+from .catalog import CATALOG as _CAT  # noqa: E402
+
+for _k, _c in _CAT.items():
+    _st = _c["status"]
+    GAMES[_k] = {
+        "label": _c["label"], "short": _c["short"], "color": _c["color"], "appid": _c.get("appid"),
+        "port_label": "Abfrage-Port" if _st[0] != "container" else "Spielport",
+        "default_port": next((p[2] for p in _c["ports"] if p[0] == (_st[1] if len(_st) > 1 else "port")), _c["ports"][0][2]),
+        "password_label": "– (nicht nötig)", "console": False,
+        "features": ["webconsole"] if _c.get("web") else [], "catalog": True,
+    }
+for _k, _a in {"cs2": 730, "tf2": 440, "factorio": 427520, "satisfactory": 526870, "valheim": 892970, "wreckfest": 228380}.items():
+    GAMES[_k]["appid"] = _a
+
+
 def game_of(server: dict) -> str:
     g = server.get("game") or "cs2"
     return g if g in GAMES else "cs2"

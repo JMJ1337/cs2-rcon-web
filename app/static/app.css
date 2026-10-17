@@ -339,3 +339,7 @@ body.g-other:not(.g-tf2) .srconly{display:none!important}
 .sparkbox .spark{height:100%!important;width:100%}
 .yax{display:flex;flex-direction:column;justify-content:space-between;font-size:9.5px;line-height:1;color:var(--muted);text-align:right;font-family:var(--mono);min-width:34px;white-space:nowrap}
 .hl-row span,.hl-row b{white-space:nowrap}
+.stogrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 14px}
+.stogrid label{font-size:12px;color:var(--muted)}
+.stosteps{margin:0 0 12px 18px;padding:0;display:grid;gap:6px;font-size:14px}
+a.btn{display:inline-flex;align-items:center;padding:7px 12px;border-radius:7px;text-decoration:none;background:var(--accent);color:var(--accent-ink);font-weight:600}

@@ -209,3 +209,46 @@ async def tf2_rcon_status(c: RconClient) -> dict:
                                     "Steam-Login": acct}.items() if v},
         "updated": time.time(),
     }
+
+
+async def generic_a2s_status(host: str, port: int, label: str) -> dict:
+    info = await a2s.info(host, port)
+    try:
+        pl = await a2s.players(host, port)
+    except a2s.A2SError:
+        pl = []
+    bots = info.get("bots") or 0
+    return {
+        "map": info.get("map") or "–", "humans": max(0, info["players"] - bots), "bots": bots, "max_players": info["max_players"],
+        "players": [{"name": p["name"] or "(verbindet …)", "time": f"{p['time'] // 60} min"} for p in pl if p.get("name") is not None],
+        "version": info.get("version"), "hostname": info["name"], "mode": {"key": "game", "label": label},
+        "extra": {k: v for k, v in {"Map": info.get("map"), "Version": info.get("version"), "Bots": bots or None,
+                                    "Passwort": "ja" if info["password"] else "nein"}.items() if v},
+        "updated": time.time(),
+    }
+
+
+async def tcp_status(host: str, port: int, label: str) -> dict:
+    import asyncio
+    try:
+        _, w = await asyncio.wait_for(asyncio.open_connection(host, port), 3)
+        w.close()
+    except (OSError, asyncio.TimeoutError) as e:
+        raise a2s.A2SError(f"Port {host}:{port} nicht erreichbar") from e
+    return {"map": "–", "humans": 0, "bots": 0, "max_players": 0, "players": [], "version": None, "hostname": None,
+            "mode": {"key": "game", "label": label}, "extra": {"Port": f"{port} erreichbar"}, "updated": time.time(),
+            "players_unknown": True}
+
+
+async def ac_status(host: str, port: int) -> dict:
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=4) as cl:
+            j = (await cl.get(f"http://{host}:{port}/INFO")).json()
+    except (httpx.HTTPError, ValueError) as e:
+        raise a2s.A2SError(f"Assetto-Corsa-HTTP {host}:{port} antwortet nicht") from e
+    return {"map": j.get("track") or "–", "humans": int(j.get("clients") or 0), "bots": 0, "max_players": int(j.get("maxclients") or 0),
+            "players": [], "version": None, "hostname": j.get("name"), "mode": {"key": "ac", "label": "Assetto Corsa"},
+            "extra": {k: v for k, v in {"Strecke": j.get("track"), "Autos": ", ".join(j.get("cars") or [])[:80],
+                                        "Passwort": "ja" if j.get("pass") else "nein"}.items() if v},
+            "updated": time.time()}
