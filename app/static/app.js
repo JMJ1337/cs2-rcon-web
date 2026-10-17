@@ -135,7 +135,11 @@ async function api(path, opts={}){
     body: opts.body ? JSON.stringify(opts.body) : undefined,
     credentials: "same-origin",
   });
-  if (res.status === 401 && path !== "/api/login"){ showPublic(); throw new Error("Nicht angemeldet"); }
+  if (res.status === 401 && path !== "/api/login"){
+    // nur aus der laufenden App zur öffentlichen Liste wechseln – nie das offene Login-Fenster schließen
+    if (!$("#app").classList.contains("hidden")) showPublic();
+    throw new Error("Nicht angemeldet");
+  }
   let data = null;
   try { data = await res.json(); } catch {}
   if (!res.ok){
@@ -387,7 +391,7 @@ function latencyRow(io){
 }
 let liveBusy = false, lastLive = null;
 async function liveTick(){
-  if (liveBusy || document.hidden) return;
+  if (liveBusy || document.hidden || !me || $("#app").classList.contains("hidden")) return;
   liveBusy = true;
   try {
     const L = await api("/api/live");
