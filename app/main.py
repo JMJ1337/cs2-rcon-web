@@ -104,7 +104,7 @@ def require_auth(request: Request):
         raise HTTPException(403, "Nur Ansicht – keine Berechtigung für Änderungen")
     admin_only = (path.startswith(ADMIN_PATHS) and not (path == "/api/settings" and method == "GET")) or \
         (method in ("POST", "PUT", "DELETE") and re.fullmatch(r"/api/servers(/[\w-]+)?", path)) or \
-        re.fullmatch(r"/api/servers/[\w-]+/(delete(-preview)?|container/(diag|use-lancache)|wreckfest/.*)", path)
+        re.fullmatch(r"/api/servers/[\w-]+/(delete(-preview)?|container/(diag|use-lancache|steamfix|env)|wreckfest/.*)", path)
     if admin_only and level < 3:
         raise HTTPException(403, "Nur für Administratoren")
     request.state.user = u
@@ -1879,6 +1879,78 @@ async def container_diag(sid: str):
         return {"output": re.sub(r"^\s*(\d+) #TCP ([0-9A-Fa-f]{8}:[0-9A-Fa-f]{4})\s*$", conv, out, flags=re.M)}
     except docker_api.DockerError as e:
         raise HTTPException(502, str(e))
+
+
+STEAMFIX_SH = r"""
+set -e
+SC=/serverdata/steamcmd/steamcmd.sh
+[ -x "$SC" ] || { echo "steamcmd nicht gefunden"; exit 1; }
+echo "== Lade als Windows (Plattform-Workaround) …"
+$SC +force_install_dir /serverdata/serverfiles +login anonymous +@sSteamCmdForcePlatformType windows +app_update $GAME_ID +quit | grep -E "Success|Error|ERROR" || true
+echo "== Lade als Linux und prüfe …"
+$SC +force_install_dir /serverdata/serverfiles +login anonymous +@sSteamCmdForcePlatformType linux +app_update $GAME_ID validate +quit | grep -E "Success|Error|ERROR" || true
+"""
+
+
+@app.post("/api/servers/{sid}/container/steamfix", dependencies=auth)
+async def container_steamfix(sid: str):
+    """SteamCMD-Plattform-Workaround für ich777-Images (Windows-, dann Linux-Download), danach Container starten."""
+    name = _container_of(sid)
+    try:
+        info = await docker_api.inspect(name)
+        cfg = info.get("Config") or {}
+        env = cfg.get("Env") or []
+        if not any(e.startswith("GAME_ID=") for e in env) or "/serverdata" not in " ".join((info.get("HostConfig") or {}).get("Binds") or []):
+            raise HTTPException(400, "Nur für SteamCMD-Container (ich777-Images)")
+        await docker_api._req("POST", f"/containers/{name}/stop", params={"t": "20"}, timeout=60)
+        uid = next((e.split("=", 1)[1] for e in env if e.startswith("UID=")), "99")
+        gid = next((e.split("=", 1)[1] for e in env if e.startswith("GID=")), "100")
+        code, out = await docker_api.run_once(cfg["Image"], STEAMFIX_SH, (info.get("HostConfig") or {}).get("Binds") or [],
+                                              user=f"{uid}:{gid}", env=[e for e in env if e.startswith("GAME_ID=")] + ["HOME=/serverdata"], timeout=7200)
+        await docker_api._req("POST", f"/containers/{name}/start", timeout=60)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    return {"ok": code == 0, "output": out[-2000:]}
+
+
+class EnvIn(BaseModel):
+    key: str = Field(pattern=r"^[A-Z_][A-Z0-9_]{0,40}$")
+    value: str = Field("", max_length=500)
+
+
+@app.post("/api/servers/{sid}/container/env", dependencies=auth)
+async def container_set_env(sid: str, data: EnvIn):
+    """Eine Umgebungsvariable (z. B. GAME_PARAMS) ändern – Container wird mit gleichen Daten neu erstellt."""
+    name = _container_of(sid)
+    try:
+        info = await docker_api.inspect(name)
+        if ((info.get("Config") or {}).get("Labels") or {}).get("gsm.managed") != "1":
+            raise HTTPException(400, "Nur für Container, die dieses Tool angelegt hat")
+
+        def mutate(cfg, hc):
+            env = [e for e in (cfg.get("Env") or []) if not e.startswith(data.key + "=")]
+            env.append(f"{data.key}={data.value}")
+            cfg["Env"] = env
+        await docker_api.recreate(name, mutate)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    drop_client(sid)
+    return {"ok": True}
+
+
+@app.get("/api/servers/{sid}/container/env", dependencies=auth)
+async def container_get_env(sid: str):
+    name = _container_of(sid)
+    try:
+        info = await docker_api.inspect(name)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    env = {}
+    for e in (info.get("Config") or {}).get("Env") or []:
+        k, _, v = e.partition("=")
+        if k in ("GAME_PARAMS", "GAME_ID", "VALIDATE"):
+            env[k] = v
+    return {"env": env, "managed": ((info.get("Config") or {}).get("Labels") or {}).get("gsm.managed") == "1"}
 
 
 @app.get("/api/servers/{sid}/container/logs", dependencies=auth)

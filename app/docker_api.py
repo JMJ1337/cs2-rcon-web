@@ -233,3 +233,22 @@ async def recreate(name: str, mutate) -> None:
         await _req("POST", f"/containers/{name}/start", timeout=60)
         raise
     await _req("DELETE", f"/containers/{tmp}", params={"force": "1"}, timeout=60)
+
+
+async def run_once(image: str, script: str, binds: list[str], user: str = "", env: list[str] | None = None,
+                   timeout: float = 3600) -> tuple[int, str]:
+    """Einmaligen Container aus einem Spiel-Image starten (z. B. SteamCMD-Reparatur), Ausgabe zurückgeben."""
+    c = (await _req("POST", "/containers/create", json={
+        "Image": image, "Entrypoint": ["/bin/bash", "-c"], "Cmd": [script], "User": user or "", "Env": env or [],
+        "HostConfig": {"Binds": binds, "AutoRemove": False}, "Labels": {"gsm.helper": "steamfix"}})).json()
+    cid = c["Id"]
+    try:
+        await _req("POST", f"/containers/{cid}/start")
+        w = (await _req("POST", f"/containers/{cid}/wait", timeout=timeout)).json()
+        out = _demux((await _req("GET", f"/containers/{cid}/logs", params={"stdout": "1", "stderr": "1", "tail": "60"})).content)
+        return int(w.get("StatusCode", 0)), out
+    finally:
+        try:
+            await _req("DELETE", f"/containers/{cid}", params={"force": "1"})
+        except DockerError:
+            pass

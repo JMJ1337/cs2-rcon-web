@@ -36,7 +36,7 @@ CATALOG = {
     },
     "quakelive": {
         "label": "Quake Live", "short": "Quake", "color": "#c23b22", "appid": 282440, "image": _ich("quakelive"), "uid": 99, "gid": 100,
-        "env": ICH_ENV + ["GAME_ID=349090"], "binds": ICH_BINDS, "params": "+set sv_hostname GROH-LAN +set g_gametype 0",
+        "env": ICH_ENV + ["GAME_ID=349090"], "binds": ICH_BINDS, "params": "+set net_strict 1 +set sv_hostname GROH-LAN +set g_gametype 0 +set sv_maxClients 16 +map campgrounds ffa",
         "ports": [["port", "Spielport (UDP)", 27960, "udp", 27960], ["rcon_port", "ZMQ-RCON (TCP)", 28960, "tcp", 28960]], "web": True,
         "status": ("a2s", "port"), "join": ("steam", "port"),
     },

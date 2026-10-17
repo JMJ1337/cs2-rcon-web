@@ -2045,3 +2045,32 @@ $("#stoSave").onclick = async () => {
 };
 $("#stoCopy").onclick = async () => { try { await navigator.clipboard.writeText($("#stoScript").textContent); toast("Skript kopiert"); } catch { toast("Kopieren nicht möglich – bitte herunterladen", true); } };
 setInterval(() => { if (view === "storage" && !document.hidden) loadStorage(false); }, 5000);
+
+/* Container: Steam-Reparatur + Startparameter (SteamCMD-Images) */
+let ctEnvFor = null;
+async function loadCtEnv(){
+  if (!current || !current.container || ctEnvFor === current.id) return;
+  ctEnvFor = current.id;
+  $("#btnSteamFix").classList.add("hidden"); $("#ctParamsRow").classList.add("hidden");
+  if (!me || me.role !== "admin") return;
+  try {
+    const r = await api(`/api/servers/${current.id}/container/env`);
+    const steam = "GAME_ID" in r.env;
+    $("#btnSteamFix").classList.toggle("hidden", !steam);
+    $("#ctParamsRow").classList.toggle("hidden", !("GAME_PARAMS" in r.env) || !r.managed);
+    $("#ctParams").value = r.env.GAME_PARAMS || "";
+  } catch {}
+}
+$("#btnSteamFix").onclick = async () => {
+  if (!confirm("Server wird gestoppt, SteamCMD lädt das Spiel einmal als Windows und dann als Linux (kann dauern). Fortfahren?")) return;
+  const b = $("#btnSteamFix"); b.disabled = true; b.textContent = "läuft … (Seite offen lassen)";
+  try { const r = await api(`/api/servers/${current.id}/container/steamfix`, {method: "POST"}); toast(r.ok ? "Fertig – Server startet" : "SteamCMD meldet Fehler, siehe Log", !r.ok); logConsole("steamfix", r.output || ""); }
+  catch (e) { toast(e.message, true); }
+  b.disabled = false; b.textContent = "Steam-Installation reparieren";
+};
+$("#btnCtParams").onclick = async () => {
+  if (!confirm("Container mit neuen Startparametern neu erstellen?")) return;
+  try { await api(`/api/servers/${current.id}/container/env`, {body: {key: "GAME_PARAMS", value: $("#ctParams").value.trim()}}); toast("Übernommen – Server startet neu"); }
+  catch (e) { toast(e.message, true); }
+};
+setInterval(() => { if (view === "server" && current && tab === "container") loadCtEnv(); else if (!current || ctEnvFor !== (current && current.id)) ctEnvFor = null; }, 1500);
