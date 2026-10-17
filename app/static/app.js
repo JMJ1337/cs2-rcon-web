@@ -1918,6 +1918,13 @@ function pollJob(id){
     $("#createStep").textContent = j.error ? "Fehler: " + j.error : j.done ? "Fertig ✓" : j.step;
     $("#createStep").style.color = j.error ? "var(--bad)" : j.done ? "var(--ok)" : "";
     $("#createLog").textContent = j.log.join("\n");
+    const pg = j.progress;
+    $("#createProg").classList.toggle("hidden", !pg || j.done);
+    if (pg){
+      $("#createProg i").style.width = Math.min(100, pg.pct) + "%";
+      $("#createProg .s").textContent = `${pg.label} · ${pg.pct.toFixed(1)} %` + (pg.total_files ? ` · ${pg.done_files} / ${pg.total_files} Dateien` : "")
+        + (pg.total_bytes ? ` · ${fmtBytes(pg.total_bytes)} gesamt` : "") + (pg.eta ? ` · noch ${fmtEta(pg.eta)} (fertig ca. ${etaClock(pg.eta)} Uhr)` : "");
+    }
     if (j.server_id){ await loadServers(); $("#btnCreateOpen").classList.remove("hidden"); $("#btnCreateOpen").onclick = () => selectServer(servers.find(s => s.id === j.server_id)); }
     if (!j.done) jobTimer = setTimeout(() => pollJob(id), 2000);
   }).catch(err => { $("#createStep").textContent = err.message; });

@@ -53,6 +53,10 @@ COOKIE = "cs2rcon_session"
 async def lifespan(_app):
     tasks = [asyncio.create_task(watcher()), asyncio.create_task(scan_loop()),
              asyncio.create_task(load_loop()), asyncio.create_task(live_loop())] if WATCH_ENABLED else []
+    try:
+        _resume_jobs()
+    except Exception:  # noqa: BLE001
+        log.exception("Anlege-Jobs konnten nicht fortgesetzt werden")
     yield
     for t in tasks:
         t.cancel()
@@ -1442,7 +1446,8 @@ async def activity():
     except docker_api.DockerError:
         pass
     jobs = [{"id": j["id"], "game": j["game"], "step": j["step"], "error": j["error"], "done": j["done"],
-             "server_id": j["server_id"], "title": j.get("title")} for j in _jobs.values() if not j["done"] or j["error"]]
+             "server_id": j["server_id"], "title": j.get("title"), "progress": j.get("progress")}
+            for j in _jobs.values() if not j["done"] or j["error"]]
     return {"items": items, "jobs": jobs[-5:]}
 
 
@@ -3159,6 +3164,25 @@ async def container_logs(sid: str, tail: int = 300):
 
 # ---------------------------------------------------------------- Neue Server anlegen
 _jobs: dict[str, dict] = {}
+_jobs_saved = {"t": 0.0}
+
+
+def _save_jobs(force: bool = False) -> None:
+    """Anlege-Jobs im Volume sichern, damit sie ein Neustart des Tools (z. B. Update) überleben."""
+    if not force and time.time() - _jobs_saved["t"] < 5:
+        return
+    _jobs_saved["t"] = time.time()
+    keep = [j for j in _jobs.values() if j.get("req") and (not j["done"] or time.time() - j.get("t_done", time.time()) < 3600)]
+    store.save("jobs.json", keep[-20:])
+
+
+def _resume_jobs() -> None:
+    for j in store.load("jobs.json", []):
+        _jobs[j["id"]] = j
+        if not j.get("done") and j.get("req"):
+            _job_log(j, "Tool wurde neu gestartet – Anlegen wird fortgesetzt")
+            r = j["req"]
+            asyncio.create_task(_create_job(j, CreateIn(**{k: r[k] for k in ("game", "values", "data_dir", "host")}), r["host"]))
 
 
 @app.get("/api/templates", dependencies=auth)
@@ -3204,13 +3228,26 @@ class CreateIn(BaseModel):
 
 def _job_log(job, msg):
     job["log"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+    if job.get("req"):
+        _save_jobs()
     job["log"] = job["log"][-200:]
     job["step"] = msg
 
 
+COPY_SH = r"""
+cd /copysrc || exit 3
+T=$(find . -type f 2>/dev/null | wc -l)
+B=$(du -sk . 2>/dev/null | cut -f1)
+echo "TOTAL $T ${B:-0}"
+cp -ruv /copysrc/. /copydst/ 2>&1 | awk '/->/{n++; if (n % 100 == 0) {print "COPIED " n; fflush()}} /cannot|denied|No space/{print "ERR " $0; fflush()}'
+echo "COPIED_FINAL $(find /copydst -type f 2>/dev/null | wc -l)"
+echo DONE
+"""
+
+
 async def _copy_game_files(job: dict, b: dict, src_id: str) -> None:
     """Spieldateien eines vorhandenen Servers desselben Spiels kopieren, bevor der neue Container startet.
-    SteamCMD prüft beim Start nur noch Unterschiede – spart den kompletten Download (z. B. CS2 ~35–70 GB)."""
+    Läuft als eigener Container weiter, auch wenn das Tool neu startet; Fortschritt nach Dateien, mit Restzeit."""
     src = next((x for x in load_servers() if x["id"] == src_id), None)
     if not src or not src.get("container"):
         _job_log(job, "Kopieren übersprungen: Quell-Server ohne Container")
@@ -3226,23 +3263,67 @@ async def _copy_game_files(job: dict, b: dict, src_id: str) -> None:
         hp, cp = bind.split(":")[0], bind.split(":")[1].rstrip("/")
         sp = src_mounts.get(cp)
         if sp and sp.rstrip("/") != hp.rstrip("/"):
-            pairs.append((sp, hp, cp))
+            pairs.append((sp, hp))
     if not pairs:
         _job_log(job, "Kopieren übersprungen: keine passenden Datenordner beim Quell-Server")
         return
     user = f"{b['uid']}:{b['gid']}" if b.get("uid") else ""
-    for sp, hp, cp in pairs:
-        job["step"] = f"Kopiere Spieldateien von {src['name']} …"
-        _job_log(job, f"Kopiere {sp} → {hp} (als {user or 'root'}; dauert je nach Größe einige Minuten)")
-        t0 = time.time()
-        script = "cp -r /copysrc/. /copydst/ 2>&1 | tail -n 5; du -sh /copydst 2>/dev/null | cut -f1"
+    for k, (sp, hp) in enumerate(pairs):
+        cname = f"gsm-copy-{b['name']}-{k}"
         try:
-            code, out = await docker_api.run_once(b["image"], script, [f"{sp}:/copysrc:ro", f"{hp}:/copydst"], user=user, timeout=4 * 3600)
-        except docker_api.DockerError as e:
-            _job_log(job, f"Kopieren fehlgeschlagen ({e}) – der Server lädt die Dateien stattdessen selbst")
-            continue
-        size = (out.strip().splitlines() or ["?"])[-1]
-        _job_log(job, f"Kopiert: {size} in {int((time.time() - t0) / 60)} min" + ("" if code == 0 else f" (mit Warnungen: {out.strip()[:200]})"))
+            st = (await docker_api.inspect(cname)).get("State") or {}
+        except docker_api.DockerError:
+            st = None
+        if st is None:
+            _job_log(job, f"Kopiere {sp} → {hp} von {src['name']} (als {user or 'root'})")
+            await docker_api._req("POST", "/containers/create", params={"name": cname}, json={
+                "Image": b["image"], "Entrypoint": ["/bin/bash", "-c"], "Cmd": [COPY_SH], "User": user,
+                "Labels": {"gsm.helper": "copy", "gsm.copy_for": b["name"]},
+                "HostConfig": {"Binds": [f"{sp}:/copysrc:ro", f"{hp}:/copydst"], "AutoRemove": False,
+                               "CpuShares": 256}}, timeout=60)
+            await docker_api._req("POST", f"/containers/{cname}/start", timeout=60)
+        else:
+            _job_log(job, "Kopieren läuft bereits – Fortschritt wird weiter verfolgt")
+        total, total_kb, t0, n0 = None, 0, time.time(), None
+        while True:
+            try:
+                i2 = await docker_api.inspect(cname)
+                lg = await docker_api.logs(cname, 2000)
+            except docker_api.DockerError as e:
+                raise docker_api.DockerError(f"Kopier-Container verschwunden: {e}") from e
+            m = re.search(r"TOTAL (\d+) (\d+)", lg)
+            if m:
+                total, total_kb = int(m.group(1)), int(m.group(2))
+            nums = [int(x) for x in re.findall(r"COPIED (\d+)", lg)]
+            n = nums[-1] if nums else 0
+            if n0 is None:
+                n0, t0 = n, time.time()
+            rate = (n - n0) / max(1, time.time() - t0)
+            pct = min(99.9, n / total * 100) if total else 0.0
+            eta = round((total - n) / rate) if total and rate > 0 else None
+            job["progress"] = {"label": "Kopiere Spieldateien", "pct": round(pct, 1), "done_files": n, "total_files": total,
+                               "total_bytes": total_kb * 1024, "eta": eta}
+            job["step"] = f"Kopiere Spieldateien von {src['name']}: {pct:.0f} %" + (f" · noch ca. {max(1, eta // 60)} min" if eta else "")
+            _save_jobs()
+            if not (i2.get("State") or {}).get("Running"):
+                code = (i2.get("State") or {}).get("ExitCode")
+                errs = re.findall(r"^ERR (.*)$", lg, re.M)
+                fin = re.search(r"COPIED_FINAL (\d+)", lg)
+                if "DONE" not in lg or code not in (0, None):
+                    raise docker_api.DockerError(f"Kopieren abgebrochen (Code {code}): {(errs or [lg.strip()[-200:]])[-1][:200]}")
+                _job_log(job, f"Kopiert: {fin.group(1) if fin else n} Dateien, {fmt_gb(total_kb * 1024)}"
+                              + (f" – {len(errs)} Fehler, erster: {errs[0][:150]}" if errs else ""))
+                break
+            await asyncio.sleep(5)
+        try:
+            await docker_api.remove_container(cname)
+        except docker_api.DockerError:
+            pass
+    job.pop("progress", None)
+
+
+def fmt_gb(b: int) -> str:
+    return f"{b / 1e9:.1f} GB" if b >= 1e9 else f"{b / 1e6:.0f} MB"
 
 
 async def _create_job(job: dict, data: CreateIn, host: str):
@@ -3266,14 +3347,39 @@ async def _create_job(job: dict, data: CreateIn, host: str):
                 raise
             _job_log(job, f"Pull fehlgeschlagen ({e}) – nutze vorhandenes lokales Image")
         src_id = (data.values.get("_copy_from") or "").strip()
-        if src_id:
+        if src_id and job.get("stage") not in ("copied", "created"):
+            job["stage"] = "copy"
             await _copy_game_files(job, b, src_id)
+            job["stage"] = "copied"
+            _save_jobs(True)
         dns = await lancache_dns()
         if dns:
             b["spec"]["HostConfig"]["Dns"] = dns
             _job_log(job, f"DNS {', '.join(dns)} (Lancache) – Downloads laufen über den Cache")
-        _job_log(job, f"Container {b['name']} anlegen und starten")
-        await docker_api.create_container(b["name"], b["spec"])
+        exists = True
+        try:
+            await docker_api.inspect(b["name"])
+        except docker_api.DockerError:
+            exists = False
+        if exists:
+            _job_log(job, f"Container {b['name']} gibt es schon – wird gestartet")
+            try:
+                await docker_api.action(b["name"], "start")
+            except docker_api.DockerError:
+                pass
+        else:
+            _job_log(job, f"Container {b['name']} anlegen und starten")
+            await docker_api.create_container(b["name"], b["spec"])
+        job["stage"] = "created"
+        _save_jobs(True)
+        known = next((x for x in load_servers() if x.get("container") == b["name"]), None)
+        if known:
+            job["server_id"] = known["id"]
+            job["done"] = True
+            job["t_done"] = time.time()
+            _job_log(job, "Server war schon eingetragen – fertig")
+            _save_jobs(True)
+            return
         srv = {"id": uuid.uuid4().hex[:10], "name": b["name"], "host": host, "port": b["server"]["port"],
                "password": b["server"].get("password", ""), "notes": "angelegt vom Spielservermanager",
                "auto_slots": True, "game": data.game, "container": b["name"],
@@ -3329,15 +3435,24 @@ async def _create_job(job: dict, data: CreateIn, host: str):
             _job_log(job, "Wreckfest: Servername, Passwort und Ports werden nach der Installation automatisch eingetragen")
             asyncio.create_task(_wf_after_install(b["name"], b["server"]["wf_config"]))
         job["done"] = True
+        job["t_done"] = time.time()
         _job_log(job, "Fertig")
+        _save_jobs(True)
+    except asyncio.CancelledError:
+        _save_jobs(True)                 # Tool beendet sich – Job bleibt offen und wird nach dem Neustart fortgesetzt
+        raise
     except (ValueError, docker_api.DockerError) as e:
         job["error"] = str(e)
         job["done"] = True
+        job["t_done"] = time.time()
         _job_log(job, "Fehler: " + str(e))
+        _save_jobs(True)
     except Exception as e:  # noqa: BLE001
         log.exception("Anlegen fehlgeschlagen")
         job["error"] = str(e) or e.__class__.__name__
         job["done"] = True
+        job["t_done"] = time.time()
+        _save_jobs(True)
 
 
 # ---------------------------------------------------------------- Wreckfest: server_config.cfg
@@ -4011,8 +4126,10 @@ async def create_server(data: CreateIn, request: Request):
     host = (data.host or "").strip() or _docker_host_ip(request)
     data.values["_host"] = host
     jid = secrets.token_hex(6)
-    job = {"id": jid, "game": data.game, "log": [], "step": "", "done": False, "error": None, "server_id": None}
+    job = {"id": jid, "game": data.game, "log": [], "step": "", "done": False, "error": None, "server_id": None,
+           "req": {"game": data.game, "values": data.values, "data_dir": data.data_dir, "host": host}, "stage": "start"}
     _jobs[jid] = job
+    _save_jobs(True)
     asyncio.create_task(_create_job(job, data, host))
     return job
 
