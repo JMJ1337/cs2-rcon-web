@@ -1928,7 +1928,8 @@ async def container_steamfix(sid: str):
         uid = next((e.split("=", 1)[1] for e in env if e.startswith("UID=")), "99")
         gid = next((e.split("=", 1)[1] for e in env if e.startswith("GID=")), "100")
         code, out = await docker_api.run_once(cfg["Image"], STEAMFIX_SH, (info.get("HostConfig") or {}).get("Binds") or [],
-                                              user="0:0", env=[e for e in env if e.startswith("GAME_ID=")] + [f"OWNER={uid}:{gid}", "HOME=/root"],
+                                              user=f"{uid}:{gid}",   # als Spiel-Benutzer: NFS mit root_squash erlaubt root keine Schreibrechte
+                                              env=[e for e in env if e.startswith("GAME_ID=")] + [f"OWNER={uid}:{gid}", "HOME=/serverdata/steamcmd"],
                                               timeout=7200)
         await docker_api._req("POST", f"/containers/{name}/start", timeout=60)
     except docker_api.DockerError as e:
