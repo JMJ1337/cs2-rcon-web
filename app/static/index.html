@@ -162,6 +162,7 @@
             <h2>Optionen &amp; Zeitplan</h2>
             <div class="pfopts">
               <label><input type="checkbox" id="pfServerGames"> Spiele aller Spielserver automatisch vorhalten (CS2, TF2, Valheim …)</label>
+              <label><input type="checkbox" id="pfSkipCached"> Nur fehlende Spiele laden – was schon im Cache ist, überspringen (1× pro Woche läuft alles, damit Updates mitkommen)</label>
               <label><input type="checkbox" data-pf="recent"> zuletzt gespielte Spiele (2 Wochen)</label>
               <label><input type="checkbox" data-pf="recently_purchased"> kürzlich gekaufte Spiele</label>
               <label><input type="checkbox" data-pf="all"> alle Spiele des Kontos</label>
@@ -717,6 +718,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=63"></script>
+<script src="/static/app.js?v=64"></script>
 </body>
 </html>

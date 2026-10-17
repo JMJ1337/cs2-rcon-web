@@ -16,7 +16,7 @@ from . import automation, docker_api, store
 IMAGE = "tpill90/steam-lancache-prefill:latest"
 NAME = "steamprefill"
 SETTINGS = "prefill.json"
-DEFAULTS = {"server_games": True, "yield": True, "yield_mbs": 2.0, "schedule": "", "flags": {"recent": False, "recently_purchased": False, "top": 0, "all": False,
+DEFAULTS = {"server_games": True, "skip_cached": True, "last_full": None, "yield": True, "yield_mbs": 2.0, "schedule": "", "flags": {"recent": False, "recently_purchased": False, "top": 0, "all": False,
                                       "force": False, "verbose": False, "os": "windows"},
             "apps": [], "last_run": None, "last_scheduled": ""}
 
@@ -33,7 +33,7 @@ def settings() -> dict:
 
 def save_settings(data: dict) -> dict:
     s = settings()
-    for k in ("schedule", "flags", "apps", "last_run", "last_scheduled", "yield", "yield_mbs", "server_games"):
+    for k in ("schedule", "flags", "apps", "last_run", "last_scheduled", "yield", "yield_mbs", "server_games", "skip_cached", "last_full"):
         if k in data:
             s[k] = data[k]
     store.save(SETTINGS, s)
@@ -79,6 +79,11 @@ async def config_files() -> list[str]:
         return [x.strip() for x in out.splitlines() if x.strip()]
     except docker_api.DockerError:
         return []
+
+
+async def forget_downloaded() -> None:
+    """Neuer/geleerter Cache: SteamPrefills Liste „schon geladen“ löschen, sonst überspringt er Spiele, die nicht mehr im Cache sind."""
+    await docker_api.run_helper([f"{config_dir()}:/target"], ["sh", "-c", "rm -f /target/successfullyDownloadedDepots.json; echo ok"], timeout=60)
 
 
 async def write_apps(apps: list[int]) -> None:

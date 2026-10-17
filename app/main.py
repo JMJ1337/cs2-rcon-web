@@ -1863,6 +1863,11 @@ async def cache_reset():
     """Statistik zurücksetzen (z. B. nach Umzug auf einen neuen, leeren Cache)."""
     cache_history.reset_all()
     try:
+        await prefill.forget_downloaded()
+    except docker_api.DockerError:
+        pass
+    prefill.save_settings({"last_full": None})
+    try:
         await cache_stats.reset()
     except docker_api.DockerError as e:
         raise HTTPException(502, f"Verlauf gelöscht, Log konnte nicht geleert werden: {e}")
@@ -3714,7 +3719,8 @@ async def prefill_state(tail: int = 300):
             who = await netnames.annotate((cache_stats.summary().get("live_clients") or [])[:3], {x["host"] for x in load_servers()})
         except Exception:  # noqa: BLE001
             who = []
-    return {"settings": prefill.settings(), "container": st, "apps_progress": pp["apps"],
+    cstat = _apps_cache_status([a["id"] for a in prefill.settings().get("apps") or []])
+    return {"settings": prefill.settings(), "container": st, "apps_progress": pp["apps"], "cache_status": cstat,
             "rate": (livestats.data.get(prefill.NAME) or {}).get("rx_bps") if st and st.get("running") else None, "config_dir": prefill.config_dir(), "files": files,
             "logged_in": any(f.lower().startswith("account") or f.endswith(".dat") or "token" in f.lower() for f in files),
             "log": lg, "prompt": prefill.prompt_of(lg) if st and st.get("running") else None, "progress": prog,
@@ -3750,11 +3756,48 @@ async def _prefill_sync_server_games() -> None:
         await prefill.write_apps([a["id"] for a in apps])
 
 
+FULL_CHECK_DAYS = 7
+CACHED_PCT = 95
+
+
+def _apps_cache_status(appids) -> dict:
+    """Wie viel jedes Spiel seit dem letzten Zurücksetzen aus dem Internet in den Cache geholt hat (geschätzt)."""
+    stored = {g["app"]: g.get("miss") or 0 for g in depots.games(cache_history.series("365d").get("depots") or {}) if g.get("app")}
+    out, missing = {}, []
+    for a in appids:
+        a = int(a)
+        size = depots.app_size(a)
+        if not size:
+            missing.append(a)
+        st = stored.get(a, 0)
+        out[str(a)] = {"stored": st, "size": size, "pct": round(min(100.0, st / size * 100), 1) if size else None}
+    if missing:
+        asyncio.create_task(depots.ensure_sizes(missing[:10]))
+    return out
+
+
 async def _prefill_start(mode: str):
     try:
         await _prefill_sync_server_games()
     except docker_api.DockerError:
         pass
+    s0 = prefill.settings()
+    if mode != "select-apps" and s0.get("skip_cached", True) and s0.get("apps"):
+        # gecachte Spiele überspringen – einmal pro Woche aber alles laufen lassen, damit Updates mitkommen
+        full_due = not s0.get("last_full") or time.time() - s0["last_full"] > FULL_CHECK_DAYS * 86400
+        if full_due:
+            prefill.save_settings({"last_full": time.time()})
+            prefill.job["note"] = "Wöchentlicher Komplettlauf: alle Spiele werden auf Updates geprüft"
+        else:
+            stat = _apps_cache_status([a["id"] for a in s0["apps"]])
+            todo = [a["id"] for a in s0["apps"] if (stat.get(str(a["id"])) or {}).get("pct") is None
+                    or stat[str(a["id"])]["pct"] < CACHED_PCT]
+            skipped = len(s0["apps"]) - len(todo)
+            prefill.job["note"] = f"{skipped} Spiele schon im Cache übersprungen, {len(todo)} werden geladen" if skipped else None
+            try:
+                await prefill.write_apps(todo)
+            except docker_api.DockerError:
+                pass
     s = prefill.settings()
     prefill.job.update(running=True, step="startet …", error=None)
     try:
@@ -3844,6 +3887,7 @@ async def prefill_apps(data: PrefillApps):
 
 class PrefillSettings(BaseModel):
     server_games: bool = True
+    skip_cached: bool = True
     schedule: str = Field("", max_length=5)
     flags: dict
     yield_: bool = Field(True, alias="yield")
@@ -3859,7 +3903,7 @@ async def prefill_settings(data: PrefillSettings):
              "top": max(0, min(100, int(f.get("top") or 0))), "all": bool(f.get("all")), "force": bool(f.get("force")),
              "verbose": bool(f.get("verbose")), "os": f.get("os") if f.get("os") in ("windows", "linux", "macos") else "windows"}
     out = prefill.save_settings({"schedule": data.schedule, "flags": flags, "yield": data.yield_, "yield_mbs": data.yield_mbs,
-                                 "server_games": data.server_games})
+                                 "server_games": data.server_games, "skip_cached": data.skip_cached})
     if data.server_games:
         try:
             await _prefill_sync_server_games()

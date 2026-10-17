@@ -2309,10 +2309,18 @@ const PF_PROMPTS = {user: ["Steam-Anmeldung: Kontoname", "SteamPrefill braucht e
   password: ["Steam-Login: Passwort", "Wird direkt an SteamPrefill im Container weitergegeben und nicht im Tool gespeichert.", "password"],
   code: ["Steam Guard", "Code aus der Steam-App bzw. der E-Mail eingeben.", "text"],
   yesno: ["Rückfrage", "Antwort eingeben (y = ja, n = nein).", "text"]};
+let pfCache = {};
+function pfCacheBadge(id){
+  const c = pfCache[String(id)];
+  if (!c) return "";
+  if (c.pct == null) return c.stored ? ` <span class="pill" title="Größe noch unbekannt">${fmtBytes(c.stored)} im Cache</span>` : ` <span class="pill" title="Seit dem letzten Zurücksetzen nichts davon geladen">nicht im Cache</span>`;
+  if (c.pct >= 95) return ` <span class="pill ok" title="${fmtBytes(c.stored)} von ${fmtBytes(c.size)}">im Cache</span>`;
+  return ` <span class="pill ${c.pct > 0 ? "warn" : ""}" title="${fmtBytes(c.stored)} von ${fmtBytes(c.size)}">${c.pct > 0 ? Math.round(c.pct) + " % im Cache" : "nicht im Cache"}</span>`;
+}
 async function loadPrefill(){
   let d;
   try { d = await api("/api/prefill"); } catch (e) { $("#pfLog").textContent = e.message; return; }
-  pfData = d;
+  pfData = d; pfCache = d.cache_status || {};
   const c = d.container, run = c && c.running, s = d.settings;
   if (!pfLoaded){
     pfLoaded = true; pfApps = (s.apps || []).slice();
@@ -2320,11 +2328,12 @@ async function loadPrefill(){
     $("#pfSchedule").value = s.schedule || "";
     $("#pfYield").checked = s.yield !== false; $("#pfYieldMbs").value = s.yield_mbs ?? 2;
     $("#pfServerGames").checked = s.server_games !== false;
+    $("#pfSkipCached").checked = s.skip_cached !== false;
     renderPfApps();
   } else if (JSON.stringify(s.apps || []) !== JSON.stringify(pfApps)){ pfApps = (s.apps || []).slice(); renderPfApps(); }
   $("#pfSub").textContent = `Konfiguration: ${d.config_dir}` + (d.dns ? ` · Lancache-DNS ${d.dns.join(", ")}` : " · kein Lancache-DNS gefunden");
   $("#pfCards").innerHTML = `
-    <div class="card"><div class="k">Status</div><div class="v" style="color:${d.auto && d.auto.paused ? "var(--warn,#e5a50a)" : run ? "var(--ok)" : "inherit"}" title="${esc((d.auto && d.auto.reason) || "")}">${d.auto && d.auto.paused ? "pausiert" : run ? "läuft" : c ? (c.exit === 0 ? "fertig" : "beendet (" + c.exit + ")") : "noch nie gelaufen"}</div><div class="s">${d.auto && d.auto.paused ? esc(d.auto.reason || "") : c && c.finished && !run && !c.finished.startsWith("0001") ? "zuletzt " + new Date(c.finished).toLocaleString("de-DE") : esc(d.job.step || "")}</div></div>
+    <div class="card"><div class="k">Status</div><div class="v" style="color:${d.auto && d.auto.paused ? "var(--warn,#e5a50a)" : run ? "var(--ok)" : "inherit"}" title="${esc((d.auto && d.auto.reason) || "")}">${d.auto && d.auto.paused ? "pausiert" : run ? "läuft" : c ? (c.exit === 0 ? "fertig" : "beendet (" + c.exit + ")") : "noch nie gelaufen"}</div><div class="s">${d.auto && d.auto.paused ? esc(d.auto.reason || "") : c && c.finished && !run && !c.finished.startsWith("0001") ? "zuletzt " + new Date(c.finished).toLocaleString("de-DE") : esc(d.job.step || d.job.note || "")}</div></div>
     <div class="card"><div class="k">Steam-Konto</div><div class="v">${d.logged_in ? "angemeldet" : "nicht angemeldet"}</div><div class="s">${d.logged_in ? "Login gespeichert im Config-Ordner" : "beim ersten Lauf wird nach dem Login gefragt"}</div></div>
     <div class="card"><div class="k">Ausgewählte Spiele</div><div class="v">${(s.apps || []).length}</div><div class="s">${[s.flags.recent && "zuletzt gespielt", s.flags.all && "alle", s.flags.top && "Top " + s.flags.top].filter(Boolean).join(" · ") || "nur Auswahl"}</div></div>
     <div class="card"><div class="k">Zeitplan</div><div class="v">${s.schedule ? "täglich " + esc(s.schedule) : "aus"}</div><div class="s">${s.last_run ? "letzter Start " + new Date(s.last_run * 1000).toLocaleString("de-DE") : ""}</div></div>`;
@@ -2358,7 +2367,7 @@ async function loadPrefill(){
   if (run && paused) $("#pfBanner").innerHTML = `<b>⏸ Prefill pausiert</b> – ${esc(d.auto.reason || "")}${d.auto.since ? ` · seit ${new Date(d.auto.since * 1000).toLocaleTimeString("de-DE")}` : ""}${(d.who || []).length ? `<div style="margin-top:4px">Gerade am Laden: ${d.who.map(w => `<b>${esc(w.name || w.ip)}</b> ${fmtRate(w.bps)}`).join(" · ")}</div>` : ""}${d.auto.manual ? "" : "<div class='hint'>Läuft automatisch weiter, wenn 30 s lang niemand anderes über den Cache lädt. Der eigene Prefill-Traffic wird dabei herausgerechnet.</div>"}`;
 }
 function renderPfApps(){
-  $("#pfApps").innerHTML = pfApps.length ? pfApps.map((a, i) => `<div class="pfapp"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/${a.id}/capsule_sm_120.jpg" alt="" referrerpolicy="no-referrer" onerror="this.remove()"><span>${esc(a.name)} <span class="hint mono">${a.id}</span>${a.auto ? ` <span class="pill" title="Von SteamPrefill über die Optionen (zuletzt gespielt, alle …) geladen">über Optionen</span>` : ""}${a.server ? ` <span class="pill" title="Spiel eines eingetragenen Spielservers">Spielserver</span>` : ""}</span><button class="small danger" data-pfdel="${i}">✕</button></div>`).join("")
+  $("#pfApps").innerHTML = pfApps.length ? pfApps.map((a, i) => `<div class="pfapp"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/${a.id}/capsule_sm_120.jpg" alt="" referrerpolicy="no-referrer" onerror="this.remove()"><span>${esc(a.name)} <span class="hint mono">${a.id}</span>${a.auto ? ` <span class="pill" title="Von SteamPrefill über die Optionen (zuletzt gespielt, alle …) geladen">über Optionen</span>` : ""}${a.server ? ` <span class="pill" title="Spiel eines eingetragenen Spielservers">Spielserver</span>` : ""}${pfCacheBadge(a.id)}</span><button class="small danger" data-pfdel="${i}">✕</button></div>`).join("")
     : `<div class="hint">Noch keine Spiele ausgewählt.</div>`;
   $$("[data-pfdel]").forEach(b => b.onclick = async () => { pfApps.splice(+b.dataset.pfdel, 1); await savePfApps(); });
 }
@@ -2406,7 +2415,7 @@ $("#pfInput").addEventListener("keydown", e => { if (e.key === "Enter") pfSend()
 $("#pfSaveOpts").onclick = async () => {
   const flags = {};
   $$("[data-pf]").forEach(el => flags[el.dataset.pf] = el.type === "checkbox" ? el.checked : el.type === "number" ? (+el.value || 0) : el.value);
-  try { await api("/api/prefill/settings", {method: "PUT", body: {schedule: $("#pfSchedule").value, flags, server_games: $("#pfServerGames").checked, yield: $("#pfYield").checked, yield_mbs: +$("#pfYieldMbs").value || 2}}); toast("Gespeichert"); loadPrefill(); }
+  try { await api("/api/prefill/settings", {method: "PUT", body: {schedule: $("#pfSchedule").value, flags, server_games: $("#pfServerGames").checked, skip_cached: $("#pfSkipCached").checked, yield: $("#pfYield").checked, yield_mbs: +$("#pfYieldMbs").value || 2}}); toast("Gespeichert"); loadPrefill(); }
   catch (e) { toast(e.message, true); }
 };
 setInterval(() => { if (view === "prefill" && !document.hidden) loadPrefill(); }, 2000);
