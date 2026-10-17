@@ -182,3 +182,119 @@ def series(key: str, seconds: int = 300, step: int = 2) -> dict:
             return round(sum(v) / len(v), 1) if v else None
         cpu.append(avg(1)); mem.append(avg(2)); rx.append(avg(3)); tx.append(avg(4))
     return {"cpu": cpu, "mem": mem, "rx": rx, "tx": tx, "samples": len(r), "minutes": seconds / 60, "step_s": step}
+
+
+# ---------------------------------------------------------------- Speicher / Zugriffszeiten / TCP
+HOST_PROC1 = os.getenv("HOST_PROC1", "/host/proc/1")
+HOST_PROC = os.getenv("HOST_PROC_ROOT", "/host/proc")
+_io_prev: dict = {}
+io: dict = {"mounts": [], "disks": [], "tcp": None, "t": None, "available": False}
+
+
+def _read(path):
+    with open(path) as f:
+        return f.read()
+
+
+def _mountstats() -> dict:
+    """NFS-Mounts des Hosts: kumulierte Byte- und RPC-Zähler."""
+    out, cur = {}, None
+    for line in _read(f"{HOST_PROC1}/mountstats").splitlines():
+        if line.startswith("device "):
+            m = re.match(r"device (\S+) mounted on (\S+) with fstype (nfs\d?)", line)
+            cur = None
+            if m:
+                cur = out[m.group(2)] = {"src": m.group(1), "bytes": None, "ops": {}}
+            continue
+        if cur is None:
+            continue
+        t = line.strip()
+        if t.startswith("bytes:"):
+            cur["bytes"] = [int(x) for x in t.split()[1:]]
+        else:
+            m = re.match(r"^([A-Z_]+):\s+(\d+(?:\s+\d+){7,})", t)
+            if m:
+                cur["ops"][m.group(1)] = [int(x) for x in m.group(2).split()]
+    return out
+
+
+def _diskstats() -> dict:
+    out = {}
+    for line in _read(f"{HOST_PROC}/diskstats").splitlines():
+        p = line.split()
+        if len(p) < 14 or not re.match(r"^(sd[a-z]+|nvme\d+n\d+|vd[a-z]+|xvd[a-z]+|md\d+|mmcblk\d+)$", p[2]):
+            continue
+        v = [int(x) for x in p[3:14]]
+        out[p[2]] = {"rd": v[0], "rd_sec": v[2], "rd_ms": v[3], "wr": v[4], "wr_sec": v[6], "wr_ms": v[7], "io_ms": v[9]}
+    return out
+
+
+def _tcp() -> dict | None:
+    lines = [x for x in _read(f"{HOST_PROC1}/net/snmp").splitlines() if x.startswith("Tcp:")]
+    if len(lines) < 2:
+        return None
+    d = dict(zip(lines[0].split()[1:], lines[1].split()[1:]))
+    return {"out": int(d.get("OutSegs", 0)), "retrans": int(d.get("RetransSegs", 0))}
+
+
+def sample_io() -> None:
+    """Alle 2 s: NFS-Latenz (RTT/Ausführungszeit), Durchsatz und Ops je Mount, Plattenauslastung, TCP-Wiederholungen."""
+    now = time.time()
+    try:
+        ms = _mountstats()
+    except OSError:
+        ms = {}
+    try:
+        ds = _diskstats()
+    except OSError:
+        ds = {}
+    try:
+        tcp = _tcp()
+    except OSError:
+        tcp = None
+    if not ms and not ds and tcp is None:
+        io["available"] = False
+        return
+    prev = _io_prev.get("v")
+    _io_prev["v"] = (now, ms, ds, tcp)
+    io["available"] = True
+    if not prev:
+        return
+    t0, ms0, ds0, tcp0 = prev
+    dt = max(0.001, now - t0)
+    mounts = []
+    tot_ops = tot_rtt = 0
+    for path, m in ms.items():
+        p = ms0.get(path)
+        if not p or not m["bytes"] or not p["bytes"]:
+            continue
+        ops = rtt = exe = 0
+        for op, v in m["ops"].items():
+            pv = p["ops"].get(op)
+            if pv:
+                ops += v[0] - pv[0]; rtt += v[6] - pv[6]; exe += v[7] - pv[7]
+        rd = (m["bytes"][4] - p["bytes"][4]) if len(m["bytes"]) > 5 else 0
+        wr = (m["bytes"][5] - p["bytes"][5]) if len(m["bytes"]) > 5 else 0
+        tot_ops += ops; tot_rtt += rtt
+        mounts.append({"path": path, "src": m["src"], "read_bps": max(0, rd) / dt, "write_bps": max(0, wr) / dt,
+                       "ops_s": max(0, ops) / dt, "rtt_ms": round(rtt / ops, 1) if ops > 0 else None,
+                       "exec_ms": round(exe / ops, 1) if ops > 0 else None})
+    disks = []
+    for name, d in ds.items():
+        p = ds0.get(name)
+        if not p:
+            continue
+        n = (d["rd"] - p["rd"]) + (d["wr"] - p["wr"])
+        disks.append({"name": name, "util": round(min(100.0, (d["io_ms"] - p["io_ms"]) / (dt * 1000) * 100), 1),
+                      "await_ms": round(((d["rd_ms"] - p["rd_ms"]) + (d["wr_ms"] - p["wr_ms"])) / n, 1) if n > 0 else None,
+                      "read_bps": (d["rd_sec"] - p["rd_sec"]) * 512 / dt, "write_bps": (d["wr_sec"] - p["wr_sec"]) * 512 / dt,
+                      "iops": n / dt})
+    tcpr = None
+    if tcp and tcp0:
+        o, r = tcp["out"] - tcp0["out"], tcp["retrans"] - tcp0["retrans"]
+        tcpr = {"retrans_s": max(0, r) / dt, "retrans_pct": round(r / o * 100, 2) if o > 0 else 0.0, "out_s": max(0, o) / dt}
+    io.update(mounts=sorted(mounts, key=lambda x: -(x["read_bps"] + x["write_bps"] + x["ops_s"])), disks=disks, tcp=tcpr, t=now)
+    nfs_rtt = round(tot_rtt / tot_ops, 1) if tot_ops > 0 else None
+    util = max((d["util"] for d in disks), default=None)
+    nfs_bps = sum(m["read_bps"] + m["write_bps"] for m in mounts) if mounts else None
+    _ring("_io").append((now, nfs_rtt, util, nfs_bps, tcpr["retrans_pct"] if tcpr else None))

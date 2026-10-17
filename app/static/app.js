@@ -319,7 +319,7 @@ async function liveTick(){
     const n = L.net || {}, bw = v => v > 0 ? Math.max(2, Math.min(100, v / LINK_BPS * 100)) : 0;
     if (n.rx_bps != null){
       $("#hlNetDownBar").style.width = bw(n.rx_bps) + "%"; $("#hlNetUpBar").style.width = bw(n.tx_bps) + "%";
-      tween($("#hlNetDown"), n.rx_bps, v => "↓ " + fmtRate(v)); tween($("#hlNetUp"), n.tx_bps, v => "↑ " + fmtRate(v));
+      tween($("#hlNetDown"), n.rx_bps, v => fmtRate(v)); tween($("#hlNetUp"), n.tx_bps, v => fmtRate(v));
       $("#hlNetTotRow").title = n.source === "host" ? "Netzwerkkarten des Docker-Hosts" : "Summe der Container (Host-Netz nicht eingebunden)";
     }
     if (L.cache && L.cache.tx_bps != null && !$("#hlNetRow").classList.contains("hidden")){
@@ -483,8 +483,8 @@ function spark(vals, color, opts = {}){
   const w = 200, h = opts.h || 34, pad = 2;
   const nums = vals.filter(v => v != null);
   if (!nums.length) return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><line x1="0" y1="${h-1}" x2="${w}" y2="${h-1}" stroke="var(--line)"/></svg>`;
-  const max = Math.max(opts.min || 1, ...nums), n = vals.length;
-  const x = i => (i / (n - 1)) * w, y = v => h - pad - (v / max) * (h - pad * 2);
+  const max = opts.fmt ? niceMax(Math.max(opts.min || 1, ...nums)) : Math.max(opts.min || 1, ...nums), n = vals.length;
+  const x = i => (i / Math.max(1, n - 1)) * w, y = v => h - pad - (v / max) * (h - pad * 2);
   let d = "", area = "", seg = [];
   const flush = () => {
     if (!seg.length) return;
@@ -494,15 +494,27 @@ function spark(vals, color, opts = {}){
     seg = [];
   };
   vals.forEach((v, i) => v == null ? flush() : seg.push([i, v])); flush();
-  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
-    <path d="${area}" fill="${color}" opacity=".18"/><path d="${d}" fill="none" stroke="${color}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`;
+  return withAxis(`<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
+    <line x1="0" y1="${(h/2).toFixed(1)}" x2="${w}" y2="${(h/2).toFixed(1)}" stroke="var(--line)" stroke-dasharray="2 3" vector-effect="non-scaling-stroke"/>
+    <path d="${area}" fill="${color}" opacity=".18"/><path d="${d}" fill="none" stroke="${color}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`, max, opts.fmt, h);
 }
+// „schöne“ Obergrenze für die y-Achse (1/2/2,5/5 × 10^n)
+function niceMax(v){
+  if (!(v > 0)) return 1;
+  const e = Math.pow(10, Math.floor(Math.log10(v))), f = v / e;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * e;
+}
+function withAxis(svg, max, fmt, h){
+  if (!fmt) return svg;
+  return `<div class="sparkbox" style="height:${h}px"><div class="yax"><span>${fmt(max)}</span><span>${fmt(max / 2)}</span><span>0</span></div>${svg}</div>`;
+}
+const AX = {pct: v => Math.round(v) + " %", rate: v => fmtRate(v).replace(" ", "\u202f"), mem: v => fmtMem(Math.round(v)), num: v => String(Math.round(v * 10) / 10), bytes: v => fmtBytes(v)};
 // zwei Reihen in einem Diagramm (z. B. Download/Upload) in verschiedenen Farben
 function spark2(a, b, colA, colB, opts = {}){
   const w = 200, h = opts.h || 34, pad = 2;
   const nums = [...a, ...b].filter(v => v != null);
   if (!nums.length) return spark([], colA, opts);
-  const max = Math.max(opts.min || 1, ...nums), n = Math.max(a.length, b.length);
+  const max = opts.fmt ? niceMax(Math.max(opts.min || 1, ...nums)) : Math.max(opts.min || 1, ...nums), n = Math.max(a.length, b.length);
   const x = i => (i / Math.max(1, n - 1)) * w, y = v => h - pad - (v / max) * (h - pad * 2);
   const path = vals => {
     let d = "", area = "", seg = [];
@@ -517,10 +529,11 @@ function spark2(a, b, colA, colB, opts = {}){
     return [d, area];
   };
   const [da, aa] = path(a), [db, ab] = path(b);
-  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
+  return withAxis(`<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
+    <line x1="0" y1="${(h/2).toFixed(1)}" x2="${w}" y2="${(h/2).toFixed(1)}" stroke="var(--line)" stroke-dasharray="2 3" vector-effect="non-scaling-stroke"/>
     <path d="${aa}" fill="${colA}" opacity=".15"/><path d="${ab}" fill="${colB}" opacity=".15"/>
     <path d="${da}" fill="none" stroke="${colA}" stroke-width="1.6" vector-effect="non-scaling-stroke"/>
-    <path d="${db}" fill="none" stroke="${colB}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`;
+    <path d="${db}" fill="none" stroke="${colB}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`, max, opts.fmt, h);
 }
 const C_DOWN = "#4f9dde", C_UP = "#f0a04b";
 function netLegend(){ return `<span class="lgd" style="background:${C_DOWN}"></span>Download <span class="lgd" style="background:${C_UP}"></span>Upload`; }
@@ -530,7 +543,7 @@ function netPanelCell(m, label){
   if (!rN.length && !tN.length) return "";
   const avg = a => a.length ? a.reduce((p, q) => p + q, 0) / a.length : 0;
   return `<div><div class="mlab"><span>${label}</span><b><span style="color:${C_DOWN}">↓ ${fmtRate(rN[rN.length-1] || 0)}</span> · <span style="color:${C_UP}">↑ ${fmtRate(tN[tN.length-1] || 0)}</span></b></div>
-    ${spark2(rx, tx, C_DOWN, C_UP, {min: 100000, h: 64})}
+    ${spark2(rx, tx, C_DOWN, C_UP, {min: 100000, h: 64, fmt: AX.rate})}
     <div class="hint" style="font-size:11px">${netLegend()} · Ø ↓ ${fmtRate(avg(rN))} · ↑ ${fmtRate(avg(tN))} · max ↓ ${fmtRate(Math.max(0, ...rN))} · ↑ ${fmtRate(Math.max(0, ...tN))}</div></div>`;
 }
 const rangeLabel = m => m >= 1440 ? "24 h" : m >= 60 ? (m / 60) + " h" : m <= 10 ? "live " + Math.round(m) + " min" : m + " min";
@@ -542,17 +555,41 @@ function hostPanelHtml(){
   const mx = a => a.length ? Math.max(...a).toFixed(0) : "–";
   return `<div class="dsect"><h3 class="dhead"><span class="gtile" style="background:#8aa4c8">${gicon("_", 16)}</span>Gesamtlast des Servers <span class="hint">${rangeLabel(m.minutes)}</span></h3>
     <div class="panel"><div class="hostpanel">
-      <div><div class="mlab"><span>CPU</span><b>Ø ${avg(cpuN)} % · max ${mx(cpuN)} %</b></div>${spark(m.cpu, "var(--ct)", {min: 100})}</div>
-      <div><div class="mlab"><span>RAM belegt</span><b>jetzt ${memN.length ? memN[memN.length-1] : "–"} % · max ${mx(memN)} %</b></div>${spark(m.mem, "#a78bfa", {min: 100})}</div>
+      <div><div class="mlab"><span>CPU</span><b>Ø ${avg(cpuN)} % · max ${mx(cpuN)} %</b></div>${spark(m.cpu, "var(--ct)", {min: 100, h: 64, fmt: AX.pct})}</div>
+      <div><div class="mlab"><span>RAM belegt</span><b>jetzt ${memN.length ? memN[memN.length-1] : "–"} % · max ${mx(memN)} %</b></div>${spark(m.mem, "#a78bfa", {min: 100, h: 64, fmt: AX.pct})}</div>
       ${netPanelCell(m, "Netzwerk gesamt")}
       ${metricsData._cache && metricsData._cache.samples ? netPanelCell(metricsData._cache, "Lancache") : ""}
-    </div></div></div>`;
+      ${ioCells()}
+    </div>${ioTable()}</div></div>`;
+}
+AX.ms = v => (v >= 100 ? Math.round(v) : Math.round(v * 10) / 10) + " ms";
+AX.pct2 = v => (Math.round(v * 100) / 100) + " %";
+function ioCells(){
+  const m = metricsData._io;
+  if (!m || !m.samples) return "";
+  const last = a => { const n = (a || []).filter(v => v != null); return n.length ? n[n.length - 1] : null; };
+  const mx = a => { const n = (a || []).filter(v => v != null); return n.length ? Math.max(...n) : null; };
+  const cell = (label, vals, color, fmt, min, hint) => `<div title="${esc(hint)}"><div class="mlab"><span>${label}</span><b>${last(vals) != null ? fmt(last(vals)) : "–"} · max ${mx(vals) != null ? fmt(mx(vals)) : "–"}</b></div>${spark(vals, color, {min, h: 64, fmt})}</div>`;
+  return [
+    m.rtt.some(v => v != null) ? cell("NAS-Antwortzeit (NFS)", m.rtt, "#e5a50a", AX.ms, 5, "Durchschnittliche Zeit pro NFS-Anfrage an das NAS. Steigt sie stark (> 20–50 ms), ist das NAS ausgelastet – dann bremsen viele gleichzeitige Zugriffe alles aus.") : "",
+    m.nfs.some(v => v != null) ? cell("NAS-Durchsatz", m.nfs, "#4f9dde", AX.rate, 1e6, "Lesen + Schreiben über alle NFS-Mounts") : "",
+    m.util.some(v => v != null) ? cell("Lokale Platte ausgelastet", m.util, "#a78bfa", AX.pct, 100, "Anteil der Zeit, in der die lokale Platte beschäftigt ist (100 % = am Limit)") : "",
+    m.retrans.some(v => v != null) ? cell("TCP-Wiederholungen", m.retrans, "#e5534b", AX.pct2, 1, "Anteil neu gesendeter TCP-Pakete. Mehr als ~1 % heißt: Verbindung/Switch/NAS überlastet, Pakete gehen verloren.") : "",
+  ].join("");
+}
+function ioTable(){
+  const io = lastLive && lastLive.io;
+  if (!io || !io.available || !(io.mounts || []).length) return "";
+  return `<div style="overflow:auto;margin-top:10px"><table class="cachetable"><thead><tr><th>NAS-Freigabe</th><th>Lesen</th><th>Schreiben</th><th>Anfragen/s</th><th>Antwortzeit</th></tr></thead><tbody>
+    ${io.mounts.slice(0, 6).map(m => `<tr><td class="mono" title="${esc(m.src)}">${esc(m.path)}</td><td class="mono">${fmtRate(m.read_bps)}</td><td class="mono">${fmtRate(m.write_bps)}</td><td class="mono">${Math.round(m.ops_s)}</td>
+      <td class="mono" style="color:${m.rtt_ms > 50 ? "var(--bad)" : m.rtt_ms > 20 ? "var(--warn,#e5a50a)" : "inherit"}">${m.rtt_ms != null ? m.rtt_ms + " ms" : "–"}</td></tr>`).join("")}
+  </tbody></table></div>`;
 }
 function netCell(m){
   const rx = m.rx || [], tx = m.tx || [];
   const rN = rx.filter(v => v != null), tN = tx.filter(v => v != null);
   if (!rN.length && !tN.length) return "";
-  return `<div class="mcell" title="Netzwerk: blau = Download, orange = Upload"><div class="mlab"><span>Netz</span><b><span style="color:${C_DOWN}">↓${fmtRate(rN[rN.length-1] || 0)}</span> <span style="color:${C_UP}">↑${fmtRate(tN[tN.length-1] || 0)}</span></b></div>${spark2(rx, tx, C_DOWN, C_UP, {min: 20000})}</div>`;
+  return `<div class="mcell" title="Netzwerk: blau = Download, orange = Upload"><div class="mlab"><span>Netz</span><b><span style="color:${C_DOWN}">↓${fmtRate(rN[rN.length-1] || 0)}</span> <span style="color:${C_UP}">↑${fmtRate(tN[tN.length-1] || 0)}</span></b></div>${spark2(rx, tx, C_DOWN, C_UP, {min: 20000, fmt: AX.rate})}</div>`;
 }
 function metricsHtml(sid, color){
   const m = metricsData[sid];
@@ -560,9 +597,9 @@ function metricsHtml(sid, color){
   const cpuNums = m.cpu.filter(v => v != null), memNums = m.mem.filter(v => v != null);
   const cpuAvg = cpuNums.length ? (cpuNums.reduce((a, b) => a + b, 0) / cpuNums.length).toFixed(1) : null;
   return `<div class="mgrid">
-      <div class="mcell"><div class="mlab"><span>Spieler · ${rangeLabel(m.minutes)}</span><b>Peak ${m.peak_24h}</b></div>${spark(m.players, color, {min: 2})}</div>
-      ${cpuNums.length ? `<div class="mcell"><div class="mlab"><span>CPU</span><b>Ø ${cpuAvg} %</b></div>${spark(m.cpu, "var(--ct)", {min: 5})}</div>` : ""}
-      ${memNums.length ? `<div class="mcell"><div class="mlab"><span>RAM</span><b>${fmtMem(memNums[memNums.length-1])}</b></div>${spark(m.mem, "#a78bfa", {min: 256})}</div>` : ""}
+      <div class="mcell"><div class="mlab"><span>Spieler · ${rangeLabel(m.minutes)}</span><b>Peak ${m.peak_24h}</b></div>${spark(m.players, color, {min: 2, fmt: AX.num})}</div>
+      ${cpuNums.length ? `<div class="mcell"><div class="mlab"><span>CPU</span><b>Ø ${cpuAvg} %</b></div>${spark(m.cpu, "var(--ct)", {min: 5, fmt: AX.pct})}</div>` : ""}
+      ${memNums.length ? `<div class="mcell"><div class="mlab"><span>RAM</span><b>${fmtMem(memNums[memNums.length-1])}</b></div>${spark(m.mem, "#a78bfa", {min: 256, fmt: AX.mem})}</div>` : ""}
       ${netCell(m)}
     </div>
     ${!cpuNums.length && !memNums.length ? `<div class="hint mstats">CPU/RAM: ${servers.find(x => x.id === sid)?.container ? "Container läuft nicht" : "unter „Bearbeiten“ den Docker-Container zuordnen"}</div>` : ""}
@@ -625,13 +662,14 @@ function applyGameClasses(s){
   const g = gameOf(s), meta = GAMES[g] || {};
   document.body.classList.toggle("g-other", g !== "cs2");
   document.body.classList.toggle("g-wreckfest", g === "wreckfest");
+  document.body.classList.toggle("g-tf2", g === "tf2");
   wfLoadedFor = null;
   document.body.classList.toggle("no-console", !meta.console);
   document.body.classList.toggle("no-container", !(dockerOn && s.container));
 }
 function selectServer(s){
   if (!s) return showView("dash");
-  current = s; view = "server";
+  current = s; view = "server"; loadedSettings = {};
   try { resetStatusFields("wird abgefragt …"); $("#playerRows").innerHTML = ""; } catch {}
   $$(".nav [data-view]").forEach(b => b.classList.remove("active"));
   VIEWS.filter(x => x !== "server").forEach(x => $("#view-"+x).classList.add("hidden"));
@@ -882,18 +920,55 @@ $("#consoleIn").addEventListener("keydown", e => {
 $("#btnClear").onclick = () => $("#consoleOut").innerHTML = "";
 
 /* ---------- Einstellungen (Cvars) ---------- */
-const allSettings = SETTINGS.flatMap(([, f]) => f);
+const TF2_MAPS = ["ctf_2fort","ctf_turbine","ctf_doublecross","ctf_landfall","cp_dustbowl","cp_badlands","cp_granary","cp_process_final","cp_gullywash_final1","cp_snakewater_final1","cp_sunshine","cp_gravelpit","cp_steel","cp_egypt_final","pl_badwater","pl_upward","pl_goldrush","pl_thundermountain","pl_borneo","pl_swiftwater_final1","plr_hightower","plr_pipeline","koth_harvest_final","koth_viaduct","koth_lakeside_final","koth_nucleus","koth_sawmill","arena_well","arena_lumberyard","pd_watergate","sd_doomsday","mvm_decoy","mvm_coaltown","tr_walkway_rc2"];
+const TF2_SETTINGS = [
+  ["Allgemein", [
+    ["hostname","Servername","text"], ["sv_password","Server-Passwort","text"],
+    ["sv_visiblemaxplayers","Sichtbare Slots (-1 = alle)","number"], ["sv_alltalk","Alle hören alle (Alltalk)","bool"],
+    ["mp_allowspectators","Zuschauer erlaubt","bool"], ["sv_cheats","Cheats","bool"]]],
+  ["Runden & Zeit", [
+    ["mp_timelimit","Zeitlimit je Map (Min., 0 = aus)","number"], ["mp_winlimit","Siege bis Mapwechsel (0 = aus)","number"],
+    ["mp_maxrounds","Max. Runden (0 = aus)","number"], ["mp_waitingforplayers_time","Warten auf Spieler (s)","number"],
+    ["mp_enableroundwaittime","Pause zwischen Runden","bool"], ["mp_stalemate_enable","Sudden Death / Patt","bool"]]],
+  ["Teams", [
+    ["mp_autoteambalance","Automatischer Teamausgleich","bool"], ["mp_teams_unbalance_limit","Max. Teamunterschied","number"],
+    ["mp_scrambleteams_auto","Teams automatisch mischen","bool"], ["mp_friendlyfire","Friendly Fire","bool"],
+    ["mp_tournament","Turniermodus","bool"]]],
+  ["Spiel", [
+    ["tf_weapon_criticals","Zufällige Krits","bool"], ["tf_use_fixed_weaponspreads","Feste Waffenstreuung","bool"],
+    ["tf_damage_disablespread","Kein zufälliger Schaden","bool"], ["mp_respawnwavetime","Respawn-Welle (s)","number"],
+    ["mp_disable_respawn_times","Sofort respawnen","bool"], ["tf_avoidteammates_pushaway","Teamkameraden wegschubsen","bool"]]],
+  ["Bots", [
+    ["tf_bot_quota","Anzahl Bots","number"], ["tf_bot_difficulty","Bot-Stärke",
+      "select", [["0","Leicht"],["1","Normal"],["2","Schwer"],["3","Experte"]]],
+    ["tf_bot_quota_mode","Bot-Modus","select", [["normal","fest"],["fill","auffüllen"],["match","je Spieler"]]],
+    ["tf_bot_join_after_player","Bots erst mit Spielern","bool"]]],
+];
+const settingsFor = () => (current && gameOf(current) === "tf2") ? TF2_SETTINGS : SETTINGS;
+let allSettings = SETTINGS.flatMap(([, f]) => f);
 function inputFor([name, , type, opts]){
   if (type === "bool") return `<div class="switch"><input type="checkbox" data-cvar="${name}"><span class="muted" style="font-size:12px">aktiv</span></div>`;
   if (type === "select") return `<select data-cvar="${name}"><option value=""></option>${opts.map(([v,l]) => `<option value="${v}">${esc(l)}</option>`).join("")}</select>`;
   return `<input data-cvar="${name}" type="text" ${type==="number"?'inputmode="decimal"':""} spellcheck="false">`;
 }
 function renderSettings(){
-  $("#settingsBody").innerHTML = SETTINGS.map(([group, fields]) => `
+  const S = settingsFor();
+  allSettings = S.flatMap(([, f]) => f);
+  const tf2 = current && gameOf(current) === "tf2";
+  $("#settingsBody").innerHTML = (tf2 ? `<div class="panel"><h2>Map wechseln</h2><div class="row">
+      <select id="tf2Map" style="flex:1">${TF2_MAPS.map(m => `<option value="${m}">${m}</option>`).join("")}</select>
+      <input id="tf2MapCustom" placeholder="oder eigener Mapname" style="flex:1"><button class="primary" id="btnTf2Map">Map wechseln</button></div>
+      <div class="hint" style="margin-top:6px">Der Spielmodus ergibt sich bei TF2 aus der Map (ctf_ = Capture the Flag, cp_ = Control Point, pl_ = Payload, koth_ = King of the Hill …).</div></div>` : "") +
+    S.map(([group, fields]) => `
     <div class="panel"><h2>${esc(group)}</h2><div class="settings-grid">
       ${fields.map(f => `<div class="field" id="f-${f[0]}"><label>${esc(f[1])} <code>${f[0]}</code></label>${inputFor(f)}</div>`).join("")}
     </div></div>`).join("");
   $$("[data-cvar]").forEach(el => { el.addEventListener("input", () => markChanged(el)); el.addEventListener("change", () => markChanged(el)); });
+  const mb = $("#btnTf2Map");
+  if (mb) mb.onclick = async () => {
+    const m = ($("#tf2MapCustom").value.trim() || $("#tf2Map").value).replace(/[^\w\-]/g, "");
+    if (m) await send(`changelevel ${m}`, `Map wechselt zu ${m}`);
+  };
 }
 function readField(el){ return el.type === "checkbox" ? (el.checked ? "1" : "0") : el.value.trim(); }
 function normalize(name, v){
@@ -1754,7 +1829,7 @@ async function loadCacheHistory(){
       ${total ? cacheChart(c.points, c.step_h) : `<div class="hint">Für diesen Zeitraum liegen noch keine Daten vor.</div>`}</div>
     ${c.points.some(p => p.rx != null) ? `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:8px">Netzwerk des Lancache-Containers
       <span class="hint">${netLegend()} (Download = aus dem Internet, Upload = an Clients; erst ab heute gemessen)</span></h2>
-      ${spark2(c.points.map(p => p.rx), c.points.map(p => p.tx), C_DOWN, C_UP, {min: 1e6, h: 120})}
+      ${spark2(c.points.map(p => p.rx), c.points.map(p => p.tx), C_DOWN, C_UP, {min: 1e6, h: 120, fmt: AX.bytes})}
       <div class="row hint" style="justify-content:space-between;margin-top:4px"><span>↓ gesamt ${fmtBytes(c.points.reduce((a, p) => a + (p.rx || 0), 0))}</span><span>↑ gesamt ${fmtBytes(c.points.reduce((a, p) => a + (p.tx || 0), 0))}</span></div></div>` : ""}
     ${c.services.length ? `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:6px">Was wurde gecacht? <span class="hint">(${CACHE_RANGES[c.range]}, nach Dienst)</span></h2>
       <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Dienst</th><th>aus dem Cache</th><th>aus dem Internet</th><th>gesamt</th><th>Trefferquote</th><th></th></tr></thead><tbody>${svcRows(c.services)}</tbody></table></div></div>` : ""}
@@ -1793,7 +1868,7 @@ async function loadCacheLive(){
   $("#cacheLive").innerHTML = `<div class="panel" style="padding:12px 16px;margin-bottom:14px">
     <h2 style="margin-bottom:8px">Live <span class="hint">(aktualisiert alle 5 s · Netzwerk des Lancache-Containers)</span>
       <span style="float:right" class="mono"><span style="color:${C_UP}">↑ ${fmtRate((c.net || {}).tx_bps || 0)}</span> an Clients · <span style="color:${C_DOWN}">↓ ${fmtRate((c.net || {}).rx_bps || 0)}</span> aus dem Internet</span></h2>
-    ${(() => { const m = cacheLiveMetrics; return m && m.samples ? `<div class="mlab"><span>letzte ${rangeLabel(m.minutes)} · ${netLegend()}</span><b></b></div>${spark2(m.rx, m.tx, C_DOWN, C_UP, {min: 100000, h: 70})}` : ""; })()}
+    ${(() => { const m = cacheLiveMetrics; return m && m.samples ? `<div class="mlab"><span>letzte ${rangeLabel(m.minutes)} · ${netLegend()}</span><b></b></div>${spark2(m.rx, m.tx, C_DOWN, C_UP, {min: 100000, fmt: AX.rate, h: 70})}` : ""; })()}
     <div class="hint" style="margin:6px 0 8px">Laut Log: ${fmtRate(c.rate_bps || 0)} (davon ${fmtRate(c.hit_rate_bps || 0)} aus dem Cache) – das Log schreibt einen Download erst, wenn er fertig ist.</div>
     ${rows ? `<div style="overflow:auto;max-height:320px"><table class="cachetable"><thead><tr><th>Zeit</th><th>Dienst</th><th>Client</th><th>Größe</th><th></th><th>Server</th></tr></thead><tbody>${rows}</tbody></table></div>`
       : `<div class="hint">Gerade keine Downloads im access.log.</div>`}</div>`;

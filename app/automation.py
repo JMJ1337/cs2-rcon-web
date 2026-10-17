@@ -89,7 +89,7 @@ def target_players(map_name, game_type, game_mode, settings=None):
 def parse_cvars(raw: str, names: list[str]) -> dict:
     values = {n: None for n in names}
     for n in names:
-        m = re.search(rf"(?m)^\s*{re.escape(n)}\s*=\s*(\"([^\"]*)\"|(\S+))", raw)
+        m = re.search(rf"(?m)^\s*\"?{re.escape(n)}\"?\s*=\s*(\"([^\"]*)\"|(\S+))", raw)
         if m:
             values[n] = m.group(2) if m.group(2) is not None else m.group(3)
     return values

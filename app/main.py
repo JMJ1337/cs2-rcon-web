@@ -739,6 +739,8 @@ async def live_loop():
         try:
             hoststats.sample()
             livestats.sample_host()
+            if n % 2 == 0:
+                livestats.sample_io()
             if n % 5 == 0 and docker_api.available():
                 names = {s["container"] for s in load_servers() if s.get("container")}
                 if cache_stats.state.get("container"):
@@ -980,6 +982,9 @@ async def server_metrics(minutes: int = 360):
             out[s_["id"]] = {**m, **{k: ser[k] for k in ("cpu", "mem", "rx", "tx")}, "players": [hum or 0] * len(ser["cpu"] or [0]),
                              "minutes": sec / 60, "samples": max(m.get("samples") or 0, ser["samples"])}
         out["_host"] = {**livestats.series("_host", sec)}
+        io_s = livestats.series("_io", sec)
+        out["_io"] = {"rtt": io_s["cpu"], "util": io_s["mem"], "nfs": io_s["rx"], "retrans": io_s["tx"], "samples": io_s["samples"],
+                      "minutes": io_s["minutes"]}
         lc = cache_stats.state.get("container")
         if lc and lc in livestats.rings:
             out["_cache"] = livestats.series(lc, sec)
@@ -1019,7 +1024,8 @@ async def live_values():
     cd = livestats.data.get(lc or "") or {}
     return {"t": now, "cpu": h.get("cpu"), "mem_used_mb": h.get("mem_used_mb"), "mem_total_mb": h.get("mem_total_mb"),
             "net": {k: livestats.host.get(k) for k in ("rx_bps", "tx_bps", "source")},
-            "cache": {"rx_bps": cd.get("rx_bps"), "tx_bps": cd.get("tx_bps")} if cd else None, "servers": srv}
+            "cache": {"rx_bps": cd.get("rx_bps"), "tx_bps": cd.get("tx_bps")} if cd else None, "servers": srv,
+            "io": livestats.io}
 
 
 @app.get("/api/cache", dependencies=auth)
