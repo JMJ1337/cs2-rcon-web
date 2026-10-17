@@ -2653,6 +2653,19 @@ def _container_of(sid: str) -> str:
     return s["container"]
 
 
+@app.get("/api/tools/a2s", dependencies=auth)
+async def tool_a2s(host: str, port: int):
+    """Steam-Serverabfrage (A2S_INFO) von hier aus – zur Fehlersuche (Antwortet der Server im LAN?)."""
+    if not re.fullmatch(r"[\w.\-]{1,100}", host) or not 1 <= port <= 65535:
+        raise HTTPException(400, "Ungültige Adresse")
+    t0 = time.time()
+    try:
+        info = await adapters.a2s.info(host, port)
+        return {"ok": True, "ms": round((time.time() - t0) * 1000), "info": {k: info.get(k) for k in ("name", "map", "players", "max_players", "version", "port")}}
+    except adapters.a2s.A2SError as e:
+        return {"ok": False, "ms": round((time.time() - t0) * 1000), "error": str(e)}
+
+
 @app.get("/api/docker/image-check", dependencies=auth)
 async def image_check(images: str = ""):
     """Prüft, ob Images in der Registry existieren (ohne Download) – für den Spielekatalog."""
