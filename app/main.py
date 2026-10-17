@@ -3170,6 +3170,43 @@ def _job_log(job, msg):
     job["step"] = msg
 
 
+async def _copy_game_files(job: dict, b: dict, src_id: str) -> None:
+    """Spieldateien eines vorhandenen Servers desselben Spiels kopieren, bevor der neue Container startet.
+    SteamCMD prüft beim Start nur noch Unterschiede – spart den kompletten Download (z. B. CS2 ~35–70 GB)."""
+    src = next((x for x in load_servers() if x["id"] == src_id), None)
+    if not src or not src.get("container"):
+        _job_log(job, "Kopieren übersprungen: Quell-Server ohne Container")
+        return
+    try:
+        info = await docker_api.inspect(src["container"])
+    except docker_api.DockerError as e:
+        _job_log(job, f"Kopieren übersprungen: {e}")
+        return
+    src_mounts = {m.get("Destination", "").rstrip("/"): m.get("Source") for m in info.get("Mounts") or [] if m.get("Source")}
+    pairs = []
+    for bind in b["spec"]["HostConfig"].get("Binds") or []:
+        hp, cp = bind.split(":")[0], bind.split(":")[1].rstrip("/")
+        sp = src_mounts.get(cp)
+        if sp and sp.rstrip("/") != hp.rstrip("/"):
+            pairs.append((sp, hp, cp))
+    if not pairs:
+        _job_log(job, "Kopieren übersprungen: keine passenden Datenordner beim Quell-Server")
+        return
+    user = f"{b['uid']}:{b['gid']}" if b.get("uid") else ""
+    for sp, hp, cp in pairs:
+        job["step"] = f"Kopiere Spieldateien von {src['name']} …"
+        _job_log(job, f"Kopiere {sp} → {hp} (als {user or 'root'}; dauert je nach Größe einige Minuten)")
+        t0 = time.time()
+        script = "cp -r /copysrc/. /copydst/ 2>&1 | tail -n 5; du -sh /copydst 2>/dev/null | cut -f1"
+        try:
+            code, out = await docker_api.run_once(b["image"], script, [f"{sp}:/copysrc:ro", f"{hp}:/copydst"], user=user, timeout=4 * 3600)
+        except docker_api.DockerError as e:
+            _job_log(job, f"Kopieren fehlgeschlagen ({e}) – der Server lädt die Dateien stattdessen selbst")
+            continue
+        size = (out.strip().splitlines() or ["?"])[-1]
+        _job_log(job, f"Kopiert: {size} in {int((time.time() - t0) / 60)} min" + ("" if code == 0 else f" (mit Warnungen: {out.strip()[:200]})"))
+
+
 async def _create_job(job: dict, data: CreateIn, host: str):
     try:
         b = templates.build(data.game, data.values, data.data_dir)
@@ -3190,6 +3227,9 @@ async def _create_job(job: dict, data: CreateIn, host: str):
             if not await docker_api.image_exists(b["image"]):
                 raise
             _job_log(job, f"Pull fehlgeschlagen ({e}) – nutze vorhandenes lokales Image")
+        src_id = (data.values.get("_copy_from") or "").strip()
+        if src_id:
+            await _copy_game_files(job, b, src_id)
         dns = await lancache_dns()
         if dns:
             b["spec"]["HostConfig"]["Dns"] = dns

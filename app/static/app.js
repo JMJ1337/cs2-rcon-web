@@ -1882,6 +1882,10 @@ async function initCreate(){
     type === "select" ? `<select data-cf="${k}">${hint.split(",").map(o => `<option ${o===def?"selected":""}>${o}</option>`).join("")}</select>`
     : `<input data-cf="${k}" type="${type==="password"?"password":"text"}" value="${esc(fill(def, k))}" ${type==="number"?'inputmode="numeric"':""} autocomplete="off">`
   }${hint && type !== "select" ? `<div class="hint">${esc(hint)}</div>` : ""}</div>`).join("");
+  const same = servers.filter(s => gameOf(s) === createGame && s.container);
+  if (same.length) $("#createFields").insertAdjacentHTML("beforeend", `<div class="field"><label>Spieldateien kopieren von (spart den Download)</label>
+    <select data-cf="_copy_from"><option value="">– nicht kopieren, neu herunterladen –</option>${same.map(s => `<option value="${esc(s.id)}" ${s === same[0] ? "selected" : ""}>${esc(s.name)} (${esc(s.container)})</option>`).join("")}</select>
+    <div class="hint">Kopiert die Installation eines vorhandenen Servers ins neue Datenverzeichnis, bevor er startet. SteamCMD prüft danach nur noch Unterschiede. Quelle sollte fertig installiert sein.</div></div>`);
   const upd = () => { const name = ($('[data-cf="name"]') || {}).value || ""; $("#createDataDir").value = t.data_default.replace("{base}", tpl.games_base || settings.games_base || "/mnt/grohlan").replace("{n}", n).replace("{name}", name); };
   upd(); $('[data-cf="name"]').addEventListener("input", upd);
   $("#createHost").value = (settings.public_url || "").replace(/^https?:\/\//, "").split(/[:/]/)[0] || location.hostname;
