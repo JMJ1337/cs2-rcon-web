@@ -1403,8 +1403,8 @@ function renderAuto(){
   $("#setScanSubnets").value = settings.scan_subnets || "";
   $("#setGamesBase").value = settings.games_base || "/mnt/grohlan";
   $("#setCacheContainer").value = settings.cache_container || "";
-  $("#setHostnamePattern").value = settings.hostname_pattern ?? "CS#{nr} {mode}";
-  $("#setNamesPattern").value = settings.names_pattern ?? "{game}#{nr} {mode}";
+  $("#setHostnamePattern").value = settings.hostname_pattern ?? "Groh {mode} {nr}";
+  $("#setNamesPattern").value = settings.names_pattern ?? "Groh {mode} {nr}";
   $("#setInternetHost").value = settings.internet_host || "";
   $("#setContainerDns").value = settings.container_dns || "";
   $$("[data-mdel]").forEach(b => b.onclick = () => { readAuto(); settings.modes.splice(+b.dataset.mdel, 1); renderAuto(); });

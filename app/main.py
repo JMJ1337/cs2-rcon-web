@@ -787,6 +787,8 @@ def _server_nr(s: dict, hostname: str | None) -> int:
     for txt in (hostname or "", s.get("name") or ""):
         if m := re.search(r"#\s*(\d+)", txt):
             return int(m.group(1))
+        if m := re.match(r"^Groh\b.*?\s(\d+)\s*$", txt, re.I):     # „Groh Wettkampf 2“
+            return int(m.group(1))
     if m := re.search(r"(\d+)\s*$", s.get("container") or ""):
         return int(m.group(1))
     same = [x["id"] for x in load_servers() if game_of(x) == game_of(s)]
@@ -802,7 +804,9 @@ def _auto_name(s: dict, hostname: str | None, mode_label: str = "") -> str | Non
         return None
     g = game_of(s)
     short = (GAMES.get(g) or {}).get("short") or g
-    name = pattern.replace("{game}", short).replace("{nr}", str(_server_nr(s, hostname))).replace("{mode}", mode_label or "")
+    # ohne Modus (Valheim, Satisfactory …) steht dort der Spielname: „Groh Valheim 1“
+    mode = mode_label or ((GAMES.get(g) or {}).get("short") if "{game}" not in pattern else "") or ""
+    name = pattern.replace("{game}", short).replace("{nr}", str(_server_nr(s, hostname))).replace("{mode}", mode)
     name = re.sub(r'["\\;]', "", re.sub(r"\s+", " ", name)).strip(" -·|")[:63]
     return name or None
 

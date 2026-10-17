@@ -36,8 +36,8 @@ DEFAULT_SETTINGS = {
     "scan_subnets": "",         # zusätzliche Netze, z. B. "192.168.200.0/24"
     "games_base": "/mnt/grohlan",   # Basisordner für neue Spielserver (NAS-Mount auf dem Docker-Host)
     "cache_container": "",      # Lancache-Container (leer = automatisch erkennen)
-    "hostname_pattern": "CS#{nr} {mode}",   # CS2-Servername nach Modus (leer = aus)
-    "names_pattern": "{game}#{nr} {mode}",  # andere Spiele (TF2, Satisfactory, Wreckfest …; leer = aus)
+    "hostname_pattern": "Groh {mode} {nr}",   # CS2-Servername nach Modus (leer = aus)
+    "names_pattern": "Groh {mode} {nr}",      # alle anderen Spiele; ohne Modus steht dort das Spiel (leer = aus)
     "container_dns": "",        # DNS für neue Spielserver-Container (leer = Lancache-DNS automatisch)
 }
 
@@ -45,6 +45,11 @@ DEFAULT_SETTINGS = {
 def get_settings() -> dict:
     s = store.load(SETTINGS_FILE, {})
     out = {**DEFAULT_SETTINGS, **s}
+    # alte Standard-Muster auf das neue einheitliche Schema „Groh Modus Nummer“ umstellen
+    if out.get("hostname_pattern") == "CS#{nr} {mode}":
+        out["hostname_pattern"] = DEFAULT_SETTINGS["hostname_pattern"]
+    if out.get("names_pattern") == "{game}#{nr} {mode}":
+        out["names_pattern"] = DEFAULT_SETTINGS["names_pattern"]
     if not out.get("modes"):
         out["modes"] = DEFAULT_MODES
     return out
