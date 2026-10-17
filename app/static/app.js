@@ -199,10 +199,11 @@ function renderPublic(){
     const j = x.join || {};
     const meta = [x.mode ? esc(x.mode) : "", x.version ? "v" + esc(x.version) : ""].filter(Boolean).join(" · ");
     const thumb = MAP_GAMES.has(x.game) && x.online ? mapThumb({map: x.map, workshop: x.workshop}, x.game) : "";
-    return `<div class="pubcard${x.online ? "" : " off"}" style="--gc:${g.color}" data-pub="${esc(x.id)}" tabindex="0" title="Details: Spieler, Rotation">
+    return `<div class="pubcard${x.online || x.sleeping ? "" : " off"}" style="--gc:${g.color}" data-pub="${esc(x.id)}" tabindex="0" title="Details: Spieler, Rotation">
       ${thumb ? `<div class="pubthumb">${thumb}<span class="pubmap">${esc(x.map_label || x.map || "")}</span></div>` : ""}
       <div class="pubtop">${gameTile(x.game, 18)}<div class="pubname"><b title="${esc(x.name)}">${esc(x.name)}</b><span class="hint">${esc(g.label)}</span></div>
-        <span class="pill ${x.online ? "ok" : ""}">${x.online ? `● ${x.players ?? 0}${x.max_players ? "/" + x.max_players : ""} Spieler` : "offline"}</span></div>
+        <span class="pill ${x.online ? "ok" : ""}">${x.online ? `● ${x.players ?? 0}${x.max_players ? "/" + x.max_players : ""} Spieler` : x.sleeping ? "💤 schläft" : "offline"}</span></div>
+      ${x.sleeping ? `<div class="pubjoin"><button class="small primary" data-pwake="${esc(x.id)}">Aufwecken</button><span class="hint">Server ruht, weil niemand drauf war – startet in ${x.sleeping === "pause" ? "1–2 Sekunden" : "ca. 1–3 Minuten"}.</span></div>` : ""}
       ${x.map && x.map !== "–" && x.online ? `<div class="pubmapline">${esc(x.map_label || x.map)}</div>` : ""}
       ${meta ? `<div class="hint pubmeta">${meta}</div>` : ""}
       <div class="pubjoin">
@@ -215,6 +216,12 @@ function renderPublic(){
   }).join("");
   $$("#pubGrid [data-pcopy]").forEach(b => b.onclick = e => { e.stopPropagation(); copyText(b.dataset.pcopy); });
   $$("#pubGrid a.btn").forEach(a => a.onclick = e => e.stopPropagation());
+  $$("#pubGrid [data-pwake]").forEach(b => b.onclick = async e => {
+    e.stopPropagation(); b.disabled = true; b.textContent = "weckt …";
+    try { const r = await fetch(`/api/public/${encodeURIComponent(b.dataset.pwake)}/wake`, {method: "POST"}); if (!r.ok) throw new Error((await r.json()).detail || r.statusText); toast("Server wird geweckt – gleich beitreten"); }
+    catch (err){ toast(err.message, true); }
+    setTimeout(refreshPublic, 2500);
+  });
   $$("#pubGrid [data-pub]").forEach(c => {
     c.onclick = () => openPubDetail(c.dataset.pub);
     c.onkeydown = e => { if (e.key === "Enter") openPubDetail(c.dataset.pub); };
@@ -341,6 +348,7 @@ function renderServerList(){
 /* ================= Status-LED ================= */
 const CSTATE = {running: "läuft", exited: "gestoppt", restarting: "startet neu", created: "angelegt", paused: "pausiert", dead: "defekt", removing: "wird entfernt"};
 function ledOf(o){
+  if (o && o.sleeping) return {cls: "sleep", tip: o.sleeping === "pause" ? "schläft – pausiert (Ruhemodus)" : "schläft – angehalten (Ruhemodus)"};
   const c = o && o.load && !o.load.error ? o.load.state : null;
   if (o && o.online) return {cls: "on", tip: "Server online" + (c ? " · Container " + (CSTATE[c] || c) : "")};
   if (c === "running" || c === "restarting") return {cls: "warn", tip: "Container " + (CSTATE[c] || c) + ", aber das Spiel antwortet (noch) nicht – startet/aktualisiert vermutlich"};
@@ -742,6 +750,12 @@ function sizesHtml(){
       <a href="#" id="szRefresh">jetzt neu messen</a> · Balken blau = auf dem NAS, grau = lokal</div></div>`;
 }
 document.addEventListener("click", async e => {
+  const w = e.target.closest && e.target.closest("[data-wake]");
+  if (w){
+    e.preventDefault(); e.stopPropagation(); w.disabled = true; w.textContent = "weckt …";
+    try { await api(`/api/servers/${w.dataset.wake}/wake`, {method: "POST"}); toast("Server wird aufgeweckt"); } catch (err){ toast(err.message, true); }
+    setTimeout(refreshDash, 1500); return;
+  }
   if (e.target.id !== "szRefresh") return;
   e.preventDefault(); await loadSizes(true); toast("Größen werden neu gemessen – dauert je nach Datenmenge einige Minuten");
   if (view === "dash") $("#hostPanel").innerHTML = hostPanelHtml();
@@ -810,6 +824,7 @@ async function refreshDash(){
     const mz = o.matchzy && o.matchzy.match ? `${esc(o.matchzy.match.team1||"")} vs ${esc(o.matchzy.match.team2||"")} · ${esc(o.matchzy.match.state||"")}` : (o.matchzy && o.matchzy.unloaded ? "aus (Freizeitmodus)" : o.matchzy && o.matchzy.installed ? "kein Match geladen" : "–");
     return `<div class="dcard" data-id="${esc(s.id)}">
       <div class="top">${gameLogo(gameOf(s))}${led(o)}<b>${esc(s.name)}</b>${o.online && o.join ? (o.join.url ? `<a class="joinbtn" href="${esc(o.join.url)}" title="Beitreten: ${esc(o.join.address)}" data-stop>▶ Beitreten</a>` : `<span class="joinbtn" data-copy="${esc(o.join.address)}" title="${esc(o.join.hint)}">⧉ ${esc(o.join.address)}</span>`) : `<span class="hint mono">${esc(s.host)}:${esc(s.port)}</span>`}</div>
+      ${o.sleeping ? `<div class="sleeprow"><span class="pill">💤 ${o.sleeping === "pause" ? "pausiert" : "angehalten"} – Ruhemodus</span><button class="small primary opsonly" data-wake="${esc(s.id)}">Aufwecken</button></div>` : ""}
       ${o.online ? `<div class="dbody">${mapThumb(o, gameOf(s))}` + (gameOf(s) === "cs2" ? `
       <div class="kv">
         <span>Map</span><span class="kvmap" title="${esc(o.map)}">${esc((o.workshop && o.workshop.title) || o.map || "?")}</span>
@@ -892,7 +907,7 @@ function setTab(t){
   if (t === "files"){ loadSaves(); fbOpen(null); }
   if (t === "config") loadConfigTab();
   stopPoll(); stopCt();
-  if (t === "container"){ refreshContainer(); ctTimer = setInterval(refreshContainer, 5000); }
+  if (t === "container"){ refreshContainer(); loadSleep(); ctTimer = setInterval(refreshContainer, 5000); }
   if (t === "overview"){ refreshStatus(); pollTimer = setInterval(refreshStatus, 5000); }
   if (t === "maps") renderFavs();
   if (t === "match") initMatch();
@@ -1701,6 +1716,24 @@ $("#btnGClaim").onclick = async () => {
 
 /* ================= Container ================= */
 function stopCt(){ if (ctTimer){ clearInterval(ctTimer); ctTimer = null; } }
+async function loadSleep(){
+  if (!current || !current.container) return;
+  let r; try { r = await api(`/api/servers/${current.id}/sleep`); } catch { return; }
+  $("#slMode").innerHTML = Object.entries(r.modes).map(([k, l]) => `<option value="${k}" ${k === r.mode ? "selected" : ""}>${esc(l)}</option>`).join("");
+  $("#slAfter").value = r.after;
+  $("#slHibRow").classList.toggle("hidden", !r.hibernate_supported);
+  $("#slHib").value = r.hibernate == null ? "" : r.hibernate ? "1" : "0";
+  $("#slState").innerHTML = r.asleep ? `<span class="pill">💤 schläft seit ${fmtDate(r.asleep.since)} (${r.asleep.mode === "pause" ? "pausiert" : "angehalten"})</span>`
+    : `<span class="hint">wach · ${r.idle_s >= 60 ? `seit ${Math.round(r.idle_s / 60)} min ohne Spieler` : "Spieler aktiv oder gerade gestartet"}</span>`;
+  $("#btnSlNow").classList.toggle("hidden", !!r.asleep); $("#btnSlWake").classList.toggle("hidden", !r.asleep);
+}
+$("#btnSlSave").onclick = async () => {
+  const h = $("#slHib").value;
+  try { await api(`/api/servers/${current.id}/sleep/config`, {body: {mode: $("#slMode").value, after: +$("#slAfter").value || 30, hibernate: h === "" ? null : h === "1"}}); toast("Ruhemodus gespeichert"); loadSleep(); }
+  catch (e){ toast(e.message, true); }
+};
+$("#btnSlNow").onclick = async () => { try { await api(`/api/servers/${current.id}/sleep/now`, {method: "POST"}); toast("Server ruht jetzt"); loadSleep(); refreshContainer(); } catch (e){ toast(e.message, true); } };
+$("#btnSlWake").onclick = async () => { try { await api(`/api/servers/${current.id}/wake`, {method: "POST"}); toast("Server wird geweckt"); loadSleep(); refreshContainer(); } catch (e){ toast(e.message, true); } };
 async function refreshContainer(){
   if (!current) return;
   try {

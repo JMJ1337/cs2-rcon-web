@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=55">
+<link rel="stylesheet" href="/static/app.css?v=57">
 </head>
 <body>
 
@@ -561,6 +561,19 @@
             <button class="danger opsonly" data-ct="stop">Stoppen</button>
             <button class="mgronly hidden" id="btnSteamFix" title="SteamCMD-Workaround: einmal als Windows, dann als Linux laden (z. B. bei „Invalid platform“)">Steam-Installation reparieren</button>
           </div>
+          <div class="sleepbox" id="ctSleep">
+            <h3 style="margin:14px 0 6px">Ruhemodus <span class="hint">spart RAM/CPU und Leitung, wenn niemand spielt</span></h3>
+            <div class="row" style="flex-wrap:wrap;gap:8px;align-items:end">
+              <div><label>Wenn leer</label><select id="slMode" class="mgrsel"></select></div>
+              <div><label>nach Minuten</label><input id="slAfter" type="number" min="5" max="1440" style="width:90px"></div>
+              <div id="slHibRow"><label>CS2-Hibernation (sv_hibernate_when_empty)</label><select id="slHib"><option value="">wie Server</option><option value="1">an</option><option value="0">aus</option></select></div>
+              <button class="primary mgronly" id="btnSlSave">Speichern</button>
+              <button class="opsonly" id="btnSlNow">Jetzt ruhen lassen</button>
+              <button class="primary opsonly hidden" id="btnSlWake">Aufwecken</button>
+            </div>
+            <div id="slState" style="margin-top:6px"></div>
+            <div class="hint" style="margin-top:4px">Nur bei Spielen, die ihre Spielerzahl melden. Schlafende Server zeigt die Serverliste mit „Aufwecken“ – das darf jeder Besucher.</div>
+          </div>
           <div class="hidden mgronly" id="ctParamsRow" style="margin-top:12px">
             <label>Startparameter (GAME_PARAMS)</label>
             <div class="row"><input id="ctParams" class="mono" style="flex:1" spellcheck="false"><button class="primary" id="btnCtParams">Übernehmen &amp; neu erstellen</button></div>
@@ -704,6 +717,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=56"></script>
+<script src="/static/app.js?v=57"></script>
 </body>
 </html>

@@ -95,7 +95,7 @@ def token_user(token: str | None) -> dict | None:
 ADMIN_PATHS = ("/api/users", "/api/settings", "/api/prefill", "/api/storage", "/api/scan", "/api/cache/measure", "/api/docker/image-check")
 
 # Benötigte Rechtestufe für Server-Unterseiten (users.LEVELS): 1 sehen, 2 bedienen, 3 verwalten, 4 anlegen/löschen
-_MANAGE_RX = re.compile(r"(config(/file)?|files(/.*)?|saves/load|container(/(env|diag|use-lancache|steamfix))?|wreckfest/.*|"
+_MANAGE_RX = re.compile(r"(config(/file)?|files(/.*)?|saves/load|container(/(env|diag|use-lancache|steamfix))?|wreckfest/.*|sleep/config|"
                         r"satisfactory/options|claim)")
 _MANAGE_GET_RX = re.compile(r"(config(/file)?|files(/.*)?|container/env|wreckfest/config|satisfactory/options)")
 
@@ -277,7 +277,7 @@ async def public_servers(request: Request):
         except Exception:  # noqa: BLE001
             join = None
         out.append({"id": s["id"], "game": g, "name": st.get("hostname") or s.get("name") or g,
-                    "online": bool(st.get("online")), "players": st.get("humans"),
+                    "online": bool(st.get("online")), "sleeping": (_asleep.get(s["id"]) or {}).get("mode"), "players": st.get("humans"),
                     "max_players": st.get("max_players"), "map": st.get("map"),
                     "map_label": wfd.track_name(st.get("map")) if g == "wreckfest" else st.get("map"),
                     "workshop": {k: (st.get("workshop") or {}).get(k) for k in ("preview", "title")} if st.get("workshop") else None,
@@ -602,7 +602,7 @@ def parse_status(text: str) -> dict:
     return info
 
 
-STATE_CVARS = ["game_type", "game_mode", "sv_visiblemaxplayers", "mp_maxrounds", "sv_password", "bot_quota"]
+STATE_CVARS = ["game_type", "game_mode", "sv_visiblemaxplayers", "mp_maxrounds", "sv_password", "bot_quota", "sv_hibernate_when_empty"]
 
 
 async def _matchzy_info(s: dict) -> dict:
@@ -937,6 +937,10 @@ async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = 
         await c.execute(f"sv_visiblemaxplayers {target}")
         applied, visible = target, target
         log.info("%s: sv_visiblemaxplayers %s (%s)", s["name"], target, reason)
+    if apply_auto and s.get("hibernate") is not None:
+        want_h = "1" if s.get("hibernate") else "0"
+        if str(cv.get("sv_hibernate_when_empty") or "").strip() not in (want_h, want_h + ".000000"):
+            await c.execute(f"sv_hibernate_when_empty {want_h}")
     bots_auto = None
     if apply_auto and settings.get("auto_matchzy", True):
         try:
@@ -1102,6 +1106,8 @@ async def collect_generic(s: dict) -> dict:
 @app.get("/api/servers/{sid}/status", dependencies=auth)
 async def status(sid: str, request: Request):
     s = get_server(sid)
+    if sid in _asleep:
+        raise HTTPException(503, f"Server schläft ({'pausiert' if _asleep[sid]['mode'] == 'pause' else 'angehalten'}) – „Aufwecken“ klicken")
     try:
         r = await collect_state(s, apply_auto=True, with_matchzy=True)
         return {**r, "join": await localize_join(request, s, r.get("join"))}
@@ -1123,6 +1129,8 @@ async def overview(request: Request):
         item = {"server": public(s), **{k: v for k, v in st.items() if not k.startswith("_") and k != "raw"}}
         if item.get("join"):
             item["join"] = await localize_join(request, s, item["join"])
+        item["sleeping"] = (_asleep.get(s["id"]) or {}).get("mode")
+        item["sleep_mode"] = s.get("sleep_mode") or "off"
         if s.get("container"):
             ld = _loads.get(s["container"])
             item["load"] = {k: v for k, v in ld.items() if not k.startswith("_")} if ld else None
@@ -1892,6 +1900,8 @@ async def watcher():
         servers = load_servers()
 
         async def one(s):
+            if s["id"] in _asleep:
+                return
             try:
                 await asyncio.wait_for(collect_state(s, apply_auto=True), timeout=RCON_TIMEOUT * 3)
             except Exception as e:  # noqa: BLE001 – Watcher darf nie sterben
@@ -1899,7 +1909,154 @@ async def watcher():
                                    "error": str(e) or e.__class__.__name__, "updated": time.time()}
         if servers:
             await asyncio.gather(*(one(s) for s in servers))
+            try:
+                await _sleep_tick(servers)
+            except Exception as e:  # noqa: BLE001
+                log.warning("Ruhemodus: %s", e)
         await asyncio.sleep(interval)
+
+
+# ---------------------------------------------------------------- Ruhemodus: leere Server pausieren/anhalten
+SLEEP_MODES = {"off": "aus", "pause": "pausieren (RAM bleibt belegt, Aufwachen in 1 s)", "stop": "anhalten (RAM frei, Start dauert länger)"}
+_last_active: dict[str, float] = {}     # Server -> zuletzt Spieler gesehen (oder aufgeweckt)
+_asleep: dict[str, dict] = store.load("sleep.json", {})   # Server -> {"mode", "since"} (übersteht Neustarts des Tools)
+
+
+def _save_asleep() -> None:
+    store.save("sleep.json", _asleep)
+
+
+def _sleep_cfg(s: dict) -> dict:
+    return {"mode": s.get("sleep_mode") or "off", "after": int(s.get("sleep_after") or 30), "hibernate": s.get("hibernate")}
+
+
+async def _sleep_tick(servers: list[dict]) -> None:
+    now = time.time()
+    for s in servers:
+        sid, c = s["id"], s.get("container")
+        cfg = _sleep_cfg(s)
+        if sid in _asleep:
+            # von außen geweckt (Portainer, Docker)? -> wieder normal überwachen
+            try:
+                st_ = ((await docker_api.inspect(c)).get("State") or {}) if c else {}
+            except docker_api.DockerError:
+                continue
+            if st_.get("Running") and not st_.get("Paused"):
+                _asleep.pop(sid, None)
+                _save_asleep()
+                _last_active[sid] = now
+            continue
+        st = _state.get(sid, {})
+        if st.get("online") and (st.get("humans") or 0) > 0:
+            _last_active[sid] = now
+        _last_active.setdefault(sid, now)
+        if cfg["mode"] not in ("pause", "stop") or not c or not docker_api.available():
+            continue
+        if not st.get("online") or st.get("players_unknown") or (st.get("humans") or 0) > 0:
+            continue                         # nur Server, deren Spielerzahl sicher 0 ist
+        if (install_watch.state.get(c) or {}).get("progress"):
+            continue                         # lädt gerade ein Update
+        if now - _last_active[sid] < cfg["after"] * 60:
+            continue
+        await _put_to_sleep(s, cfg["mode"], reason=f"{cfg['after']} min ohne Spieler")
+
+
+async def _put_to_sleep(s: dict, mode: str, reason: str = "") -> None:
+    c = s["container"]
+    if mode == "stop" and game_of(s) in ("factorio", "satisfactory", "minecraft"):
+        try:                                  # vorher speichern, wo das Spiel es kann
+            if game_of(s) == "satisfactory":
+                await sf_client(s).call("SaveGame", {"SaveName": "vor_ruhemodus"})
+            elif game_of(s) == "factorio":
+                await run(s, "/server-save")
+            elif game_of(s) == "minecraft":
+                await docker_api.exec_cmd(c, ["rcon-cli", "save-all"], timeout=20)
+        except Exception:  # noqa: BLE001
+            pass
+    await docker_api.action(c, "pause" if mode == "pause" else "stop")
+    drop_client(s["id"])
+    _asleep[s["id"]] = {"mode": mode, "since": time.time()}
+    _save_asleep()
+    _state[s["id"]] = {**{k: v for k, v in _state.get(s["id"], {}).items() if k.startswith("_") or k in ("join", "hostname", "map")},
+                       "online": False, "sleeping": mode, "error": "schläft (Ruhemodus)", "updated": time.time()}
+    log.info("%s: Ruhemodus (%s) – %s", s.get("name"), mode, reason)
+
+
+async def wake_server(s: dict) -> str:
+    c = s.get("container")
+    if not c:
+        raise HTTPException(400, "Kein Container zugeordnet")
+    try:
+        st_ = (await docker_api.inspect(c)).get("State") or {}
+        if st_.get("Paused"):
+            await docker_api.action(c, "unpause")
+        elif not st_.get("Running"):
+            await docker_api.action(c, "start")
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    was = _asleep.pop(s["id"], {}).get("mode")
+    _save_asleep()
+    _last_active[s["id"]] = time.time()
+    _state[s["id"]] = {**_state.get(s["id"], {}), "sleeping": None, "error": "wacht auf …", "updated": time.time()}
+    return was or "running"
+
+
+class SleepIn(BaseModel):
+    mode: str = "off"
+    after: int = Field(30, ge=5, le=1440)
+    hibernate: bool | None = None
+
+
+@app.get("/api/servers/{sid}/sleep", dependencies=auth)
+async def sleep_get(sid: str):
+    s = get_server(sid)
+    return {**_sleep_cfg(s), "modes": SLEEP_MODES, "asleep": _asleep.get(sid),
+            "idle_s": int(time.time() - _last_active.get(sid, time.time())),
+            "hibernate_supported": game_of(s) == "cs2"}
+
+
+@app.post("/api/servers/{sid}/sleep/config", dependencies=auth)
+async def sleep_config(sid: str, data: SleepIn):
+    if data.mode not in SLEEP_MODES:
+        raise HTTPException(400, "Unbekannter Modus")
+    get_server(sid)
+    await _set_server_fields(sid, sleep_mode=data.mode, sleep_after=data.after, hibernate=data.hibernate)
+    _last_active[sid] = time.time()
+    return {"ok": True}
+
+
+@app.post("/api/servers/{sid}/sleep/now", dependencies=auth)
+async def sleep_now(sid: str):
+    s = get_server(sid)
+    if not s.get("container"):
+        raise HTTPException(400, "Kein Container zugeordnet")
+    mode = s.get("sleep_mode") if s.get("sleep_mode") in ("pause", "stop") else "pause"
+    try:
+        await _put_to_sleep(s, mode, reason="von Hand")
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    return {"ok": True, "mode": mode}
+
+
+@app.post("/api/servers/{sid}/wake", dependencies=auth)
+async def wake(sid: str):
+    return {"ok": True, "was": await wake_server(get_server(sid))}
+
+
+_wake_rl: dict[str, float] = {}
+
+
+@app.post("/api/public/{sid}/wake")
+async def public_wake(sid: str, request: Request):
+    """Besucher dürfen schlafende Server aufwecken (mehr nicht)."""
+    ip = client_ip(request)
+    if time.time() - _wake_rl.get(ip, 0) < 10:
+        raise HTTPException(429, "Bitte kurz warten")
+    _wake_rl[ip] = time.time()
+    s = next((x for x in load_servers() if x["id"] == sid), None)
+    if not s or sid not in _asleep:
+        raise HTTPException(400, "Server schläft nicht")
+    return {"ok": True, "was": await wake_server(s)}
 
 
 @app.post("/api/servers/{sid}/auto/apply", dependencies=auth)

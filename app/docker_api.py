@@ -67,9 +67,9 @@ async def inspect(name: str) -> dict:
 
 
 async def action(name: str, act: str) -> None:
-    if act not in ("start", "stop", "restart"):
+    if act not in ("start", "stop", "restart", "pause", "unpause"):
         raise DockerError("Unbekannte Aktion")
-    await _req("POST", f"/containers/{name}/{act}", params={"t": "20"} if act != "start" else None, timeout=60)
+    await _req("POST", f"/containers/{name}/{act}", params={"t": "20"} if act in ("stop", "restart") else None, timeout=60)
 
 
 async def logs(name: str, tail: int = 200) -> str:
