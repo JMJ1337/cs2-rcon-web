@@ -3346,7 +3346,7 @@ async def _create_job(job: dict, data: CreateIn, host: str):
             if not await docker_api.image_exists(b["image"]):
                 raise
             _job_log(job, f"Pull fehlgeschlagen ({e}) – nutze vorhandenes lokales Image")
-        src_id = (data.values.get("_copy_from") or "").strip()
+        src_id = (data.values.get("_copy_from") or "").strip() if data.game == "cs2" else ""
         if src_id and job.get("stage") not in ("copied", "created"):
             job["stage"] = "copy"
             await _copy_game_files(job, b, src_id)
