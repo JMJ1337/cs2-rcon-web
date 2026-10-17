@@ -136,12 +136,12 @@ async def image_exists(image: str) -> bool:
         return False
 
 
-async def run_helper(binds: list[str], cmd: list[str], timeout: float = 120) -> str:
+async def run_helper(binds: list[str], cmd: list[str], timeout: float = 120, host_extra: dict | None = None) -> str:
     """Kurzlebigen Hilfs-Container starten (z. B. Ordner auf dem NAS anlegen und Rechte setzen)."""
     if not await image_exists(HELPER_IMAGE):
         await pull(HELPER_IMAGE)  # klein (~4 MB), nur beim ersten Mal
     c = (await _req("POST", "/containers/create", json={
-        "Image": HELPER_IMAGE, "Cmd": cmd, "HostConfig": {"Binds": binds, "AutoRemove": False},
+        "Image": HELPER_IMAGE, "Cmd": cmd, "HostConfig": {"Binds": binds, "AutoRemove": False, **(host_extra or {})},
         "Labels": {"gsm.helper": "1"}})).json()
     cid = c["Id"]
     try:

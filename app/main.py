@@ -91,24 +91,67 @@ def token_user(token: str | None) -> dict | None:
     return u
 
 
-ADMIN_PATHS = ("/api/users", "/api/create", "/api/settings", "/api/prefill", "/api/storage")
+ADMIN_PATHS = ("/api/users", "/api/settings", "/api/prefill", "/api/storage", "/api/scan", "/api/cache/measure")
+
+# Benötigte Rechtestufe für Server-Unterseiten (users.LEVELS): 1 sehen, 2 bedienen, 3 verwalten, 4 anlegen/löschen
+_MANAGE_RX = re.compile(r"(config(/file)?|files(/.*)?|saves/load|container(/(env|diag|use-lancache|steamfix))?|wreckfest/.*|"
+                        r"satisfactory/options|claim)")
+_MANAGE_GET_RX = re.compile(r"(config(/file)?|files(/.*)?|container/env|wreckfest/config|satisfactory/options)")
+
+
+def _need_level(method: str, sub: str) -> int:
+    sub = sub.strip("/")
+    if method == "GET":
+        if sub == "delete-preview":
+            return 4
+        return 3 if _MANAGE_GET_RX.fullmatch(sub) else 1
+    if sub in ("", "delete") and method == "DELETE" or sub == "delete":
+        return 4
+    if sub == "" and method == "PUT":
+        return 3
+    return 3 if _MANAGE_RX.fullmatch(sub) else 2
+
+
+def _server_game(sid: str) -> str | None:
+    for x in load_servers():
+        if x["id"] == sid:
+            return game_of(x)
+    return None
 
 
 def require_auth(request: Request):
     u = token_user(request.cookies.get(COOKIE))
     if not u:
         raise HTTPException(401, "Nicht angemeldet")
-    level = users.ROLES.get(u["role"], 0)
-    path, method = request.url.path, request.method
-    if method != "GET" and level < 2 and not path.startswith("/api/me"):
-        raise HTTPException(403, "Nur Ansicht – keine Berechtigung für Änderungen")
-    admin_only = (path.startswith(ADMIN_PATHS) and not (path == "/api/settings" and method == "GET")) or \
-        (method in ("POST", "PUT", "DELETE") and re.fullmatch(r"/api/servers(/[\w-]+)?", path)) or \
-        re.fullmatch(r"/api/servers/[\w-]+/(delete(-preview)?|container/(diag|use-lancache|steamfix|env)|wreckfest/.*|config(/file)?|satisfactory/options|files(/.*)?|saves(/.*)?)", path)
-    if admin_only and level < 3:
-        raise HTTPException(403, "Nur für Administratoren")
     request.state.user = u
+    if u.get("role") == "admin":
+        return u
+    path, method = request.url.path, request.method
+    if path.startswith("/api/me"):
+        return u
+    if path.startswith(ADMIN_PATHS) and not (path in ("/api/settings", "/api/scan") and method == "GET"):
+        raise HTTPException(403, "Nur für Administratoren")
+    m = re.fullmatch(r"/api/servers/([\w-]+)(/.*)?", path)
+    if m:
+        game = _server_game(m.group(1))
+        need = _need_level(method, m.group(2) or "")
+        have = users.level(u, game)
+        if have < need:
+            raise HTTPException(403, f"Keine Berechtigung ({users.LEVELS.get(need)} nötig, du hast: {users.LEVELS.get(have)})")
+        return u
+    if method != "GET" and path not in ("/api/create", "/api/servers", "/api/logout") and users.max_level(u, GAMES) < 2:
+        raise HTTPException(403, "Nur Ansicht – keine Berechtigung für Änderungen")
     return u
+
+
+def need_game(request: Request, game: str | None, level: int):
+    u = getattr(request.state, "user", None)
+    if users.level(u, game) < level:
+        raise HTTPException(403, f"Keine Berechtigung für dieses Spiel ({users.LEVELS.get(level)} nötig)")
+
+
+def visible(request: Request, s: dict) -> bool:
+    return users.level(getattr(request.state, "user", None), game_of(s)) >= 1
 
 
 class LoginIn(BaseModel):
@@ -139,6 +182,62 @@ async def logout(response: Response):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------- Öffentliche Ansicht (ohne Login)
+JOIN_PW_ENV = ("SERVER_PASS", "SERVER_PASSWORD", "SRCDS_PW", "SERVERPASSWORD", "JOIN_PASSWORD", "GAME_PASSWORD", "SRV_PWD", "PASSWORD")
+_join_pw: dict[str, tuple[float, str]] = {}
+
+
+async def _join_password(s: dict) -> str:
+    """Beitritts-Passwort (nicht RCON/Admin): aus dem Spielstatus, sonst aus Container-Umgebung bzw. Factorio-Einstellungen."""
+    st = _state.get(s["id"], {})
+    if st.get("join_password"):
+        return st["join_password"]
+    if game_of(s) in ("cs2", "tf2") and "join_password" in st:
+        return ""
+    c = s.get("container")
+    if not c or not docker_api.available():
+        return ""
+    hit = _join_pw.get(c)
+    if hit and time.time() - hit[0] < 300:
+        return hit[1]
+    pw = ""
+    try:
+        info = await docker_api.inspect(c)
+        env = dict(e.split("=", 1) for e in (info.get("Config") or {}).get("Env") or [] if "=" in e)
+        pw = next((env[k] for k in JOIN_PW_ENV if env.get(k)), "")
+        if not pw and game_of(s) == "factorio" and (info.get("State") or {}).get("Running"):
+            raw = await docker_api.exec_cmd(c, ["sh", "-c", "cat /factorio/config/server-settings.json 2>/dev/null"], timeout=8)
+            try:
+                pw = json.loads(raw).get("game_password") or ""
+            except ValueError:
+                pw = ""
+    except docker_api.DockerError:
+        pw = ""
+    _join_pw[c] = (time.time(), pw)
+    return pw
+
+
+@app.get("/api/public")
+async def public_servers():
+    """Alle Server mit Status und Beitrittsdaten – ohne Anmeldung (keine RCON-/Admin-Daten)."""
+    out = []
+    for s in load_servers():
+        st = _state.get(s["id"], {})
+        g = game_of(s)
+        try:
+            join = st.get("join") or join_info(s)
+        except Exception:  # noqa: BLE001
+            join = None
+        out.append({"id": s["id"], "game": g, "name": st.get("hostname") or s.get("name") or g,
+                    "online": bool(st.get("online")), "players": st.get("humans"),
+                    "max_players": st.get("max_players"), "map": st.get("map"),
+                    "mode": (st.get("mode") or {}).get("label") if isinstance(st.get("mode"), dict) else None,
+                    "version": st.get("version"), "join": join, "join_password": await _join_password(s)})
+    out.sort(key=lambda x: (not x["online"], GAMES.get(x["game"], {}).get("label", x["game"]), x["name"].lower()))
+    games = {k: {kk: v.get(kk) for kk in ("label", "short", "color")} for k, v in GAMES.items()}
+    return {"servers": out, "games": games, "updated": time.time()}
+
+
 @app.get("/api/version")
 async def version():
     return {"version": os.getenv("APP_VERSION", "dev"), "commit": os.getenv("APP_COMMIT", "lokal")[:7],
@@ -158,11 +257,13 @@ class UserIn(BaseModel):
     username: str = Field(min_length=1, max_length=32)
     password: str | None = Field(None, max_length=128)
     role: str | None = None
+    perms: dict[str, int] | None = None
 
 
 @app.get("/api/users", dependencies=auth)
 async def list_users():
-    return {"users": [users.public(u) for u in users.load()], "roles": users.ROLE_LABELS}
+    return {"users": [users.public(u) for u in users.load()], "roles": users.ROLE_LABELS,
+            "levels": users.LEVELS, "level_hints": users.LEVEL_HINTS}
 
 
 @app.post("/api/users", dependencies=auth)
@@ -170,7 +271,7 @@ async def add_user(data: UserIn):
     if users.find(data.username):
         raise HTTPException(400, "Benutzer existiert bereits")
     try:
-        return users.public(users.upsert(data.username, data.password, data.role or "user"))
+        return users.public(users.upsert(data.username, data.password, data.role or "user", data.perms))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -180,7 +281,7 @@ async def update_user(username: str, data: UserIn):
     if not users.find(username):
         raise HTTPException(404, "Benutzer nicht gefunden")
     try:
-        return users.public(users.upsert(username, data.password or None, data.role))
+        return users.public(users.upsert(username, data.password or None, data.role, data.perms))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -328,12 +429,14 @@ async def run(s: dict, command: str) -> str:
 
 
 @app.get("/api/servers", dependencies=auth)
-async def list_servers():
-    return [public(s) for s in load_servers()]
+async def list_servers(request: Request):
+    u = request.state.user
+    return [public(s) | {"perm": users.level(u, game_of(s))} for s in load_servers() if visible(request, s)]
 
 
 @app.post("/api/servers", dependencies=auth)
-async def add_server(data: ServerIn):
+async def add_server(data: ServerIn, request: Request):
+    need_game(request, data.game if data.game in GAMES else "cs2", 4)
     async with _store_lock:
         servers = load_servers()
         s = {"id": uuid.uuid4().hex[:10], "name": data.name, "host": data.host.strip(),
@@ -618,7 +721,7 @@ async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = 
                 {"key": None, "label": f"type {cv['game_type']} / mode {cv['game_mode']}"},
         "game_type": cv["game_type"], "game_mode": cv["game_mode"],
         "visible_players": visible, "maxrounds": cv["mp_maxrounds"],
-        "password_set": bool(cv["sv_password"]), "bot_quota": cv["bot_quota"],
+        "password_set": bool(cv["sv_password"]), "join_password": cv["sv_password"] or "", "bot_quota": cv["bot_quota"],
         "auto": {"enabled": auto_on, "target": target, "reason": reason, "capped": capped, "applied": applied},
         "join": join_info(s, cv["sv_password"] or None),
         "workshop": ws,
@@ -722,6 +825,8 @@ async def collect_generic(s: dict) -> dict:
             st["hostname"] = q["name"]
     pw = st.pop("password", None) if g == "wreckfest" else None
     result = {"online": True, "game": g, **st, "join": join_info(s, pw)}
+    if pw:
+        result["join_password"] = pw
     await _sync_name(s, st.get("hostname"))
     prev = _state.get(s["id"], {})
     _state[s["id"]] = {**{k: v for k, v in prev.items() if k.startswith("_")}, **result}
@@ -742,9 +847,11 @@ async def status(sid: str):
 
 
 @app.get("/api/overview", dependencies=auth)
-async def overview():
+async def overview(request: Request):
     out = []
     for s in load_servers():
+        if not visible(request, s):
+            continue
         st = _state.get(s["id"], {})
         item = {"server": public(s), **{k: v for k, v in st.items() if not k.startswith("_") and k != "raw"}}
         if s.get("container"):
@@ -1050,7 +1157,7 @@ GAME_APPS = {"cs2": 730, "tf2": 440, "valheim": 892970, "wreckfest": 228380, "fa
              **{k: c["appid"] for k, c in catmod.CATALOG.items() if c.get("appid")}}
 
 
-@app.get("/api/gameicons", dependencies=auth)
+@app.get("/api/gameicons")
 async def game_icons(apps: str = ""):
     """Icons der Spiele (Steam) – für Seitenleiste, Karten und Lancache-Liste."""
     ids = sorted({int(x) for x in apps.split(",") if x.strip().isdigit()} | set(GAME_APPS.values()))[:60]
@@ -1094,11 +1201,62 @@ _sizes: dict = {"items": [], "t": 0.0, "busy": False, "error": None}
 SIZES_EVERY = 1800
 
 
+# Größenmessung mit niedrigster Priorität: wenig CPU, Idle-I/O, Pausen zwischen den Ordnern,
+# und nur, wenn NAS, Cache-Leitung und Host gerade ruhig sind.
+SIZE_SCRIPT = r"""
+renice -n 19 $$ >/dev/null 2>&1; ionice -c 3 -p $$ >/dev/null 2>&1
+: > /tmp/e; cd "/h$1" 2>/dev/null || { echo NODIR; exit 0; }
+df -P . | tail -1 | awk '{printf "DF\t%s\t%.0f\t%s\n", $1, $4*1024, $6}'
+one(){ s=$(du -sk -- "$1" 2>>/tmp/e | cut -f1); echo "S	${s:-0}"; sleep 0.05; }
+for e in * .[!.]*; do
+  [ -e "$e" ] || [ -L "$e" ] || continue
+  if [ -d "$e" ] && [ ! -L "$e" ]; then
+    for f in "$e"/* "$e"/.[!.]*; do [ -e "$f" ] || [ -L "$f" ] || continue; one "$f"; done
+  else one "$e"; fi
+done
+echo "E	$(cat /tmp/e 2>/dev/null | grep -c .)"
+"""
+SIZE_LIMITS = {"CpuShares": 2, "NanoCpus": 250_000_000, "Memory": 128 * 1024 * 1024}
+
+
+def _busy_reason() -> str | None:
+    """Gründe, die Messung zu verschieben (Last soll nicht spürbar werden)."""
+    io = livestats.io or {}
+    mounts = io.get("mounts") or []
+    nfs_bps = sum((m.get("read_bps") or 0) + (m.get("write_bps") or 0) for m in mounts)
+    rtts = [m["rtt_ms"] for m in mounts if m.get("rtt_ms") is not None and (m.get("ops_s") or 0) > 1]
+    lc = livestats.data.get(cache_stats.state.get("container") or "") or {}
+    cache_bps = (lc.get("tx_bps") or 0) if time.time() - lc.get("t", 0) < 10 else 0
+    cpu = hoststats.state.get("cpu") or 0
+    if cache_bps > 5e6:
+        return f"Lancache liefert gerade {cache_bps / 1e6:.0f} MB/s"
+    if nfs_bps > 20e6:
+        return f"NAS überträgt gerade {nfs_bps / 1e6:.0f} MB/s"
+    if rtts and max(rtts) > 15:
+        return f"NAS antwortet langsam ({max(rtts):.0f} ms)"
+    if cpu > 70:
+        return f"Server-CPU bei {cpu:.0f} %"
+    return None
+
+
+async def _wait_calm(max_wait: float = 1200) -> bool:
+    t0 = time.time()
+    while True:
+        r = _busy_reason()
+        if not r:
+            return True
+        _sizes["waiting"] = r
+        if time.time() - t0 > max_wait:
+            return False
+        await asyncio.sleep(20)
+
+
 async def _poll_sizes():
-    """Größe der Datenordner aller Spielserver (du im Hilfs-Container, nur lesend) und ob sie auf NFS liegen."""
+    """Größe der Datenordner aller Spielserver (du im Hilfs-Container, nur lesend, niedrigste Priorität)."""
     if _sizes["busy"]:
         return
     _sizes["busy"] = True
+    _sizes["waiting"] = None
     try:
         per: list[tuple[dict, list[str]]] = []
         for s_ in load_servers():
@@ -1116,34 +1274,56 @@ async def _poll_sizes():
             if src:
                 per.append((s_, src))
         paths = sorted({p for _, ps in per for p in ps})
-        if not paths:
-            _sizes.update(items=[], t=time.time(), error=None)
-            return
-        script = "for p in \"$@\"; do d=\"/h$p\"; s=$(du -sk \"$d\" 2>/tmp/e | cut -f1); e=$(grep -c . /tmp/e); " \
-                 "f=$(df -P \"$d\" 2>/dev/null | tail -1 | awk '{printf \"%s\\t%.0f\\t%s\", $1, $4*1024, $6}'); printf '%s\\t%s\\t%s\\t%s\\n' \"$p\" \"${s:-0}\" \"$e\" \"$f\"; done; true"
-        out = await docker_api.run_helper(["/:/h:ro"], ["sh", "-c", script, "sh", *paths], timeout=1500)
+        old = {p["path"]: p for it in _sizes["items"] for p in it["paths"]}
         info_p: dict[str, dict] = {}
-        for line in out.splitlines():
-            q = line.split("\t")
-            if len(q) >= 6 and q[1].isdigit():
-                info_p[q[0]] = {"bytes": int(q[1]) * 1024, "errors": int(q[2]) if q[2].isdigit() else 0, "device": q[3],
-                                "avail": int(q[4]) if q[4].isdigit() else None, "mount": q[5][2:] or "/",
-                                "nfs": ":" in q[3] or q[3].startswith("//")}
+        for path in paths:
+            if not await _wait_calm():
+                _sizes["error"] = "Messung verschoben – " + (_sizes.get("waiting") or "Last zu hoch")
+                if path in old:
+                    info_p[path] = old[path]
+                continue
+            _sizes["waiting"] = None
+            _sizes["current"] = path
+            try:
+                out = await docker_api.run_helper(["/:/h:ro"], ["sh", "-c", SIZE_SCRIPT, "sh", path], timeout=1800,
+                                                  host_extra=SIZE_LIMITS)
+            except docker_api.DockerError:
+                if path in old:
+                    info_p[path] = old[path]
+                continue
+            d = {"bytes": 0, "errors": 0, "device": "", "avail": None, "mount": "", "nfs": False}
+            ok = False
+            for line in out.splitlines():
+                q = line.split("\t")
+                if q[0] == "DF" and len(q) >= 4:
+                    ok = True
+                    d.update(device=q[1], avail=int(q[2]) if q[2].isdigit() else None, mount=q[3][2:] or "/",
+                             nfs=":" in q[1] or q[1].startswith("//"))
+                elif q[0] == "S" and len(q) >= 2 and q[1].isdigit():
+                    d["bytes"] += int(q[1]) * 1024
+                elif q[0] == "E" and len(q) >= 2 and q[1].isdigit():
+                    d["errors"] = int(q[1])
+            if ok:
+                info_p[path] = d
         items = []
         for s_, ps in per:
-            parts = [dict(path=p, **info_p[p]) for p in ps if p in info_p]
+            parts = [dict(info_p[p], path=p) for p in ps if p in info_p]
             if not parts:
                 continue
             items.append({"id": s_["id"], "name": s_.get("name") or s_["id"], "game": s_.get("game"),
                           "bytes": sum(x["bytes"] for x in parts), "nfs_bytes": sum(x["bytes"] for x in parts if x["nfs"]),
                           "partial": any(x["errors"] for x in parts), "paths": parts})
         items.sort(key=lambda x: -x["bytes"])
-        _sizes.update(items=items, t=time.time(), error=None)
+        _sizes.update(items=items, t=time.time())
+        if not _sizes.get("waiting"):
+            _sizes["error"] = None
     except docker_api.DockerError as e:
         _sizes["error"] = str(e)
         _sizes["t"] = time.time() - SIZES_EVERY + 300   # in 5 min erneut versuchen
     finally:
         _sizes["busy"] = False
+        _sizes["current"] = None
+        _sizes["waiting"] = None
 
 
 @app.get("/api/serversizes", dependencies=auth)
@@ -1156,6 +1336,7 @@ async def server_sizes(refresh: bool = False):
             if p["nfs"]:
                 nfs.setdefault(p["device"].split(":")[0] + ":" + p["mount"], p["avail"])
     return {"items": _sizes["items"], "updated": _sizes["t"] or None, "busy": _sizes["busy"], "error": _sizes["error"],
+            "waiting": _sizes.get("waiting"), "current": _sizes.get("current"),
             "total": sum(x["bytes"] for x in _sizes["items"]), "nfs_total": sum(x["nfs_bytes"] for x in _sizes["items"]),
             "nfs_free": max(nfs.values(), default=None) if nfs else None}
 
@@ -1456,8 +1637,9 @@ class BroadcastIn(BaseModel):
 
 
 @app.post("/api/broadcast", dependencies=auth)
-async def broadcast(data: BroadcastIn):
-    servers = [s for s in load_servers() if s["id"] in set(data.server_ids)]
+async def broadcast(data: BroadcastIn, request: Request):
+    servers = [s for s in load_servers() if s["id"] in set(data.server_ids)
+               and users.level(request.state.user, game_of(s)) >= 2]
 
     async def one(s):
         try:
@@ -2955,6 +3137,7 @@ async def create_server(data: CreateIn, request: Request):
     _need_docker()
     if data.game not in templates.TEMPLATES:
         raise HTTPException(400, "Unbekanntes Spiel")
+    need_game(request, data.game, 4)
     try:
         b = templates.build(data.game, data.values, data.data_dir)  # früh validieren
     except ValueError as e:

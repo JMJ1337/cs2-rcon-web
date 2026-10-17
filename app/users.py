@@ -8,7 +8,42 @@ from . import store
 
 FILE = "users.json"
 ROLES = {"admin": 3, "user": 2, "viewer": 1}
-ROLE_LABELS = {"admin": "Administrator", "user": "Spielleiter", "viewer": "Nur ansehen"}
+ROLE_LABELS = {"admin": "Administrator", "user": "Benutzer (Rechte pro Spiel)", "viewer": "Nur ansehen"}
+# Rechte pro Spiel: 0 = kein Zugriff, 1 = sehen, 2 = bedienen, 3 = verwalten, 4 = anlegen/löschen
+LEVELS = {0: "Kein Zugriff", 1: "Sehen", 2: "Bedienen", 3: "Verwalten", 4: "Anlegen"}
+LEVEL_HINTS = {1: "Status, Spieler, Verlauf und Log ansehen",
+               2: "zusätzlich Start/Stopp/Neustart, Konsole/RCON, Map & Modus, Spielstand speichern",
+               3: "zusätzlich Konfiguration, Dateien, Spielstände laden, Container-Einstellungen, Server bearbeiten",
+               4: "zusätzlich neue Server dieses Spiels anlegen und löschen"}
+ROLE_DEFAULT = {"user": 2, "viewer": 1}
+
+
+def level(u: dict | None, game: str | None) -> int:
+    """Rechtestufe des Benutzers für ein Spiel."""
+    if not u:
+        return 0
+    if u.get("role") == "admin":
+        return 4
+    perms = u.get("perms") or {}
+    if game and game in perms:
+        return int(perms[game])
+    return int(perms.get("*", ROLE_DEFAULT.get(u.get("role"), 0)))
+
+
+def max_level(u: dict | None, games) -> int:
+    return max([level(u, g) for g in games] + [level(u, None)], default=0)
+
+
+def clean_perms(perms: dict | None) -> dict:
+    out = {}
+    for k, v in (perms or {}).items():
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= v <= 4 and isinstance(k, str) and len(k) <= 32:
+            out[k] = v
+    return out
 
 
 def _hash(password: str, salt: str | None = None) -> str:
@@ -30,7 +65,9 @@ def load() -> list[dict]:
 
 
 def public(u: dict) -> dict:
-    return {k: u.get(k) for k in ("username", "role", "created", "last_login")} | {"role_label": ROLE_LABELS.get(u.get("role"), "")}
+    return {k: u.get(k) for k in ("username", "role", "created", "last_login")} | {
+        "role_label": ROLE_LABELS.get(u.get("role"), ""),
+        "perms": {"*": level(u, None)} if u.get("role") == "admin" else ({"*": ROLE_DEFAULT.get(u.get("role"), 0)} | (u.get("perms") or {}))}
 
 
 def find(username: str) -> dict | None:
@@ -50,7 +87,7 @@ def verify(username: str, password: str) -> dict | None:
     return None
 
 
-def upsert(username: str, password: str | None, role: str | None) -> dict:
+def upsert(username: str, password: str | None, role: str | None, perms: dict | None = None) -> dict:
     username = (username or "").strip().lower()
     if not username or len(username) > 32 or not username.replace("_", "").replace("-", "").replace(".", "").isalnum():
         raise ValueError("Benutzername: 1–32 Zeichen, Buchstaben/Ziffern/._-")
@@ -72,6 +109,8 @@ def upsert(username: str, password: str | None, role: str | None) -> dict:
         if u["role"] == "admin" and role != "admin" and sum(1 for x in users if x["role"] == "admin") <= 1:
             raise ValueError("Der letzte Administrator kann nicht herabgestuft werden")
         u["role"] = role
+    if perms is not None:
+        u["perms"] = clean_perms(perms)
     store.save(FILE, users)
     return u
 

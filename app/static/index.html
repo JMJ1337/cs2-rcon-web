@@ -5,19 +5,31 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=47">
+<link rel="stylesheet" href="/static/app.css?v=48">
 </head>
 <body>
 
 <!-- Login -->
+<div id="pub" class="hidden">
+  <header class="pubhead">
+    <div class="logo">Spielserver<span>manager</span></div>
+    <div class="pubstat" id="pubStat"></div>
+    <button class="primary" id="btnPubLogin">Anmelden</button>
+  </header>
+  <div class="pubintro hint">Alle Spielserver im LAN. „Beitreten“ startet das Spiel und verbindet direkt (wo das Spiel es unterstützt), sonst Adresse kopieren und im Spiel eintragen.</div>
+  <div class="pubgrid" id="pubGrid"><div class="hint">Lade Server …</div></div>
+  <div class="hint ver" id="pubVersion" style="text-align:center;margin:24px 0 12px"></div>
+</div>
+
 <div id="login" class="hidden">
   <form id="loginForm">
     <div class="logo">Spielserver<span>manager</span></div>
-    <div class="muted">Bitte anmelden.</div>
+    <div class="muted">Anmelden zum Verwalten der Server.</div>
     <input id="loginUser" placeholder="Benutzername" autocomplete="username" value="admin">
     <input type="password" id="loginPw" placeholder="Passwort" autocomplete="current-password" autofocus>
     <button class="primary" type="submit">Anmelden</button>
     <div id="loginErr" style="color:var(--bad)"></div>
+    <button type="button" id="btnBackPub">← Zur Serverliste</button>
     <div class="hint ver" id="loginVersion"></div>
   </form>
 </div>
@@ -49,14 +61,14 @@
       <button data-view="prefill" class="adminonly">⇩ SteamPrefill</button>
       <button data-view="storage" class="adminonly">🖴 Speicher (iSCSI)</button>
       <button data-view="scan">⌕ Netzwerk-Scan <span class="pill hidden" id="scanBadge"></span></button>
-      <button data-view="create" class="adminonly">＋ Neuen Server anlegen</button>
+      <button data-view="create" class="createonly">＋ Neuen Server anlegen</button>
       <button data-view="users" class="adminonly">☰ Benutzer</button>
       <button data-view="auto" class="adminonly">⚙ Automatik &amp; Einstellungen</button>
     </div>
     <div class="sect">Server</div>
     <div id="serverList"></div>
     <div class="foot">
-      <button class="primary adminonly" id="btnAdd">+ Server hinzufügen</button>
+      <button class="primary createonly" id="btnAdd">+ Server hinzufügen</button>
       <button id="btnBroadcast">An alle Server senden</button>
       <div class="hint ver" id="appVersion"></div>
     </div>
@@ -256,9 +268,9 @@
             <select id="uRole"></select>
             <button class="primary" id="btnUAdd">Anlegen</button>
           </div>
-          <div class="hint" style="margin-top:8px">Administrator: alles inkl. Benutzer, Server anlegen und Einstellungen · Spielleiter: Server bedienen (Maps, Matches, Konsole, Container) · Nur ansehen: keine Änderungen.</div>
+          <div class="hint" style="margin-top:8px">Administrator: alles inkl. Benutzer, Speicher, Prefill und Einstellungen. Alle anderen bekommen unter „Rechte“ pro Spiel eine Stufe: <b>Sehen</b> · <b>Bedienen</b> (Start/Stopp, Konsole, Map) · <b>Verwalten</b> (Konfiguration, Dateien, Spielstände laden) · <b>Anlegen</b> (neue Server anlegen und löschen). Ohne Login sieht jeder die Serverliste mit Beitrittsdaten.</div>
         </div>
-        <div class="panel"><div style="overflow:auto"><table><thead><tr><th>Benutzer</th><th>Rolle</th><th>Angelegt</th><th>Letzter Login</th><th></th></tr></thead><tbody id="uRows"></tbody></table></div></div>
+        <div class="panel"><div style="overflow:auto"><table><thead><tr><th>Benutzer</th><th>Rolle</th><th>Rechte</th><th>Angelegt</th><th>Letzter Login</th><th></th></tr></thead><tbody id="uRows"></tbody></table></div></div>
       </div>
     </section>
 
@@ -293,17 +305,17 @@
         <div><div class="title" id="svTitle"></div><div class="sub" id="svSub"></div></div>
         <div class="tabs" id="tabs">
           <button data-tab="overview" class="active">Übersicht</button>
-          <button data-tab="maps" class="cs2only">Maps &amp; Workshop</button>
-          <button data-tab="match" class="cs2only">Wettkampf</button>
-          <button data-tab="console">Konsole</button>
-          <button data-tab="settings" class="srconly">Einstellungen</button>
-          <button data-tab="config" class="needcontainer adminonly">Konfiguration</button>
-          <button data-tab="files" class="needcontainer adminonly">Dateien &amp; Spielstände</button>
+          <button data-tab="maps" class="cs2only opsonly">Maps &amp; Workshop</button>
+          <button data-tab="match" class="cs2only opsonly">Wettkampf</button>
+          <button data-tab="console" class="opsonly">Konsole</button>
+          <button data-tab="settings" class="srconly opsonly">Einstellungen</button>
+          <button data-tab="config" class="needcontainer mgronly">Konfiguration</button>
+          <button data-tab="files" class="needcontainer mgronly">Dateien &amp; Spielstände</button>
           <button data-tab="container" class="needcontainer">Container</button>
           <button id="btnJoin" class="primary hidden" title="Spiel starten und mit diesem Server verbinden">▶ Beitreten</button>
           <button id="btnCopyAddr" class="hidden" title="Adresse kopieren">⧉ <span id="joinAddr"></span></button>
           <button id="btnWeb" class="hidden" title="Weboberfläche/Webkonsole des Servers öffnen">Webkonsole ↗</button>
-          <button id="btnEdit" class="adminonly">Bearbeiten</button>
+          <button id="btnEdit" class="mgronly">Bearbeiten</button>
         </div>
       </div>
 
@@ -322,15 +334,15 @@
           <div class="panel"><h2>Spielinfos</h2><div class="kvtable" id="gExtra"></div></div>
           <div class="panel">
             <h2>Aktionen</h2>
-            <div class="row hidden" id="gSaveRow"><input id="gSaveName" placeholder="Name des Spielstands (optional)"><button class="primary" id="btnGSave">Spiel speichern</button></div>
-            <div class="hidden" id="gClaim" style="margin-top:12px">
+            <div class="row hidden opsonly" id="gSaveRow"><input id="gSaveName" placeholder="Name des Spielstands (optional)"><button class="primary" id="btnGSave">Spiel speichern</button></div>
+            <div class="hidden mgronly" id="gClaim" style="margin-top:12px">
               <div class="pill warn" style="margin-bottom:8px">Server ist noch nicht beansprucht</div>
               <div class="row"><input id="gClaimName" placeholder="Servername"><input id="gClaimPw" type="password" placeholder="Admin-Passwort"><button class="primary" id="btnGClaim">Beanspruchen</button></div>
             </div>
             <div class="hint" id="gActHint" style="margin-top:10px"></div>
           </div>
         </div>
-        <div class="panel hidden adminonly" id="wfPanel" style="margin-top:16px">
+        <div class="panel hidden mgronly" id="wfPanel" style="margin-top:16px">
           <h2>Wreckfest-Einstellungen <span class="hint">server_config.cfg</span></h2>
           <div id="wfLan" style="margin-bottom:12px"></div>
           <div class="wfgrid" id="wfFields"></div>
@@ -497,7 +509,7 @@
       <div class="content hidden" id="tab-files">
         <div class="panel" id="svSaves">
           <h2>Spielstände <span class="hint" id="svSavesHint"></span></h2>
-          <div class="row hidden" id="svSaveRow" style="margin-bottom:10px"><input id="svSaveName" placeholder="Name (optional)"><button class="primary" id="btnSaveNow">Jetzt speichern</button></div>
+          <div class="row hidden opsonly" id="svSaveRow" style="margin-bottom:10px"><input id="svSaveName" placeholder="Name (optional)"><button class="primary" id="btnSaveNow">Jetzt speichern</button></div>
           <div id="svSavesList"></div>
         </div>
         <div class="panel" style="margin-top:16px">
@@ -522,12 +534,12 @@
         </div>
         <div class="panel">
           <div class="btns">
-            <button class="primary" data-ct="start">Starten</button>
-            <button data-ct="restart">Neu starten</button>
-            <button class="danger" data-ct="stop">Stoppen</button>
-            <button class="adminonly hidden" id="btnSteamFix" title="SteamCMD-Workaround: einmal als Windows, dann als Linux laden (z. B. bei „Invalid platform“)">Steam-Installation reparieren</button>
+            <button class="primary opsonly" data-ct="start">Starten</button>
+            <button class="opsonly" data-ct="restart">Neu starten</button>
+            <button class="danger opsonly" data-ct="stop">Stoppen</button>
+            <button class="mgronly hidden" id="btnSteamFix" title="SteamCMD-Workaround: einmal als Windows, dann als Linux laden (z. B. bei „Invalid platform“)">Steam-Installation reparieren</button>
           </div>
-          <div class="hidden adminonly" id="ctParamsRow" style="margin-top:12px">
+          <div class="hidden mgronly" id="ctParamsRow" style="margin-top:12px">
             <label>Startparameter (GAME_PARAMS)</label>
             <div class="row"><input id="ctParams" class="mono" style="flex:1" spellcheck="false"><button class="primary" id="btnCtParams">Übernehmen &amp; neu erstellen</button></div>
             <div class="hint">Der Container wird mit denselben Daten neu erstellt.</div>
@@ -546,7 +558,7 @@
           <div class="consolemain">
             <div class="hint hidden" id="consoleNoRemote" style="margin-bottom:10px"></div>
             <div id="consoleOut"></div>
-            <form class="console-in" id="consoleForm">
+            <form class="console-in opsonly" id="consoleForm">
               <input id="consoleIn" placeholder="Befehl eingeben  (↑/↓ = Verlauf, rechts klicken = übernehmen)" autocomplete="off" spellcheck="false">
               <button class="primary" type="submit">Senden</button>
               <button type="button" id="btnClear">Leeren</button>
@@ -592,7 +604,7 @@
     <div><label>Notiz</label><input name="notes" maxlength="200"></div>
     <label style="display:flex;gap:8px;align-items:center;color:var(--text)" id="dlgAutoRow"><input type="checkbox" name="auto_slots" checked style="width:auto"> Spieleranzahl automatisch nach Modus/Map setzen</label>
     <div class="row" style="justify-content:space-between;margin-top:6px">
-      <button type="button" class="danger" id="btnDelete">Löschen</button>
+      <button type="button" class="danger delonly" id="btnDelete">Löschen</button>
       <div class="btns">
         <button type="button" id="btnTest">Verbindung testen</button>
         <button type="button" id="btnCancel">Abbrechen</button>
@@ -643,6 +655,15 @@
 </dialog>
 
 <!-- Passwort-Dialog -->
+<dialog id="dlgPerm" style="width:min(620px,calc(100vw - 32px))">
+  <form method="dialog" id="permForm">
+    <h2>Rechte für <span id="permUser"></span></h2>
+    <div class="hint" id="permHints" style="margin-bottom:10px"></div>
+    <div class="permgrid" id="permGrid"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:12px"><button type="button" id="btnPermCancel">Abbrechen</button><button class="primary" type="submit">Speichern</button></div>
+  </form>
+</dialog>
+
 <dialog id="dlgPw">
   <form method="dialog" id="pwForm">
     <h2>Eigenes Passwort ändern</h2>
@@ -656,6 +677,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=47"></script>
+<script src="/static/app.js?v=48"></script>
 </body>
 </html>

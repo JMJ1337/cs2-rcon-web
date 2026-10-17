@@ -174,7 +174,7 @@ body.no-console .needconsole{display:none!important}
 body.no-container .needcontainer{display:none!important}
 #createGameSeg button{padding:8px 14px}
 body.not-admin .adminonly{display:none!important}
-body.viewer .opsonly{display:none!important}
+body.perm-lt2 .opsonly,body.perm-lt3 .mgronly,body.perm-lt4 .delonly,body.no-create .createonly{display:none!important}
 
 /* ---------- v4: Last ---------- */
 .hostload{margin:10px 8px 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);display:grid;gap:6px}
@@ -361,3 +361,29 @@ a.btn-link{display:inline-flex;align-items:center;padding:3px 7px;border:1px sol
 .szrow .gtile{flex:none;display:inline-grid;place-items:center;border-radius:4px}
 .szrow b{font-family:var(--mono);font-weight:500;text-align:right}
 @media (max-width:600px){.szrow{grid-template-columns:110px 1fr 70px}}
+
+.permgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:6px 14px;max-height:55vh;overflow:auto}
+.permrow{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px;padding:3px 0}
+.permrow>span{display:flex;align-items:center;gap:6px;min-width:0}
+.permrow .gtile{flex:none;display:inline-grid;place-items:center;border-radius:4px}
+.permrow select{width:130px}
+.permall{grid-column:1/-1;border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:4px}
+
+#pub{max-width:1200px;margin:0 auto;padding:16px;min-height:100%}
+.pubhead{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:8px 0 12px;border-bottom:1px solid var(--line)}
+.pubhead .logo{font-family:var(--mono);font-weight:700;font-size:20px}
+.pubhead .logo span{color:var(--accent)}
+.pubstat{flex:1;color:var(--muted);font-size:13px}
+.pubintro{margin:12px 0 16px}
+.pubgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.pubcard{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--gc);border-radius:10px;padding:14px;display:grid;gap:8px;min-width:0}
+.pubcard.off{opacity:.6}
+.pubtop{display:flex;align-items:center;gap:10px;min-width:0}
+.pubtop .gtile{flex:none}
+.pubname{display:grid;min-width:0;flex:1}
+.pubname b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pubjoin{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.pubjoin button{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pubhint,.pubmeta{font-size:12px}
+a.btn{display:inline-flex;align-items:center;gap:4px;text-decoration:none;border-radius:6px;padding:4px 10px;font-size:12px;background:var(--accent);color:var(--accent-ink);font-weight:600}
+@media (max-width:600px){.pubgrid{grid-template-columns:1fr}}

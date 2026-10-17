@@ -135,7 +135,7 @@ async function api(path, opts={}){
     body: opts.body ? JSON.stringify(opts.body) : undefined,
     credentials: "same-origin",
   });
-  if (res.status === 401 && path !== "/api/login"){ showLogin(); throw new Error("Nicht angemeldet"); }
+  if (res.status === 401 && path !== "/api/login"){ showPublic(); throw new Error("Nicht angemeldet"); }
   let data = null;
   try { data = await res.json(); } catch {}
   if (!res.ok){
@@ -152,13 +152,56 @@ function modeOptions(withKeep){
 const fmtDate = t => new Date(t*1000).toLocaleString("de-DE", {day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
 
 /* ================= Login ================= */
-function showLogin(){ stopPoll(); clearInterval(dashTimer); $("#app").classList.add("hidden"); $("#login").classList.remove("hidden"); $("#loginPw").focus(); }
+function showLogin(){ stopPoll(); clearInterval(dashTimer); clearInterval(pubTimer); $("#app").classList.add("hidden"); $("#pub").classList.add("hidden"); $("#login").classList.remove("hidden"); $("#loginPw").focus(); }
+
+/* ================= Öffentliche Serverliste (ohne Login) ================= */
+let pubTimer = null, pubData = null, pubIconsLoaded = false;
+function showPublic(){
+  stopPoll(); clearInterval(dashTimer); me = null;
+  $("#app").classList.add("hidden"); $("#login").classList.add("hidden"); $("#pub").classList.remove("hidden");
+  refreshPublic();
+  clearInterval(pubTimer); pubTimer = setInterval(() => { if (!document.hidden) refreshPublic(); }, 10000);
+}
+async function refreshPublic(){
+  try {
+    const r = await (await fetch("/api/public", {cache: "no-store"})).json();
+    pubData = r;
+    if (!Object.keys(GAMES).length) GAMES = r.games;
+    if (!pubIconsLoaded){ pubIconsLoaded = true; loadGameIcons().then(renderPublic); }
+    renderPublic();
+  } catch { $("#pubGrid").innerHTML = `<div class="hint">Serverliste gerade nicht erreichbar …</div>`; }
+}
+function renderPublic(){
+  const r = pubData; if (!r) return;
+  const on = r.servers.filter(x => x.online), pl = on.reduce((a, x) => a + (x.players || 0), 0);
+  $("#pubStat").innerHTML = `<b>${on.length}</b> von ${r.servers.length} Servern online · <b>${pl}</b> Spieler`;
+  if (!r.servers.length){ $("#pubGrid").innerHTML = `<div class="hint">Noch keine Server eingerichtet.</div>`; return; }
+  $("#pubGrid").innerHTML = r.servers.map((x, i) => {
+    const g = GAMES[x.game] || r.games[x.game] || {label: x.game, color: "#888"};
+    const j = x.join || {};
+    const meta = [x.map && x.map !== "–" ? esc(x.map) : "", x.mode ? esc(x.mode) : "", x.version ? "v" + esc(x.version) : ""].filter(Boolean).join(" · ");
+    return `<div class="pubcard${x.online ? "" : " off"}" style="--gc:${g.color}">
+      <div class="pubtop">${gameTile(x.game, 18)}<div class="pubname"><b title="${esc(x.name)}">${esc(x.name)}</b><span class="hint">${esc(g.label)}</span></div>
+        <span class="pill ${x.online ? "ok" : ""}">${x.online ? `● ${x.players ?? 0}${x.max_players ? "/" + x.max_players : ""} Spieler` : "offline"}</span></div>
+      ${meta ? `<div class="hint pubmeta">${meta}</div>` : ""}
+      <div class="pubjoin">
+        ${j.address ? `<button class="small" data-pcopy="${esc(j.address)}" title="Adresse kopieren">⧉ <span class="mono">${esc(j.address)}</span></button>` : ""}
+        ${x.join_password ? `<button class="small" data-pcopy="${esc(x.join_password)}" title="Passwort kopieren">🔑 <span class="mono">${esc(x.join_password)}</span></button>` : ""}
+        ${j.url && x.online ? `<a class="btn primary small" href="${esc(j.url)}">▶ Beitreten</a>` : ""}
+      </div>
+      ${j.hint ? `<div class="hint pubhint">${esc(j.hint)}</div>` : ""}
+    </div>`;
+  }).join("");
+  $$("#pubGrid [data-pcopy]").forEach(b => b.onclick = () => copyText(b.dataset.pcopy));
+}
+$("#btnPubLogin").onclick = () => showLogin();
+$("#btnBackPub").onclick = () => showPublic();
 $("#loginForm").addEventListener("submit", async e => {
   e.preventDefault(); $("#loginErr").textContent = "";
   try { await api("/api/login", {body:{username: $("#loginUser").value.trim() || "admin", password: $("#loginPw").value}}); $("#loginPw").value = ""; start(); }
   catch(err){ $("#loginErr").textContent = err.message; }
 });
-$("#btnLogout").onclick = async () => { await api("/api/logout", {method:"POST"}); showLogin(); };
+$("#btnLogout").onclick = async () => { await api("/api/logout", {method:"POST"}); showPublic(); };
 
 /* ================= Navigation ================= */
 $$(".nav [data-view]").forEach(b => b.onclick = () => showView(b.dataset.view));
@@ -608,7 +651,7 @@ async function loadSizes(refresh){
 function sizesHtml(){
   const z = serverSizes;
   if (!z) return "";
-  if (!z.items.length) return `<div class="hint" style="margin-top:12px">Größe der Spielserver: ${z.busy || !z.updated ? "wird gemessen … (kann bei vielen Dateien auf dem NAS einige Minuten dauern)" : "keine Datenordner gefunden"}</div>`;
+  if (!z.items.length) return `<div class="hint" style="margin-top:12px">Größe der Spielserver: ${z.busy || !z.updated ? (z.waiting ? "wartet auf ruhige Phase – " + esc(z.waiting) : "wird mit niedriger Priorität gemessen … (kann einige Minuten dauern)") : "keine Datenordner gefunden"}</div>`;
   const max = Math.max(...z.items.map(x => x.bytes), 1);
   const rows = z.items.map(x => {
     const g = GAMES[x.game] || {};
@@ -622,7 +665,7 @@ function sizesHtml(){
   return `<div class="szbox"><div class="mlab" style="margin-bottom:6px"><span>Installierte Spielserver</span>
       <b>NFS-Freigabe ${fmtBytes(z.nfs_total)}${local > 0 ? ` · lokal ${fmtBytes(local)}` : ""}${z.nfs_free != null ? ` · NAS frei ${fmtBytes(z.nfs_free)}` : ""}</b></div>
     ${rows}
-    <div class="hint" style="margin-top:6px">Gemessen ${z.updated ? new Date(z.updated * 1000).toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit"}) : "–"} Uhr${z.busy ? " · misst gerade neu …" : ""} ·
+    <div class="hint" style="margin-top:6px">Gemessen ${z.updated ? new Date(z.updated * 1000).toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit"}) : "–"} Uhr${z.waiting ? ` · wartet: ${esc(z.waiting)}` : z.busy ? " · misst gerade neu (niedrige Priorität) …" : ""}${!z.busy && z.error ? ` · ${esc(z.error)}` : ""} ·
       <a href="#" id="szRefresh">jetzt neu messen</a> · Balken blau = auf dem NAS, grau = lokal</div></div>`;
 }
 document.addEventListener("click", async e => {
@@ -735,9 +778,22 @@ function applyGameClasses(s){
   document.body.classList.toggle("no-console", !meta.console);
   document.body.classList.toggle("no-container", !(dockerOn && s.container));
 }
+// Rechte pro Spiel: 1 sehen, 2 bedienen, 3 verwalten, 4 anlegen/löschen
+function permFor(game){
+  if (!me) return 0;
+  if (me.role === "admin") return 4;
+  const p = me.perms || {};
+  return game in p ? +p[game] : +(p["*"] || 0);
+}
+const permOf = s => s && s.perm != null ? s.perm : permFor(gameOf(s));
+function applyPerm(lvl){
+  [2, 3, 4].forEach(n => document.body.classList.toggle("perm-lt" + n, lvl < n));
+}
 function selectServer(s){
   if (!s) return showView("dash");
   current = s; view = "server"; loadedSettings = {};
+  applyPerm(permOf(s));
+  { const lv = permOf(s); if ((lv < 2 && ["console", "maps", "match", "settings"].includes(tab)) || (lv < 3 && ["config", "files"].includes(tab))) tab = "overview"; }
   try { resetStatusFields("wird abgefragt …"); $("#playerRows").innerHTML = ""; } catch {}
   $$(".nav [data-view]").forEach(b => b.classList.remove("active"));
   VIEWS.filter(x => x !== "server").forEach(x => $("#view-"+x).classList.add("hidden"));
@@ -1443,7 +1499,7 @@ const WF_FIELDS = [["server_name","Servername"],["password","Passwort (leer = ke
   ["gamemode","Spielmodus"],["track","Strecke (leer = Rotation)"],["laps","Runden"],["bots","Bots"],
   ["admin_steam_ids","Admin-SteamIDs (SteamID64, kommagetrennt)"],["op_steam_ids","Moderator-SteamIDs"]];
 async function loadWfConfig(force){
-  if (!me || me.role !== "admin") return;
+  if (permOf(current) < 3) return;
   if (!force && wfLoadedFor === current.id) return;
   wfLoadedFor = current.id;
   let r;
@@ -1585,6 +1641,9 @@ async function initCreate(){
   $("#createNoDocker").classList.toggle("hidden", tpl.docker);
   $("#createNoDocker").innerHTML = `<b style="color:var(--accent)">Docker-Socket nicht eingebunden.</b> <span class="hint">Zum Anlegen und Steuern von Containern muss der Stack <code>/var/run/docker.sock</code> mounten (ist in <code>portainer-stack.yml</code> vorbereitet).</span>`;
   $("#createGameSeg").innerHTML = Object.entries(tpl.templates).map(([k,t]) => `<button data-cg="${k}" class="${k===createGame?"active":""}">${esc(t.label)}</button>`).join("");
+  const allowed = Object.keys(tpl.templates).filter(k => permFor(k) >= 4);
+  if (!allowed.includes(createGame) && allowed.length){ createGame = allowed[0]; return initCreate(); }
+  $$("#createGameSeg [data-cg]").forEach(b => { if (permFor(b.dataset.cg) < 4) b.remove(); });
   $$("#createGameSeg [data-cg]").forEach(b => b.onclick = () => { createGame = b.dataset.cg; initCreate(); });
   const t = tpl.templates[createGame];
   let sug = {values: {}, n: servers.filter(s => gameOf(s) === createGame).length + 1, used: []};
@@ -1633,12 +1692,14 @@ async function loadUsers(){
     $("#uRows").innerHTML = r.users.map(u => `<tr>
       <td><b>${esc(u.username)}</b>${me && u.username === me.username ? ' <span class="pill">du</span>' : ""}</td>
       <td><select data-urole="${esc(u.username)}">${Object.entries(r.roles).map(([k,l]) => `<option value="${k}" ${k===u.role?"selected":""}>${esc(l)}</option>`).join("")}</select></td>
+      <td>${u.role === "admin" ? `<span class="hint">alles</span>` : `<span class="hint">${esc(permSummary(u.perms, r.levels))}</span> <button class="small" data-uperm="${esc(u.username)}">Rechte …</button>`}</td>
       <td>${u.created ? fmtDate(u.created) : "–"}</td><td>${u.last_login ? fmtDate(u.last_login) : "nie"}</td>
       <td><button class="small" data-upw="${esc(u.username)}">Passwort setzen</button> <button class="small danger" data-udel="${esc(u.username)}">Löschen</button></td></tr>`).join("");
     $$("[data-urole]").forEach(sel => sel.onchange = async () => {
       try { await api(`/api/users/${sel.dataset.urole}`, {method:"PUT", body:{username: sel.dataset.urole, role: sel.value}}); toast("Rolle geändert"); }
       catch(err){ toast(err.message, true); loadUsers(); }
     });
+    $$("[data-uperm]").forEach(b => b.onclick = () => openPerms(r.users.find(x => x.username === b.dataset.uperm), r));
     $$("[data-upw]").forEach(b => b.onclick = async () => {
       const pw = prompt(`Neues Passwort für ${b.dataset.upw} (min. 6 Zeichen):`); if (!pw) return;
       try { await api(`/api/users/${b.dataset.upw}`, {method:"PUT", body:{username: b.dataset.upw, password: pw}}); toast("Passwort gesetzt – Benutzer muss sich neu anmelden"); }
@@ -1650,6 +1711,36 @@ async function loadUsers(){
     });
   } catch(err){ toast(err.message, true); }
 }
+function permSummary(p, levels){
+  p = p || {};
+  const def = +(p["*"] || 0);
+  const ex = Object.entries(p).filter(([k, v]) => k !== "*" && +v !== def);
+  return `Alle Spiele: ${levels[def]}` + (ex.length ? ` · ${ex.map(([k, v]) => `${GAMES[k]?.short || GAMES[k]?.label || k}: ${levels[v]}`).join(", ")}` : "");
+}
+let permEditing = null;
+function openPerms(u, r){
+  if (!u) return;
+  permEditing = u.username;
+  $("#permUser").textContent = u.username;
+  $("#permHints").innerHTML = Object.entries(r.level_hints).map(([k, h]) => `<b>${esc(r.levels[k])}</b>: ${esc(h)}`).join("<br>");
+  const p = u.perms || {};
+  const opts = (val, withDefault) => (withDefault ? `<option value="" ${val == null ? "selected" : ""}>Standard</option>` : "") +
+    Object.entries(r.levels).map(([k, l]) => `<option value="${k}" ${val != null && +val === +k ? "selected" : ""}>${esc(l)}</option>`).join("");
+  const games = Object.entries(GAMES).sort((a, b) => a[1].label.localeCompare(b[1].label));
+  $("#permGrid").innerHTML = `<label class="permrow permall"><span><b>Alle Spiele (Standard)</b></span><select data-pg="*">${opts(p["*"] ?? 0, false)}</select></label>` +
+    games.map(([k, g]) => `<label class="permrow"><span><span class="gtile" style="background:${g.color};width:16px;height:16px">${gicon(k, 11)}</span>${esc(g.label)}</span><select data-pg="${k}">${opts(k in p ? p[k] : null, true)}</select></label>`).join("");
+  $("#dlgPerm").showModal();
+}
+$("#btnPermCancel").onclick = () => $("#dlgPerm").close();
+$("#permForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const perms = {};
+  $$("#permGrid [data-pg]").forEach(sel => { if (sel.value !== "") perms[sel.dataset.pg] = +sel.value; });
+  try {
+    await api(`/api/users/${permEditing}`, {method: "PUT", body: {username: permEditing, perms}});
+    $("#dlgPerm").close(); toast("Rechte gespeichert"); loadUsers();
+  } catch(err){ toast(err.message, true); }
+});
 $("#btnUAdd").onclick = async () => {
   try {
     await api("/api/users", {body:{username: $("#uName").value.trim(), password: $("#uPw").value, role: $("#uRole").value}});
@@ -1668,13 +1759,16 @@ $("#pwForm").addEventListener("submit", async e => {
 
 /* ================= Start ================= */
 async function start(){
-  $("#login").classList.add("hidden"); $("#app").classList.remove("hidden");
+  clearInterval(pubTimer);
+  $("#login").classList.add("hidden"); $("#pub").classList.add("hidden"); $("#app").classList.remove("hidden");
   try {
     const [m, g] = await Promise.all([api("/api/me"), api("/api/games")]);
     me = m.user; GAMES = g.games; dockerOn = g.docker;
     loadGameIcons().then(() => { renderServerList(); if (view === "dash") refreshDash(); });
     document.body.classList.toggle("not-admin", !me || me.role !== "admin");
-    document.body.classList.toggle("viewer", me && me.role === "viewer");
+    const allGames = Object.keys(GAMES);
+    document.body.classList.toggle("no-create", !allGames.some(g => permFor(g) >= 4));
+    applyPerm(4);
     $("#meName").textContent = me ? `${me.username} · ${me.role_label}` : "";
     [settings, presets, favs] = await Promise.all([api("/api/settings"), api("/api/match/presets"), api("/api/workshop/favorites")]);
   } catch(err){ toast(err.message, true); }
@@ -1696,14 +1790,14 @@ async function showVersion(){
     const v = await (await fetch("/api/version")).json();
     const d = v.date ? new Date(v.date).toLocaleString("de-DE", {day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit"}) : "";
     const txt = `Version ${v.version}${v.commit && v.commit !== "lokal" ? " (" + v.commit + ")" : ""}${d ? " · " + d : ""}`;
-    $("#appVersion").textContent = txt; $("#loginVersion").textContent = txt;
+    $("#appVersion").textContent = txt; $("#loginVersion").textContent = txt; $("#pubVersion").textContent = txt;
     if (typeof loadedVersion !== "undefined" && loadedVersion === null) loadedVersion = v.version + v.commit;
   } catch {}
 }
 showVersion();
 (async () => {
   const me = await api("/api/me").catch(() => ({authenticated:false}));
-  me.authenticated ? start() : showLogin();
+  me.authenticated ? start() : showPublic();
 })();
 
 $("#btnWeb").onclick = () => { if (current && current.web_url) window.open(current.web_url, "_blank", "noopener"); };
@@ -2120,7 +2214,7 @@ async function loadCtEnv(){
   if (!current || !current.container || ctEnvFor === current.id) return;
   ctEnvFor = current.id;
   $("#btnSteamFix").classList.add("hidden"); $("#ctParamsRow").classList.add("hidden");
-  if (!me || me.role !== "admin") return;
+  if (permOf(current) < 3) return;
   try {
     const r = await api(`/api/servers/${current.id}/container/env`);
     const steam = "GAME_ID" in r.env;
