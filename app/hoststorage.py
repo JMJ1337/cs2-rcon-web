@@ -69,6 +69,9 @@ def script(s: dict) -> str:
         "if [ -z \"$TARGET\" ]; then echo 'Bitte das Ziel (IQN) auf der Speicher-Seite eintragen – nie automatisch das erste nehmen (Hyper-V-LUNs!)'; exit 1; fi",
         "case \"$TARGET\" in *HyperV*|*Target-1.*) echo \"Ziel $TARGET sieht nach Hyper-V aus – abgebrochen\"; exit 1;; esac",
         "echo \"Ziel: $TARGET\"",
+        "# Suchergebnisse anderer Ziele/Portale (Hyper-V, ActiveBackup, weitere NAS-IPs) wieder entfernen – nur Einträge, keine Sitzungen",
+        "iscsiadm -m node 2>/dev/null | while read -r P T; do P=${P%,*}; if [ \"$T\" != \"$TARGET\" ] || [ \"$P\" != \"$PORTAL\" ]; then "
+        "{ iscsiadm -m session 2>/dev/null || true; } | grep -F \" $T \" | grep -qF \" $P,\" || iscsiadm -m node -T \"$T\" -p \"$P\" -o delete 2>/dev/null || true; fi; done || true",
     ]
     if s.get("chap_user"):
         lines += [
