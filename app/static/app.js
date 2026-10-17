@@ -1922,8 +1922,7 @@ function pollJob(id){
     $("#createProg").classList.toggle("hidden", !pg || j.done);
     if (pg){
       $("#createProg i").style.width = Math.min(100, pg.pct) + "%";
-      $("#createProg .s").textContent = `${pg.label} · ${pg.pct.toFixed(1)} %` + (pg.total_files ? ` · ${pg.done_files} / ${pg.total_files} Dateien` : "")
-        + (pg.total_bytes ? ` · ${fmtBytes(pg.total_bytes)} gesamt` : "") + (pg.eta ? ` · noch ${fmtEta(pg.eta)} (fertig ca. ${etaClock(pg.eta)} Uhr)` : "");
+      $("#createProg .s").textContent = `${pg.label} · ${pg.pct.toFixed(1)} %` + (pg.done_bytes != null ? ` · ${fmtBytes(pg.done_bytes)} / ${fmtBytes(pg.total_bytes)}` : pg.total_files ? ` · ${pg.done_files} / ${pg.total_files} Dateien` : "") + (pg.eta ? ` · noch ${fmtEta(pg.eta)} (fertig ca. ${etaClock(pg.eta)} Uhr)` : "");
     }
     if (j.server_id){ await loadServers(); $("#btnCreateOpen").classList.remove("hidden"); $("#btnCreateOpen").onclick = () => selectServer(servers.find(s => s.id === j.server_id)); }
     if (!j.done) jobTimer = setTimeout(() => pollJob(id), 2000);

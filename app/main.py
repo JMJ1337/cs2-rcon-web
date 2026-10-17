@@ -3239,7 +3239,10 @@ cd /copysrc || exit 3
 T=$(find . -type f 2>/dev/null | wc -l)
 B=$(du -sk . 2>/dev/null | cut -f1)
 echo "TOTAL $T ${B:-0}"
+( while sleep 10; do echo "BYTES $(du -sk /copydst 2>/dev/null | cut -f1)"; done ) &
+W=$!
 cp -ruv /copysrc/. /copydst/ 2>&1 | awk '/->/{n++; if (n % 100 == 0) {print "COPIED " n; fflush()}} /cannot|denied|No space/{print "ERR " $0; fflush()}'
+kill $W 2>/dev/null
 echo "COPIED_FINAL $(find /copydst -type f 2>/dev/null | wc -l)"
 echo DONE
 """
@@ -3296,13 +3299,18 @@ async def _copy_game_files(job: dict, b: dict, src_id: str) -> None:
                 total, total_kb = int(m.group(1)), int(m.group(2))
             nums = [int(x) for x in re.findall(r"COPIED (\d+)", lg)]
             n = nums[-1] if nums else 0
+            kbs = [int(x) for x in re.findall(r"BYTES (\d+)", lg)]
+            if kbs and total_kb:            # Fortschritt nach Datenmenge (genauer als nach Dateien)
+                done, whole = kbs[-1], total_kb
+            else:
+                done, whole = n, total or 0
             if n0 is None:
-                n0, t0 = n, time.time()
-            rate = (n - n0) / max(1, time.time() - t0)
-            pct = min(99.9, n / total * 100) if total else 0.0
-            eta = round((total - n) / rate) if total and rate > 0 else None
+                n0, t0 = done, time.time()
+            rate = (done - n0) / max(1, time.time() - t0)
+            pct = min(99.9, done / whole * 100) if whole else 0.0
+            eta = round((whole - done) / rate) if whole and rate > 0 else None
             job["progress"] = {"label": "Kopiere Spieldateien", "pct": round(pct, 1), "done_files": n, "total_files": total,
-                               "total_bytes": total_kb * 1024, "eta": eta}
+                               "total_bytes": total_kb * 1024, "done_bytes": kbs[-1] * 1024 if kbs else None, "eta": eta}
             job["step"] = f"Kopiere Spieldateien von {src['name']}: {pct:.0f} %" + (f" · noch ca. {max(1, eta // 60)} min" if eta else "")
             _save_jobs()
             if not (i2.get("State") or {}).get("Running"):
