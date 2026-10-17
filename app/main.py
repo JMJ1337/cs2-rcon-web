@@ -1040,6 +1040,8 @@ async def cache_metrics():
     out["net"] = {"rx_bps": ld.get("rx_bps") if fresh else None, "tx_bps": ld.get("tx_bps") if fresh else None,
                   "host_mode": bool(ld) and not ld.get("net")}
     hosts = {x["host"] for x in load_servers()}
+    if out.get("live_clients"):
+        out["live_clients"] = await netnames.annotate(out["live_clients"], hosts)
     for k in ("last_hour", "last_day"):
         if out.get(k, {}).get("clients"):
             out[k]["clients"] = await netnames.annotate(out[k]["clients"], hosts)
@@ -2163,11 +2165,18 @@ async def prefill_state(tail: int = 300):
             prog = {"pct": float(m.group(1).replace(",", ".")), "line": line.strip()[:160]}
             break
     pp = prefill.parse_progress(lg) if lg else {"apps": [], "current": None}
+    asyncio.create_task(_prefill_autoadd([a["name"] for a in pp["apps"]]))
+    who = []
+    if prefill.auto.get("paused") and not prefill.auto.get("manual"):
+        try:
+            who = await netnames.annotate((cache_stats.summary().get("live_clients") or [])[:3], {x["host"] for x in load_servers()})
+        except Exception:  # noqa: BLE001
+            who = []
     return {"settings": prefill.settings(), "container": st, "apps_progress": pp["apps"],
             "rate": (livestats.data.get(prefill.NAME) or {}).get("rx_bps") if st and st.get("running") else None, "config_dir": prefill.config_dir(), "files": files,
             "logged_in": any(f.lower().startswith("account") or f.endswith(".dat") or "token" in f.lower() for f in files),
             "log": lg, "prompt": prefill.prompt_of(lg) if st and st.get("running") else None, "progress": prog,
-            "job": prefill.job, "dns": await lancache_dns(), "auto": prefill.auto}
+            "job": prefill.job, "dns": await lancache_dns(), "auto": prefill.auto, "who": who}
 
 
 class PrefillRunIn(BaseModel):
@@ -2250,7 +2259,8 @@ class PrefillApps(BaseModel):
 
 @app.put("/api/prefill/apps", dependencies=auth)
 async def prefill_apps(data: PrefillApps):
-    apps = [{"id": int(a["id"]), "name": str(a.get("name") or a["id"])[:80]} for a in data.apps if str(a.get("id", "")).isdigit()]
+    apps = [{"id": int(a["id"]), "name": str(a.get("name") or a["id"])[:80], **({"auto": True} if a.get("auto") else {})}
+            for a in data.apps if str(a.get("id", "")).isdigit()]
     try:
         await prefill.write_apps([a["id"] for a in apps])
     except docker_api.DockerError as e:
@@ -2276,6 +2286,33 @@ async def prefill_settings(data: PrefillSettings):
              "top": max(0, min(100, int(f.get("top") or 0))), "all": bool(f.get("all")), "force": bool(f.get("force")),
              "verbose": bool(f.get("verbose")), "os": f.get("os") if f.get("os") in ("windows", "linux", "macos") else "windows"}
     return prefill.save_settings({"schedule": data.schedule, "flags": flags, "yield": data.yield_, "yield_mbs": data.yield_mbs})
+
+
+_autoadd_busy = {"on": False}
+
+
+async def _prefill_autoadd(names: list[str]):
+    """Spiele, die SteamPrefill über die Optionen (zuletzt gespielt, alle …) lädt, in die Liste übernehmen."""
+    s = prefill.settings()
+    known = {a["name"].lower() for a in s.get("apps") or []}
+    new = [n for n in dict.fromkeys(names) if n and n.lower() not in known]
+    if not new or _autoadd_busy["on"]:
+        return
+    _autoadd_busy["on"] = True
+    try:
+        apps = list(s.get("apps") or [])
+        for n in new[:10]:
+            try:
+                res = await prefill.search(n)
+            except Exception:  # noqa: BLE001
+                continue
+            hit = next((r for r in res if r["name"].lower() == n.lower()), None)
+            if hit:
+                apps.append({"id": hit["id"], "name": hit["name"], "auto": True})
+        if len(apps) != len(s.get("apps") or []):
+            prefill.save_settings({"apps": apps})
+    finally:
+        _autoadd_busy["on"] = False
 
 
 async def prefill_scheduler():
