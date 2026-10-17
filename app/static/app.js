@@ -2080,11 +2080,13 @@ setInterval(() => { if (view === "server" && current && tab === "container") loa
 let cfgFiles = [], cfgCur = null;
 function cfgInput(f, v, attr){
   const [key, label, type, opts] = f;
-  if (type === "bool") return `<div class="chk"><input type="checkbox" ${attr}="${esc(key)}" ${v === true || v === "true" || v === "1" || v === 1 ? "checked" : ""}><span>${esc(label)}</span></div>`;
-  if (type === "select") return `<div><label>${esc(label)}</label><select ${attr}="${esc(key)}">${opts.map(o => `<option ${String(v) === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></div>`;
-  return `<div><label>${esc(label)}</label><input ${attr}="${esc(key)}" value="${esc(v ?? "")}" ${type === "number" ? 'inputmode="decimal"' : ""} spellcheck="false"></div>`;
+  const lock = cfgLocked[key] ? ` disabled title="Wird beim Start durch die Umgebungsvariable ${esc(cfgLocked[key])} gesetzt – oben bei Server-Einstellungen bzw. im Stack ändern"` : "";
+  if (type === "bool") return `<div class="chk"><input type="checkbox" ${attr}="${esc(key)}" ${v === true || String(v).toLowerCase() === "true" || v === "1" || v === 1 ? "checked" : ""}${lock}><span>${esc(label)}${cfgLocked[key] ? " 🔒" : ""}</span></div>`;
+  if (type === "select") return `<div><label>${esc(label)}${cfgLocked[key] ? " 🔒" : ""}</label><select ${attr}="${esc(key)}"${lock}>${opts.map(o => `<option ${String(v) === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></div>`;
+  return `<div><label>${esc(label)}${cfgLocked[key] ? " 🔒" : ""}</label><input ${attr}="${esc(key)}" value="${esc(v ?? "")}" ${type === "number" ? 'inputmode="decimal"' : ""} spellcheck="false"${lock}></div>`;
 }
-const readInputs = attr => { const o = {}; $$(`[${attr}]`).forEach(el => o[el.getAttribute(attr)] = el.type === "checkbox" ? el.checked : el.value); return o; };
+let cfgLocked = {};
+const readInputs = attr => { const o = {}; $$(`[${attr}]`).forEach(el => { if (!el.disabled) o[el.getAttribute(attr)] = el.type === "checkbox" ? el.checked : el.value; }); return o; };
 async function loadConfigTab(){
   if (!current) return;
   const sid = current.id, g = gameOf(current);
@@ -2121,7 +2123,7 @@ async function loadCfgFile(){
   $("#cfgHint").textContent = "wird gelesen …"; $("#cfgForm").innerHTML = "";
   try {
     const r = await api(`/api/servers/${current.id}/config/file?path=${encodeURIComponent(f.path)}`);
-    cfgCur = {f, r};
+    cfgCur = {f, r}; cfgLocked = r.locked || {};
     $("#cfgText").value = r.content || "";
     $("#cfgHint").innerHTML = r.exists ? `<span class="mono">${esc(f.path)}</span> · Vor jedem Speichern wird eine Sicherung <span class="mono">.bak</span> angelegt.` : `Datei gibt es noch nicht (<span class="mono">${esc(f.path)}</span>) – entsteht meist beim ersten Start. Du kannst sie hier anlegen.`;
     $("#cfgRaw").open = !f.form;

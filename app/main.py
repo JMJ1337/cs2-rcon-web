@@ -1905,10 +1905,13 @@ STEAMFIX_SH = r"""
 set -e
 SC=/serverdata/steamcmd/steamcmd.sh
 [ -x "$SC" ] || { echo "steamcmd nicht gefunden"; exit 1; }
+echo "== Alte Installationsinfos entfernen …"
+rm -f /serverdata/serverfiles/steamapps/appmanifest_$GAME_ID.acf
+rm -rf /serverdata/serverfiles/steamapps/downloading/$GAME_ID /serverdata/serverfiles/steamapps/temp/$GAME_ID
 echo "== Lade als Windows (Plattform-Workaround) …"
-$SC +@sSteamCmdForcePlatformType windows +force_install_dir /serverdata/serverfiles +login anonymous +app_info_update 1 +app_update $GAME_ID validate +quit | grep -E "Success|Error|ERROR" || true
+$SC +force_install_dir /serverdata/serverfiles +login anonymous +@sSteamCmdForcePlatformType windows +app_update $GAME_ID +quit | grep -E "Success|Error|ERROR" || true
 echo "== Lade als Linux und prüfe …"
-$SC +@sSteamCmdForcePlatformType linux +force_install_dir /serverdata/serverfiles +login anonymous +app_info_update 1 +app_update $GAME_ID validate +quit | grep -E "Success|Error|ERROR" || true
+$SC +force_install_dir /serverdata/serverfiles +login anonymous +@sSteamCmdForcePlatformType linux +app_update $GAME_ID validate +quit | grep -E "Success|Error|ERROR" || true
 echo "== Rechte zurücksetzen ($OWNER)"
 chown -R "$OWNER" /serverdata/serverfiles /serverdata/steamcmd 2>/dev/null || true
 """
@@ -2023,7 +2026,17 @@ async def config_list(sid: str):
 async def config_read(sid: str, path: str):
     s = get_server(sid)
     try:
-        return await configfiles.read(_container_of(sid), game_of(s), path)
+        name = _container_of(sid)
+        r = await configfiles.read(name, game_of(s), path)
+        if game_of(s) == "minecraft" and path.endswith("server.properties"):
+            # itzg überschreibt diese Werte bei jedem Start aus den Umgebungsvariablen
+            env = dict(e.split("=", 1) for e in ((await docker_api.inspect(name)).get("Config") or {}).get("Env") or [] if "=" in e)
+            mp = {"MOTD": "motd", "MAX_PLAYERS": "max-players", "MODE": "gamemode", "DIFFICULTY": "difficulty", "PVP": "pvp",
+                  "ONLINE_MODE": "online-mode", "VIEW_DISTANCE": "view-distance", "SIMULATION_DISTANCE": "simulation-distance",
+                  "SPAWN_PROTECTION": "spawn-protection", "SEED": "level-seed", "HARDCORE": "hardcore", "ALLOW_FLIGHT": "allow-flight",
+                  "ENABLE_WHITELIST": "white-list", "ENABLE_COMMAND_BLOCK": "enable-command-block", "MAX_WORLD_SIZE": "max-world-size"}
+            r["locked"] = {prop: k for k, prop in mp.items() if k in env}
+        return r
     except configfiles.ConfigError as e:
         raise HTTPException(400, str(e))
     except docker_api.DockerError as e:
