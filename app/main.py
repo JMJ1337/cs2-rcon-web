@@ -2699,7 +2699,7 @@ echo '=== UDP-Sockets (lokale Ports)'; for h in $(cat /proc/net/udp /proc/net/ud
 echo '=== TCP-Listen'; for h in $(cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk '$4=="0A"{split($2,a,":"); print a[2]}' | sort -u); do printf "%d " 0x$h; done; echo
 echo '=== TCP-Verbindungen (Ziel-IP:Port Anzahl)'; cat /proc/net/tcp 2>/dev/null | awk 'NR>1 && $4=="01"{print "#TCP " $3}' | sort | uniq -c | sort -rn | head -12
 echo '=== Datenträger'; df -h /serverdata/serverfiles 2>/dev/null | tail -1
-for f in /home/steam/Steam/logs/content_log.txt /home/steam/.steam/steam/logs/content_log.txt /root/Steam/logs/content_log.txt /serverdata/Steam/logs/content_log.txt /home/steam/steamcmd/logs/content_log.txt; do
+for f in $(find / -xdev -name content_log.txt -path '*logs*' 2>/dev/null | head -3); do
   [ -f "$f" ] && { echo "=== SteamCMD-Downloadlog $f"; grep -iE "lancache|cache server|using .*server|http|CDN|Download" "$f" | tail -n 25 | cut -c1-200; }
 done
 for c in /serverdata/serverfiles/server_config.cfg /serverdata/serverfiles/server/server_config.cfg; do
