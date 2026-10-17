@@ -353,3 +353,4 @@ a.btn{display:inline-flex;align-items:center;padding:7px 12px;border-radius:7px;
 .fbrow .acts{display:flex;gap:4px}
 .btn-up span{display:inline-flex;padding:4px 8px;border:1px solid var(--line);border-radius:6px;cursor:pointer}
 a.btn-link{display:inline-flex;align-items:center;padding:3px 7px;border:1px solid var(--line);border-radius:6px;text-decoration:none;color:inherit;font-size:12px}
+#hlDisks .hl-row span{max-width:90px;overflow:hidden;text-overflow:ellipsis}

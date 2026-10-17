@@ -1061,6 +1061,42 @@ async def game_icons(apps: str = ""):
     return {"apps": ic, "games": {g: ic.get(str(a), "") for g, a in GAME_APPS.items()}}
 
 
+_disks: dict = {"items": [], "t": 0.0, "busy": False}
+
+
+async def _poll_disks():
+    """Belegung der eigenen Platte und aller /mnt-Mounts des Hosts (kurzer, nur lesender Hilfs-Container)."""
+    if _disks["busy"]:
+        return
+    _disks["busy"] = True
+    try:
+        out = await docker_api.run_helper(["/:/h:ro"], ["sh", "-c", "df -P -B1 /h /h/mnt/* 2>/dev/null | tail -n +2"], timeout=60)
+        items = []
+        for line in out.splitlines():
+            p = line.split()
+            if len(p) >= 6 and p[1].isdigit():
+                mnt = p[5][2:] or "/"
+                items.append({"mount": mnt, "device": p[0], "size": int(p[1]), "used": int(p[2]), "avail": int(p[3]),
+                              "network": ":" in p[0] or p[0].startswith("//")})
+        seen, uniq = set(), []
+        for it in items:
+            if it["mount"] in seen:
+                continue
+            seen.add(it["mount"]); uniq.append(it)
+        _disks.update(items=uniq, t=time.time())
+    except docker_api.DockerError as e:
+        _disks["error"] = str(e)
+    finally:
+        _disks["busy"] = False
+
+
+@app.get("/api/disks", dependencies=auth)
+async def disks():
+    if time.time() - _disks["t"] > 120 and docker_api.available():
+        asyncio.create_task(_poll_disks())
+    return {"items": _disks["items"], "updated": _disks["t"] or None}
+
+
 @app.get("/api/live", dependencies=auth)
 async def live_values():
     """Kompakte Sekundenwerte für die Anzeigen (Seitenleiste, Karten)."""

@@ -2240,3 +2240,15 @@ $("#btnSaveNow").onclick = async () => {
   try { const r = await api(`/api/servers/${current.id}/saves/now`, {body: {name: $("#svSaveName").value.trim()}}); toast(r.output || "Gespeichert"); $("#svSaveName").value = ""; setTimeout(loadSaves, 1500); }
   catch (e) { toast(e.message, true); }
 };
+
+/* Belegung eigene Platte + /mnt-Mounts in der Seitenleiste */
+async function refreshDisks(){
+  let r;
+  try { r = await api("/api/disks"); } catch { return; }
+  $("#hlDisks").innerHTML = (r.items || []).map(d => {
+    const pct = d.size ? Math.round(d.used / d.size * 100) : 0;
+    const name = d.mount === "/" ? "System" : d.mount.replace(/^\/mnt\//, "");
+    return `<div class="hl-row" title="${esc(d.mount)} (${esc(d.device)}): ${fmtBytes(d.used)} von ${fmtBytes(d.size)} belegt, ${fmtBytes(d.avail)} frei"><span>${d.network ? "🗄" : "💽"} ${esc(name)}</span><div class="bar"><i class="${lvl(pct)}" style="width:${pct}%"></i></div><b>${pct} %</b></div>`;
+  }).join("");
+}
+refreshDisks(); setInterval(refreshDisks, 60000);
