@@ -11,14 +11,29 @@ KNOWN_APPS = [730, 740, 2347770, 440, 232250, 361580, 228380, 892970, 896660, 42
               252490, 271590, 1172470, 1086940, 381210, 1245620, 359550, 236390, 1938090, 2357570, 1063730]
 _map: dict | None = None
 _queue: list[str] = []
-_apps_checked: dict[int, float] = {}
 _running = False
+# weitere wahrscheinliche Apps (Prefill-Liste, Spielserver) – wird von main gesetzt
+extra_apps = lambda: []  # noqa: E731
+ICON_DIR = store.DATA_DIR / "icons"
+
+
+class _Checked(dict):
+    """Welche App-IDs schon abgefragt wurden – im Volume gespeichert, damit nach Neustarts nichts neu geholt wird."""
+    def __setitem__(self, k, v):
+        super().__setitem__(k, v)
+        _load().setdefault("_checked", {})[str(k)] = v
+
+
+_apps_checked: _Checked = _Checked()
 
 
 def _load() -> dict:
     global _map
     if _map is None:
         _map = store.load(FILE, {})
+        for k, v in (_map.get("_checked") or {}).items():
+            if k.isdigit():
+                dict.__setitem__(_apps_checked, int(k), v)
     return _map
 
 
@@ -89,8 +104,12 @@ async def run() -> None:
     try:
         async with httpx.AsyncClient(timeout=10, headers={"User-Agent": "Spielservermanager"}) as cl:
             # bekannte Apps einmal komplett einlesen (z. B. CS2-Depots 2347770…)
-            for a in KNOWN_APPS:
-                if a in _apps_checked:
+            try:
+                more = [int(a) for a in extra_apps() if str(a).isdigit()]
+            except Exception:  # noqa: BLE001
+                more = []
+            for a in list(dict.fromkeys(KNOWN_APPS + more)):
+                if a in _apps_checked and time.time() - _apps_checked[a] < 7 * 86400:
                     continue
                 _apps_checked[a] = time.time()
                 info = await _app_info(cl, a)
@@ -153,7 +172,30 @@ async def icons(appids: list[int]) -> dict:
                 if info:
                     _remember_app(a, info)
         store.save(FILE, m)
-    return {str(a): ic.get(str(a)) or "" for a in appids}
+    return {str(a): (f"/api/appicon/{a}" if ic.get(str(a)) else "") for a in appids}
+
+
+async def icon_file(appid: int):
+    """Icon einmal von Steam holen und im Volume ablegen – danach nur noch lokal ausliefern."""
+    ICON_DIR.mkdir(parents=True, exist_ok=True)
+    f = ICON_DIR / f"{int(appid)}.jpg"
+    if f.exists() and f.stat().st_size > 0:
+        return f
+    url = (_load().get("_icons") or {}).get(str(appid))
+    if not url:
+        await icons([int(appid)])
+        url = (_load().get("_icons") or {}).get(str(appid))
+    if not url:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=10, headers={"User-Agent": "Spielservermanager"}) as cl:
+            r = await cl.get(url)
+        if r.status_code == 200 and (r.content[:3] == b"\xff\xd8\xff" or r.content[:4] == b"\x89PNG"):
+            f.write_bytes(r.content)
+            return f
+    except httpx.HTTPError:
+        pass
+    return None
 
 
 def app_size(appid) -> int | None:

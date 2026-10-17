@@ -172,7 +172,7 @@ body.g-other .cs2only{display:none!important}
 body:not(.g-other) .nocs2{display:none!important}
 body.no-console .needconsole{display:none!important}
 body.no-container .needcontainer{display:none!important}
-#createGameSeg button{padding:8px 14px}
+
 body.not-admin .adminonly{display:none!important}
 body.perm-lt2 .opsonly,body.perm-lt3 .mgronly,body.perm-lt4 .delonly,body.no-create .createonly{display:none!important}
 
@@ -387,3 +387,29 @@ a.btn-link{display:inline-flex;align-items:center;padding:3px 7px;border:1px sol
 .pubhint,.pubmeta{font-size:12px}
 a.btn{display:inline-flex;align-items:center;gap:4px;text-decoration:none;border-radius:6px;padding:4px 10px;font-size:12px;background:var(--accent);color:var(--accent-ink);font-weight:600}
 @media (max-width:600px){.pubgrid{grid-template-columns:1fr}}
+
+.pubcard{cursor:pointer;transition:border-color .15s,transform .15s}
+.pubcard:hover,.pubcard:focus-visible{border-color:var(--gc);outline:none}
+.pubthumb{position:relative;margin:-14px -14px 4px;border-radius:9px 9px 0 0;overflow:hidden}
+.pubthumb .mthumb{width:100%;aspect-ratio:16/6;border:0;border-radius:0}
+.pubmap{position:absolute;left:8px;bottom:6px;font-size:12px;font-weight:600;color:#fff;text-shadow:0 1px 3px #000}
+.pdhead{display:flex;gap:12px;align-items:center;border-left:3px solid var(--gc);padding-left:10px;margin-bottom:12px}
+.pdgrid{display:grid;grid-template-columns:minmax(0,220px) 1fr;gap:14px;align-items:start}
+.pdthumb .mthumb{width:100%}
+.pdsec{font-size:14px;margin:14px 0 6px}
+.pdrot{margin:0;padding-left:22px;display:grid;gap:3px;font-size:13px;max-height:260px;overflow:auto}
+.pdrot li.cur b{color:var(--accent)}
+@media (max-width:600px){.pdgrid{grid-template-columns:1fr}}
+
+.wfrot select{min-width:0;max-width:260px}
+.wfrot td{padding:4px 6px;vertical-align:middle}
+.wfrot td button.small{padding:2px 7px;margin-left:2px}
+
+.cggrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px}
+.cgtile{display:flex;align-items:center;gap:8px;padding:8px 10px;text-align:left;background:var(--panel2);border:1px solid var(--line);border-radius:8px;min-width:0;position:relative}
+.cgtile:hover{border-color:var(--gc)}
+.cgtile.active{border-color:var(--gc);box-shadow:inset 3px 0 0 var(--gc);background:var(--panel)}
+.cgtile .gtile{flex:none}
+.cglabel{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.cgcount{margin-left:auto;font-size:11px;font-family:var(--mono);color:var(--muted);border:1px solid var(--line);border-radius:10px;padding:0 6px}
+.pubcard{align-content:start}

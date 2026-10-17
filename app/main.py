@@ -23,6 +23,7 @@ from .games import satisfactory as sfmod
 from .games import minecraft as mcmod
 from .games import teamspeak as tsmod
 from .games import catalog as catmod
+from .games import wreckfest_data as wfd
 from .rcon import RconAuthError, RconClient, RconError
 
 log = logging.getLogger("cs2rcon")
@@ -217,8 +218,55 @@ async def _join_password(s: dict) -> str:
     return pw
 
 
+_rot_cache: dict[str, tuple[float, list]] = {}
+
+
+async def _public_rotation(s: dict) -> list[dict]:
+    """Rotation/Mapcycle für die öffentliche Ansicht (5 min gecacht)."""
+    hit = _rot_cache.get(s["id"])
+    if hit and time.time() - hit[0] < 300:
+        return hit[1]
+    g, c, out = game_of(s), s.get("container"), []
+    try:
+        if c and docker_api.available():
+            if g == "wreckfest":
+                text = await _wf_read(c) or ""
+                out = [{"name": wfd.track_name(e.get("track")),
+                        "sub": " · ".join(x for x in (wfd.MODE_NAMES.get(e.get("gamemode") or "racing", e.get("gamemode") or ""),
+                                                      f"{e['laps']} Runden" if e.get("laps") else "",
+                                                      f"Klasse {e['car_class_restriction'].upper()}" if e.get("car_class_restriction") else "") if x)}
+                       for e in wfd.parse_events(text)]
+            elif g == "tf2":
+                raw = await docker_api.exec_cmd(c, ["sh", "-c", "cat /home/steam/tf-dedicated/tf/cfg/mapcycle.txt 2>/dev/null"], timeout=8)
+                out = [{"name": ln.strip()} for ln in raw.splitlines() if ln.strip() and not ln.strip().startswith("//")][:60]
+    except docker_api.DockerError:
+        out = []
+    _rot_cache[s["id"]] = (time.time(), out)
+    return out
+
+
+@app.get("/api/public/{sid}")
+async def public_server(sid: str):
+    """Details für die öffentliche Ansicht: Spieler (nur Name/Zeit/Punkte) und Rotation."""
+    s = next((x for x in load_servers() if x["id"] == sid), None)
+    if not s:
+        raise HTTPException(404, "Server nicht gefunden")
+    st = _state.get(sid, {})
+    g = game_of(s)
+    players = []
+    for p in (st.get("players") or [])[:128]:
+        if isinstance(p, dict) and p.get("name"):
+            players.append({k: p.get(k) for k in ("name", "time", "score", "ping", "bot") if p.get(k) not in (None, "")})
+    current = st.get("map")
+    if g == "wreckfest":
+        current = wfd.track_name(current)
+    return {"id": sid, "game": g, "name": st.get("hostname") or s.get("name"), "online": bool(st.get("online")),
+            "map": current, "mode": (st.get("mode") or {}).get("label") if isinstance(st.get("mode"), dict) else None,
+            "players": players, "max_players": st.get("max_players"), "rotation": await _public_rotation(s)}
+
+
 @app.get("/api/public")
-async def public_servers():
+async def public_servers(request: Request):
     """Alle Server mit Status und Beitrittsdaten – ohne Anmeldung (keine RCON-/Admin-Daten)."""
     out = []
     for s in load_servers():
@@ -231,11 +279,15 @@ async def public_servers():
         out.append({"id": s["id"], "game": g, "name": st.get("hostname") or s.get("name") or g,
                     "online": bool(st.get("online")), "players": st.get("humans"),
                     "max_players": st.get("max_players"), "map": st.get("map"),
+                    "map_label": wfd.track_name(st.get("map")) if g == "wreckfest" else st.get("map"),
+                    "workshop": {k: (st.get("workshop") or {}).get(k) for k in ("preview", "title")} if st.get("workshop") else None,
                     "mode": (st.get("mode") or {}).get("label") if isinstance(st.get("mode"), dict) else None,
-                    "version": st.get("version"), "join": join, "join_password": await _join_password(s)})
+                    "version": st.get("version"), "join": await localize_join(request, s, join), "join_password": await _join_password(s)})
     out.sort(key=lambda x: (not x["online"], GAMES.get(x["game"], {}).get("label", x["game"]), x["name"].lower()))
     games = {k: {kk: v.get(kk) for kk in ("label", "short", "color")} for k, v in GAMES.items()}
-    return {"servers": out, "games": games, "updated": time.time()}
+    lan = client_is_lan(request)
+    return {"servers": out, "games": games, "updated": time.time(), "net": "lan" if lan else "internet",
+            "address": None if lan else await wan_host()}
 
 
 @app.get("/api/version")
@@ -587,6 +639,70 @@ async def _matchzy_info(s: dict) -> dict:
     return info
 
 
+# ---------------------------------------------------------------- LAN oder Internet: passende Adresse zum Beitreten
+_wan: dict = {"ip": None, "t": 0.0}
+
+
+def client_ip(request: Request) -> str:
+    """IP des Besuchers – hinter einem Reverse-Proxy aus X-Forwarded-For."""
+    ip = request.client.host if request.client else ""
+    fwd = request.headers.get("x-forwarded-for") or request.headers.get("x-real-ip") or ""
+    try:
+        if fwd and ipaddress.ip_address(ip).is_private:
+            ip = fwd.split(",")[0].strip()
+    except ValueError:
+        pass
+    return ip
+
+
+def client_is_lan(request: Request) -> bool:
+    try:
+        a = ipaddress.ip_address(client_ip(request))
+        return a.is_private or a.is_loopback or a.is_link_local
+    except ValueError:
+        return True
+
+
+async def wan_host() -> str | None:
+    """Öffentliche Adresse: aus den Einstellungen, sonst automatisch (stündlich ermittelt)."""
+    manual = (automation.get_settings().get("internet_host") or "").strip()
+    if manual:
+        return manual
+    if _wan["ip"] and time.time() - _wan["t"] < 3600:
+        return _wan["ip"]
+    if time.time() - _wan["t"] < 300 and not _wan["ip"]:
+        return None
+    _wan["t"] = time.time()
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=5) as cl:
+            r = await cl.get("https://api.ipify.org")
+        ip = r.text.strip()
+        ipaddress.ip_address(ip)
+        _wan["ip"] = ip
+    except Exception:  # noqa: BLE001
+        _wan["ip"] = None
+    return _wan["ip"]
+
+
+async def localize_join(request: Request, s: dict, join: dict | None) -> dict | None:
+    """Für Besucher aus dem Internet die öffentliche Adresse statt der LAN-IP einsetzen."""
+    if not join or client_is_lan(request):
+        return join and {**join, "net": "lan"}
+    wan = await wan_host()
+    if not wan:
+        return {**join, "net": "lan", "hint": (join.get("hint") or "") + " (Öffentliche Adresse unbekannt – in den Einstellungen eintragen.)"}
+    lan = _join_host(s)
+    j = dict(join)
+    for k in ("address", "url"):
+        if j.get(k):
+            j[k] = j[k].replace(lan, wan)
+    if j.get("hint"):
+        j["hint"] = j["hint"].replace(lan, wan)
+    j["net"] = "internet"
+    return j
+
+
 # ---------------------------------------------------------------- Beitreten / Namen aus dem Spiel
 def _join_host(s: dict) -> str:
     h = s["host"]
@@ -673,8 +789,39 @@ def _server_nr(s: dict, hostname: str | None) -> int:
             return int(m.group(1))
     if m := re.search(r"(\d+)\s*$", s.get("container") or ""):
         return int(m.group(1))
-    cs = [x["id"] for x in load_servers() if x.get("game", "cs2") == "cs2"]
-    return cs.index(s["id"]) + 1 if s["id"] in cs else 1
+    same = [x["id"] for x in load_servers() if game_of(x) == game_of(s)]
+    return same.index(s["id"]) + 1 if s["id"] in same else 1
+
+
+def _auto_name(s: dict, hostname: str | None, mode_label: str = "") -> str | None:
+    """Einheitlicher Servername für alle Spiele außer CS2: z. B. „TF2#1 Payload“, „Wreckfest#2 Derby“."""
+    if not s.get("mode_name", True):
+        return None
+    pattern = (automation.get_settings().get("names_pattern") or "").strip()
+    if not pattern:
+        return None
+    g = game_of(s)
+    short = (GAMES.get(g) or {}).get("short") or g
+    name = pattern.replace("{game}", short).replace("{nr}", str(_server_nr(s, hostname))).replace("{mode}", mode_label or "")
+    name = re.sub(r'["\\;]', "", re.sub(r"\s+", " ", name)).strip(" -·|")[:63]
+    return name or None
+
+
+async def _apply_auto_name(s: dict, g: str, st: dict) -> None:
+    """Live umbenennen, wo das Spiel es ohne Neustart erlaubt (TF2 per RCON, Satisfactory per API)."""
+    try:
+        if g == "tf2":
+            want = _auto_name(s, st.get("hostname"), (st.get("mode") or {}).get("label") or "")
+            if want and want != st.get("hostname"):
+                await client_for(s).execute(f'hostname "{want}"')
+                st["hostname"] = want
+        elif g == "satisfactory" and st.get("privilege") == "Administrator":
+            want = _auto_name(s, st.get("hostname"), "")
+            if want and want != st.get("hostname"):
+                await sf_client(s).call("RenameServer", {"ServerName": want})
+                st["hostname"] = want
+    except Exception as e:  # noqa: BLE001 – Umbenennen darf den Status nie verhindern
+        log.debug("Umbenennen von %s fehlgeschlagen: %s", s.get("name"), e)
 
 
 def _mode_hostname(s: dict, hostname: str | None, mode_label: str, settings: dict) -> str | None:
@@ -850,6 +997,7 @@ async def collect_generic(s: dict) -> dict:
         if q:
             st["hostname"] = q["name"]
     pw = st.pop("password", None) if g == "wreckfest" else None
+    await _apply_auto_name(s, g, st)
     result = {"online": True, "game": g, **st, "join": join_info(s, pw)}
     if pw:
         result["join_password"] = pw
@@ -860,10 +1008,11 @@ async def collect_generic(s: dict) -> dict:
 
 
 @app.get("/api/servers/{sid}/status", dependencies=auth)
-async def status(sid: str):
+async def status(sid: str, request: Request):
     s = get_server(sid)
     try:
-        return await collect_state(s, apply_auto=True, with_matchzy=True)
+        r = await collect_state(s, apply_auto=True, with_matchzy=True)
+        return {**r, "join": await localize_join(request, s, r.get("join"))}
     except RconAuthError as e:
         drop_client(sid)
         raise HTTPException(502, str(e))
@@ -880,6 +1029,8 @@ async def overview(request: Request):
             continue
         st = _state.get(s["id"], {})
         item = {"server": public(s), **{k: v for k, v in st.items() if not k.startswith("_") and k != "raw"}}
+        if item.get("join"):
+            item["join"] = await localize_join(request, s, item["join"])
         if s.get("container"):
             ld = _loads.get(s["container"])
             item["load"] = {k: v for k, v in ld.items() if not k.startswith("_")} if ld else None
@@ -1181,6 +1332,28 @@ async def server_metrics(minutes: int = 360):
 
 GAME_APPS = {"cs2": 730, "tf2": 440, "valheim": 892970, "wreckfest": 228380, "factorio": 427520, "satisfactory": 526870,
              **{k: c["appid"] for k, c in catmod.CATALOG.items() if c.get("appid")}}
+
+
+@app.get("/api/appicon/{appid}")
+async def app_icon(appid: int):
+    """Spiel-Icon aus dem lokalen Speicher (einmal von Steam geholt)."""
+    f = await depots.icon_file(appid)
+    if not f:
+        raise HTTPException(404, "kein Icon")
+    return FileResponse(f, media_type="image/png" if f.read_bytes()[:4] == b"\x89PNG" else "image/jpeg",
+                        headers={"Cache-Control": "public, max-age=2592000, immutable"})
+
+
+def _likely_apps() -> list[int]:
+    """Apps, deren Depots wahrscheinlich im Cache landen: Prefill-Liste und Spielserver."""
+    try:
+        return [int(a["id"]) for a in prefill.settings().get("apps") or [] if str(a.get("id", "")).isdigit()] + \
+            [a["id"] for a in _server_game_apps()]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+depots.extra_apps = _likely_apps
 
 
 @app.get("/api/gameicons")
@@ -1744,6 +1917,8 @@ class SettingsIn(BaseModel):
     games_base: str | None = Field(None, max_length=200)
     cache_container: str | None = Field(None, max_length=100)
     hostname_pattern: str | None = Field(None, max_length=60)
+    names_pattern: str | None = Field(None, max_length=60)
+    internet_host: str | None = Field(None, max_length=120)
     container_dns: str | None = Field(None, max_length=100)
 
 
@@ -2850,6 +3025,70 @@ async def wf_config_put(sid: str, data: WfConfigIn):
     except docker_api.DockerError as e:
         raise HTTPException(502, str(e))
     return {"ok": True}
+
+
+@app.get("/api/servers/{sid}/wreckfest/rotation", dependencies=auth)
+async def wf_rotation_get(sid: str):
+    s = _wf_server(sid)
+    try:
+        text = await _wf_read(s["container"])
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    if text is None:
+        return {"exists": False}
+    glob = {}
+    for line in text.splitlines():
+        m = re.match(r"^\s*([a-z_]+)\s*=\s*(.*?)\s*$", line)
+        if m and m.group(1) in wfd.GLOBAL_KEYS:
+            glob[m.group(1)] = m.group(2).strip('"')
+    vals = _wf_values(text)
+    return {"exists": True, "events": wfd.parse_events(text), "globals": glob, "global_labels": wfd.GLOBAL_KEYS,
+            "tracks": [{"id": k, "name": n, "type": t} for k, n, t in wfd.TRACKS], "gamemodes": wfd.GAMEMODES,
+            "car_classes": wfd.CAR_CLASSES, "current": {k: vals.get(k, "") for k in ("track", "gamemode", "laps", "bots", "server_name")},
+            "auto_name": _auto_name(s, vals.get("server_name"), "")}
+
+
+class WfRotationIn(BaseModel):
+    events: list[dict[str, str | int | None]] = Field(default_factory=list, max_length=60)
+    globals: dict[str, str] = Field(default_factory=dict)
+    restart: bool = True
+
+
+@app.put("/api/servers/{sid}/wreckfest/rotation", dependencies=auth)
+async def wf_rotation_put(sid: str, data: WfRotationIn):
+    """Rotation (Event-Loop) und Lobby-Regeln schreiben; erstes Event wird Startstrecke, Name nach Muster."""
+    import base64
+    s = _wf_server(sid)
+    try:
+        text = await _wf_read(s["container"])
+        if text is None:
+            raise HTTPException(409, "server_config.cfg gibt es noch nicht – Server installiert sich noch")
+        changes = {k: re.sub(r"[^\w .,\-]", "", str(v))[:40] for k, v in data.globals.items() if k in wfd.GLOBAL_KEYS}
+        ev = [e for e in data.events if str(e.get("track") or "").strip()]
+        if ev:
+            first = ev[0]
+            changes["track"] = str(first["track"])
+            if first.get("gamemode"):
+                changes["gamemode"] = str(first["gamemode"])
+            if str(first.get("laps") or "").isdigit():
+                changes["laps"] = str(first["laps"])
+        modes = {str(e.get("gamemode") or "racing") for e in ev}
+        label = wfd.MODE_NAMES.get(next(iter(modes)), "").split(" (")[0] if len(modes) == 1 else ("Rotation" if ev else "")
+        want = _auto_name(s, _wf_values(text).get("server_name"), label)
+        if want:
+            changes["server_name"] = want
+        new = wfd.render_events(_wf_apply(text, changes), ev)
+        b64 = base64.b64encode(new.encode()).decode()
+        out = await docker_api.exec_cmd(s["container"], ["sh", "-c", f"cp {WF_CFG} {WF_CFG}.bak 2>/dev/null; echo {b64} | base64 -d > {WF_CFG}.new && "
+                                                                       f"chown 99:100 {WF_CFG}.new 2>/dev/null; mv {WF_CFG}.new {WF_CFG} && echo OK"])
+        if "OK" not in out:
+            raise HTTPException(502, f"Konnte Konfiguration nicht schreiben: {out.strip()[:200]}")
+        _rot_cache.pop(sid, None)
+        if data.restart:
+            await docker_api.action(s["container"], "restart")
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    return {"ok": True, "events": len(ev), "server_name": want}
 
 
 @app.post("/api/servers/{sid}/wreckfest/lan", dependencies=auth)

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=50">
+<link rel="stylesheet" href="/static/app.css?v=52">
 </head>
 <body>
 
@@ -236,6 +236,8 @@
             <div class="field"><label>Basisordner für neue Spielserver (auf dem Docker-Host)</label><input id="setGamesBase" placeholder="/mnt/grohlan" class="mono"></div>
             <div class="field"><label>Lancache-Container (leer = automatisch)</label><input id="setCacheContainer" placeholder="z. B. lancache-monolithic-1" class="mono"></div>
             <div class="field"><label>CS2-Servername nach Modus (<span class="mono">{nr}</span> = Servernummer, <span class="mono">{mode}</span> = Modus; leer = aus)</label><input id="setHostnamePattern" placeholder="CS#{nr} {mode}" class="mono" maxlength="60"></div>
+            <div class="field"><label>Name der übrigen Spielserver (<span class="mono">{game}</span> = Spiel, <span class="mono">{nr}</span>, <span class="mono">{mode}</span>; leer = aus) – live bei TF2/Satisfactory, Wreckfest beim Speichern der Rotation</label><input id="setNamesPattern" placeholder="{game}#{nr} {mode}" class="mono" maxlength="60"></div>
+            <div class="field"><label>Öffentliche Adresse für Besucher aus dem Internet (IP oder DNS-Name; leer = automatisch ermitteln)</label><input id="setInternetHost" placeholder="z. B. lan.groh-pa.de" class="mono" maxlength="120"></div>
             <div class="field"><label>DNS für neue Spielserver-Container (leer = Lancache-DNS automatisch erkennen)</label><input id="setContainerDns" placeholder="z. B. 192.168.200.27" class="mono" maxlength="100"></div>
           </div>
           <div class="hint" style="margin-top:6px">Leer = Adresse aus dem Browser. Die CS2-Server laden Match-Configs von dieser Adresse – also die LAN-IP verwenden, nicht „localhost“.</div>
@@ -281,7 +283,7 @@
         <div class="panel hidden" id="createNoDocker"></div>
         <div class="panel">
           <h2>Spiel</h2>
-          <div class="seg" id="createGameSeg"></div>
+          <div class="cggrid" id="createGameSeg"></div>
           <div class="settings-grid" id="createFields" style="margin-top:14px"></div>
           <div class="settings-grid" style="margin-top:10px">
             <div class="field"><label>Datenordner auf dem Docker-Host (NAS-Mount)</label><input id="createDataDir" class="mono"></div>
@@ -348,6 +350,24 @@
           <div class="wfgrid" id="wfFields"></div>
           <datalist id="wfModes"><option value="racing"><option value="derby"><option value="derby deathmatch"><option value="team derby"><option value="team race"><option value="elimination race"></datalist>
           <div class="row" style="margin-top:12px"><button class="primary" id="btnWfSave">Speichern &amp; Server neu starten</button><span class="hint">Wreckfest liest die Datei nur beim Start.</span></div>
+        </div>
+        <div class="panel hidden mgronly" id="wfRotPanel" style="margin-top:16px">
+          <h2>Rotation (Event-Loop) <span class="hint">Strecken nacheinander – wie im Wreckfest Server Manager</span></h2>
+          <div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">
+            <button class="small" id="wfRotAdd">＋ Event</button>
+            <button class="small" id="wfRotRaces">Alle Rennstrecken</button>
+            <button class="small" id="wfRotDerby">Alle Derby-Arenen</button>
+            <button class="small" id="wfRotMix">Gemischt (Rennen + Derby)</button>
+            <button class="small" id="wfRotShuffle">🔀 Mischen</button>
+            <button class="small danger" id="wfRotClear">Leeren</button>
+            <span class="hint" id="wfRotInfo"></span>
+          </div>
+          <div class="wfdefaults" id="wfRotDefaults"></div>
+          <div style="overflow:auto"><table class="cachetable wfrot"><thead><tr><th>#</th><th>Strecke</th><th>Modus</th><th>Runden</th><th>Bots</th><th>Klasse</th><th>Teams</th><th title="Fahrzeug-Reset aus">Reset aus</th><th></th></tr></thead><tbody id="wfRotRows"></tbody></table></div>
+          <h3 style="margin-top:14px">Lobby &amp; Regeln</h3>
+          <div class="wfgrid" id="wfRotGlobals"></div>
+          <div class="row" style="margin-top:12px"><button class="primary" id="btnWfRotSave">Rotation speichern &amp; neu starten</button><span class="hint" id="wfRotName"></span></div>
+          <div class="hint" style="margin-top:6px">Das erste Event wird Startstrecke. Im Spiel schaltet ein Admin die Rotation mit <span class="mono">/eventloop</span> an oder aus; mit „Streckenabstimmung“ stimmen die Spieler über die nächste Strecke ab.</div>
         </div>
 
         <div class="grid2 cs2only">
@@ -655,6 +675,11 @@
 </dialog>
 
 <!-- Passwort-Dialog -->
+<dialog id="dlgPub" style="width:min(720px,calc(100vw - 32px))">
+  <div id="pubDetail"></div>
+  <div class="row" style="justify-content:flex-end;margin-top:12px"><button type="button" onclick="this.closest('dialog').close()">Schließen</button></div>
+</dialog>
+
 <dialog id="dlgPerm" style="width:min(620px,calc(100vw - 32px))">
   <form method="dialog" id="permForm">
     <h2>Rechte für <span id="permUser"></span></h2>
@@ -677,6 +702,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=50"></script>
+<script src="/static/app.js?v=52"></script>
 </body>
 </html>

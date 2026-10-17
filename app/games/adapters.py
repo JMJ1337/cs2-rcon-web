@@ -139,6 +139,7 @@ async def wreckfest_container_status(container: str) -> dict:
     if not p["connected"]:
         raise a2s.A2SError("Wreckfest startet noch …")
     cfg = p["cfg"]
+    from . import wreckfest_data as wfd
     mx = int(cfg["max_players"]) if cfg.get("max_players", "").isdigit() else 0
     names = p["players"]
     return {
@@ -146,9 +147,10 @@ async def wreckfest_container_status(container: str) -> dict:
         "max_players": mx,
         "players": [{"name": n, "time": ""} for n in names],
         "version": None, "hostname": cfg.get("server_name"),
-        "mode": {"key": "wreckfest", "label": (cfg.get("gamemode") or "Wreckfest").title()},
+        "mode": {"key": "wreckfest", "label": wfd.MODE_NAMES.get(cfg.get("gamemode") or "", (cfg.get("gamemode") or "Wreckfest").title()).split(" (")[0]},
         "password": cfg.get("password") or "",
-        "extra": {k: v for k, v in {"Servername": cfg.get("server_name"), "Strecke": cfg.get("track"),
+        "track_name": wfd.track_name(cfg.get("track")),
+        "extra": {k: v for k, v in {"Servername": cfg.get("server_name"), "Strecke": wfd.track_name(cfg.get("track")),
                                     "Modus": cfg.get("gamemode"), "Runden": cfg.get("laps"),
                                     "Spielport": cfg.get("game_port"),
                                     "Passwort": cfg.get("password") or "keins"}.items() if v},
