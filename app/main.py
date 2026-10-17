@@ -97,7 +97,7 @@ def token_user(token: str | None) -> dict | None:
     return u
 
 
-ADMIN_PATHS = ("/api/users", "/api/settings", "/api/prefill", "/api/storage", "/api/scan", "/api/cache/measure", "/api/cache/reset", "/api/docker/image-check")
+ADMIN_PATHS = ("/api/users", "/api/settings", "/api/prefill", "/api/storage", "/api/scan", "/api/cache/measure", "/api/cache/reset", "/api/docker/image-check", "/api/docker/helperlogs")
 
 # Benötigte Rechtestufe für Server-Unterseiten (users.LEVELS): 1 sehen, 2 bedienen, 3 verwalten, 4 anlegen/löschen
 _MANAGE_RX = re.compile(r"(config(/file)?|files(/.*)?|saves/load|container(/(env|diag|use-lancache|steamfix))?|wreckfest/.*|sleep/config|"
@@ -2687,6 +2687,17 @@ async def tool_a2s(host: str, port: int):
         return {"ok": True, "ms": round((time.time() - t0) * 1000), "info": {k: info.get(k) for k in ("name", "map", "players", "max_players", "version", "port")}}
     except adapters.a2s.A2SError as e:
         return {"ok": False, "ms": round((time.time() - t0) * 1000), "error": str(e)}
+
+
+@app.get("/api/docker/helperlogs/{name}", dependencies=auth)
+async def helper_logs(name: str, tail: int = 60):
+    """Log eines Hilfs-Containers (Kopieren usw.) – nur gsm-*-Container."""
+    if not re.fullmatch(r"gsm-[\w.\-]{1,80}", name):
+        raise HTTPException(400, "Nur Hilfs-Container")
+    try:
+        return {"logs": await docker_api.logs(name, tail)}
+    except docker_api.DockerError as e:
+        raise HTTPException(404, str(e))
 
 
 @app.get("/api/docker/image-check", dependencies=auth)
