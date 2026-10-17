@@ -1606,10 +1606,21 @@ async function loadWfConfig(force){
        <button class="primary" id="btnWfBridge">Zurück ins normale Netz (Container wird neu erstellt)</button>`
     : r.lan_ok
     ? `<div class="pill warn" style="margin-bottom:6px">Ports stimmen, aber die LAN-Suche findet den Server noch nicht</div>
-       <div class="hint" style="margin-bottom:6px">Wreckfest sucht im LAN per Broadcast – den leitet Docker an Container mit Portfreigaben nicht weiter. Das Host-Netzwerk hilft hier nicht (Wine/Xvfb stürzt darin ab). Bis dahin: im Spiel unter <b>Online</b> nach dem Servernamen suchen.</div>`
+       <div class="hint" style="margin-bottom:6px">Wreckfest sucht im LAN per Broadcast – den leitet Docker an Container mit Portfreigaben nicht weiter. Der LAN-Weiterleiter (kleiner Container im Host-Netz) empfängt die Suche und reicht sie an den Server durch.</div>
+       ${r.relay && r.relay.running
+         ? `<span class="pill ok">LAN-Weiterleiter läuft (Port ${esc(r.relay.port)} → ${esc(v.query_port)})</span> <button class="small" id="btnWfRelayOff">Weiterleiter entfernen</button>`
+         : `<button class="primary" id="btnWfRelay">LAN-Weiterleiter einrichten</button>${r.relay ? ` <span class="hint">Weiterleiter: ${esc(r.relay.status || "")}</span>` : ""}`}`
     : `<div class="pill warn" style="margin-bottom:6px">Im LAN-Reiter von Wreckfest nicht sichtbar (Query-Port ${esc(v.query_port || "?")})</div>
        <div class="hint" style="margin-bottom:6px">Wreckfest wird in der LAN-Suche nur auf den Query-Ports 26900–26905 bzw. 27015–27020 gefunden – letztere belegen die CS2-Server.</div>
        ${r.managed ? `<button class="primary" id="btnWfLan">LAN-Sichtbarkeit einrichten (Container wird neu erstellt)</button>` : `<span class="hint">Container nicht vom Tool angelegt – query_port in server_config.cfg und Port-Freigabe selbst anpassen.</span>`}`;
+  const rb = $("#btnWfRelay"), ro = $("#btnWfRelayOff");
+  const relay = async on => {
+    try { const x = await api(`/api/servers/${current.id}/wreckfest/lanrelay`, {body: {on}}); toast(on ? `LAN-Weiterleiter läuft auf Port ${x.relay?.port} – im Spiel unter „LAN“ suchen` : "Weiterleiter entfernt"); }
+    catch (e) { toast(e.message, true); }
+    loadWfConfig(true);
+  };
+  if (rb) rb.onclick = () => { rb.disabled = true; rb.textContent = "wird eingerichtet …"; relay(true); };
+  if (ro) ro.onclick = () => relay(false);
   const bb = $("#btnWfBridge");
   if (bb) bb.onclick = async () => {
     bb.disabled = true; bb.textContent = "wird umgestellt …";

@@ -1334,6 +1334,10 @@ async def _delete_job(job: dict, s: dict, plan: dict, data: DeleteIn):
         if data.remove_container and plan["container"]:
             _job_log(job, f"Container {plan['container']} stoppen und entfernen")
             await docker_api.remove_container(plan["container"])
+            try:                                   # LAN-Weiterleiter (Wreckfest) mit entfernen
+                await docker_api.remove_container(_relay_name(plan["container"]))
+            except docker_api.DockerError:
+                pass
         if data.delete_data:
             for p in plan["paths"]:
                 if p["blocked"]:
@@ -3316,6 +3320,7 @@ async def wf_config_get(sid: str):
     host_net = (info.get("HostConfig") or {}).get("NetworkMode") == "host"
     lan_ok = q.isdigit() and (26900 <= int(q) <= 26905 or (27015 <= int(q) <= 27020)) and (q_host == q or host_net)
     return {"exists": text is not None, "values": vals, "labels": WF_KEYS, "lan_ok": lan_ok, "host_net": host_net,
+            "relay": await _relay_state(s["container"]),
             "managed": (info.get("Config", {}).get("Labels") or {}).get("gsm.managed") == "1"}
 
 
@@ -3440,6 +3445,68 @@ async def wf_lan_fix(sid: str):
         raise HTTPException(502, str(e))
     await _set_server_fields(sid, port=q, game_port=gport)
     return {"ok": True, "query_port": q, "steam_port": sport, "game_port": gport}
+
+
+# LAN-Weiterleiter: Wreckfest-Clients suchen im LAN per UDP-Broadcast (Ports 26900–26905). Docker leitet Broadcasts
+# nicht an Container mit Portfreigaben weiter. Ein kleiner socat-Container im Host-Netz empfängt die Broadcasts auf einem
+# freien Port dieses Bereichs und reicht sie an den freigegebenen Query-Port weiter; Antworten gehen zurück an den Client.
+RELAY_IMAGE = "alpine/socat:latest"
+RELAY_PORTS = range(26900, 26906)
+
+
+def _relay_name(container: str) -> str:
+    return f"{container}-lanrelay"
+
+
+async def _relay_state(container: str) -> dict | None:
+    try:
+        i = await docker_api.inspect(_relay_name(container))
+    except docker_api.DockerError:
+        return None
+    cmd = " ".join((i.get("Config") or {}).get("Cmd") or [])
+    m = re.search(r"RECVFROM:(\d+)", cmd)
+    return {"running": bool((i.get("State") or {}).get("Running")), "port": int(m.group(1)) if m else None,
+            "status": (i.get("State") or {}).get("Status")}
+
+
+class RelayIn(BaseModel):
+    on: bool = True
+
+
+@app.post("/api/servers/{sid}/wreckfest/lanrelay", dependencies=auth)
+async def wf_lanrelay(sid: str, data: RelayIn):
+    s = _wf_server(sid)
+    name = s["container"]
+    rname = _relay_name(name)
+    try:
+        try:
+            await docker_api.remove_container(rname)
+        except docker_api.DockerError:
+            pass
+        if not data.on:
+            return {"ok": True, "relay": None}
+        vals = _wf_values(await _wf_read(name) or "")
+        q = int(vals.get("query_port") or s.get("port") or 26900)
+        info = await docker_api.inspect(name)
+        if (info.get("HostConfig") or {}).get("NetworkMode") == "host":
+            raise HTTPException(400, "Container läuft im Host-Netz – erst „Zurück ins normale Netz“")
+        used = await docker_api.used_host_ports()
+        rp = next((p for p in reversed(RELAY_PORTS) if p != q and p not in used), None)
+        if rp is None:
+            raise HTTPException(409, "Kein freier Port in 26900–26905 für den Weiterleiter")
+        ip = _join_host(s)
+        if not await docker_api.image_exists(RELAY_IMAGE):
+            await docker_api.pull(RELAY_IMAGE)
+        await docker_api.create_container(rname, {
+            "Image": RELAY_IMAGE,
+            "Cmd": ["-d", f"UDP4-RECVFROM:{rp},broadcast,reuseaddr,fork", f"UDP4-SENDTO:{ip}:{q}"],
+            "Labels": {"gsm.lanrelay": name, "gsm.helper": "lanrelay"},
+            "HostConfig": {"NetworkMode": "host", "RestartPolicy": {"Name": "unless-stopped"},
+                           "Memory": 32 * 1024 * 1024, "CpuShares": 128}})
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    log.info("%s: LAN-Weiterleiter %s:%s -> %s:%s", name, "0.0.0.0", rp, ip, q)
+    return {"ok": True, "relay": await _relay_state(name)}
 
 
 @app.post("/api/servers/{sid}/wreckfest/bridgenet", dependencies=auth)
