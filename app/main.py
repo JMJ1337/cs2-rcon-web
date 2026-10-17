@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import automation, cache_history, configfiles, depots, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
+from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
 from .games import minecraft as mcmod
@@ -104,7 +104,7 @@ def require_auth(request: Request):
         raise HTTPException(403, "Nur Ansicht – keine Berechtigung für Änderungen")
     admin_only = (path.startswith(ADMIN_PATHS) and not (path == "/api/settings" and method == "GET")) or \
         (method in ("POST", "PUT", "DELETE") and re.fullmatch(r"/api/servers(/[\w-]+)?", path)) or \
-        re.fullmatch(r"/api/servers/[\w-]+/(delete(-preview)?|container/(diag|use-lancache|steamfix|env)|wreckfest/.*|config(/file)?|satisfactory/options)", path)
+        re.fullmatch(r"/api/servers/[\w-]+/(delete(-preview)?|container/(diag|use-lancache|steamfix|env)|wreckfest/.*|config(/file)?|satisfactory/options|files(/.*)?|saves(/.*)?)", path)
     if admin_only and level < 3:
         raise HTTPException(403, "Nur für Administratoren")
     request.state.user = u
@@ -2073,6 +2073,163 @@ async def config_write(sid: str, data: ConfigWrite):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------- Datei-Browser & Spielstände
+from fastapi.responses import Response as _Resp  # noqa: E402
+from urllib.parse import quote as _urlq  # noqa: E402
+
+
+def _fb_err(e):
+    if isinstance(e, filebrowser.FileError):
+        return HTTPException(400, str(e))
+    return HTTPException(502, str(e))
+
+
+@app.get("/api/servers/{sid}/files", dependencies=auth)
+async def files_list(sid: str, path: str = ""):
+    name = _container_of(sid)
+    try:
+        rs = await filebrowser.roots(name)
+        if not rs:
+            raise filebrowser.FileError("Container hat keine eingebundenen Datenordner")
+        res = await filebrowser.listdir(name, path or rs[0])
+        return {"roots": rs, **res}
+    except (filebrowser.FileError, docker_api.DockerError) as e:
+        raise _fb_err(e)
+
+
+@app.get("/api/servers/{sid}/files/text", dependencies=auth)
+async def files_text(sid: str, path: str):
+    try:
+        return await filebrowser.read_text(_container_of(sid), path)
+    except (filebrowser.FileError, docker_api.DockerError) as e:
+        raise _fb_err(e)
+
+
+class FileTextIn(BaseModel):
+    path: str
+    content: str = Field(max_length=2 * 1024 * 1024)
+
+
+@app.put("/api/servers/{sid}/files/text", dependencies=auth)
+async def files_text_put(sid: str, data: FileTextIn):
+    try:
+        await filebrowser.write_text(_container_of(sid), data.path, data.content)
+    except (filebrowser.FileError, docker_api.DockerError) as e:
+        raise _fb_err(e)
+    return {"ok": True}
+
+
+@app.get("/api/servers/{sid}/files/download", dependencies=auth)
+async def files_download(sid: str, path: str):
+    try:
+        fname, data, mt = await filebrowser.download(_container_of(sid), path)
+    except (filebrowser.FileError, docker_api.DockerError) as e:
+        raise _fb_err(e)
+    return _Resp(content=data, media_type=mt,
+                 headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_urlq(fname)}"})
+
+
+@app.post("/api/servers/{sid}/files/upload", dependencies=auth)
+async def files_upload(sid: str, request: Request, dir: str, name: str):
+    body = await request.body()
+    if len(body) > 1024 * 1024 * 1024:
+        raise HTTPException(413, "Datei zu groß (max. 1 GB)")
+    try:
+        p = await filebrowser.upload(_container_of(sid), dir, name, body)
+    except (filebrowser.FileError, docker_api.DockerError) as e:
+        raise _fb_err(e)
+    return {"ok": True, "path": p}
+
+
+@app.delete("/api/servers/{sid}/files", dependencies=auth)
+async def files_delete(sid: str, path: str):
+    try:
+        await filebrowser.delete(_container_of(sid), path)
+    except (filebrowser.FileError, docker_api.DockerError) as e:
+        raise _fb_err(e)
+    return {"ok": True}
+
+
+@app.get("/api/servers/{sid}/saves", dependencies=auth)
+async def saves_list(sid: str):
+    s = get_server(sid)
+    g = game_of(s)
+    out = {"game": g, "files": [], "sessions": None, "can_save": g in ("satisfactory", "factorio", "minecraft"),
+           "can_load": g in ("satisfactory", "factorio")}
+    if s.get("container") and docker_api.available():
+        try:
+            out["files"] = await filebrowser.saves(s["container"], g)
+        except docker_api.DockerError as e:
+            out["error"] = str(e)
+    if g == "satisfactory":
+        try:
+            d = await sf_client(s).call("EnumerateSessions")
+            out["sessions"] = [{"name": x.get("sessionName"), "saves": [{"name": v.get("saveName"), "time": v.get("saveDateTime"),
+                                                                          "playtime": v.get("playDurationSeconds")}
+                                                                         for v in (x.get("saveHeaders") or [])]}
+                               for x in (d or {}).get("sessions") or []]
+            out["current"] = (d or {}).get("currentSessionIndex")
+        except sfmod.SatisfactoryError as e:
+            out["error"] = str(e)
+    return out
+
+
+class SaveNowIn(BaseModel):
+    name: str = Field("", max_length=64)
+
+
+@app.post("/api/servers/{sid}/saves/now", dependencies=auth)
+async def saves_now(sid: str, data: SaveNowIn):
+    s = get_server(sid)
+    g = game_of(s)
+    name = re.sub(r"[^\w\-]", "_", data.name.strip()) or time.strftime("lan_%Y%m%d_%H%M")
+    try:
+        if g == "satisfactory":
+            await sf_client(s).call("SaveGame", {"SaveName": name})
+            return {"ok": True, "output": f"Gespeichert als {name}"}
+        if g == "factorio":
+            try:
+                out = await run(s, f"/server-save {name}")
+            except HTTPException:
+                raise HTTPException(400, "Factorio speichert nur über RCON – RCON-Port im Stack freigeben (z. B. 27100:27015/tcp)")
+            return {"ok": True, "output": out or f"Gespeichert als {name}"}
+        if g == "minecraft":
+            out = await docker_api.exec_cmd(_container_of(sid), ["rcon-cli", "save-all"])
+            return {"ok": True, "output": out.strip() or "Welt gespeichert"}
+    except sfmod.SatisfactoryError as e:
+        raise HTTPException(502, str(e))
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    raise HTTPException(400, "Für dieses Spiel nicht unterstützt – Spielstand über den Datei-Browser sichern")
+
+
+class LoadIn(BaseModel):
+    name: str = Field(max_length=200)
+
+
+@app.post("/api/servers/{sid}/saves/load", dependencies=auth)
+async def saves_load(sid: str, data: LoadIn):
+    s = get_server(sid)
+    g = game_of(s)
+    try:
+        if g == "satisfactory":
+            await sf_client(s).call("LoadGame", {"SaveName": data.name, "EnableAdvancedGameSettings": False})
+            return {"ok": True, "output": f"Lade {data.name} …"}
+        if g == "factorio":
+            # factoriotools lädt beim Start den neuesten Spielstand -> gewählte Datei zum neuesten machen und neu starten
+            p = await filebrowser.check(_container_of(sid), data.name)
+            if not p.startswith("/factorio/saves/") or not p.endswith(".zip"):
+                raise HTTPException(400, "Bitte einen Spielstand aus /factorio/saves wählen")
+            await docker_api.exec_cmd(_container_of(sid), ["touch", p])
+            await docker_api.action(_container_of(sid), "restart")
+            return {"ok": True, "output": "Server startet mit diesem Spielstand neu"}
+    except sfmod.SatisfactoryError as e:
+        raise HTTPException(502, str(e))
+    except (filebrowser.FileError, docker_api.DockerError) as e:
+        raise _fb_err(e)
+    raise HTTPException(400, "Laden wird für dieses Spiel nicht unterstützt")
+
+
 # ---------------------------------------------------------------- Satisfactory-Optionen (offizielle API)
 SF_OPTS = [("FG.DSAutoPause", "Pausieren ohne Spieler", "bool"), ("FG.DSAutoSaveOnDisconnect", "Speichern, wenn jemand geht", "bool"),
            ("FG.AutosaveInterval", "Autosave alle (s)", "number"), ("FG.ServerRestartTimeSlot", "Täglicher Neustart (Min. nach Mitternacht)", "number"),
@@ -2502,7 +2659,36 @@ class PrefillRunIn(BaseModel):
     mode: str = "prefill"
 
 
+def _server_game_apps() -> list[dict]:
+    """Steam-Spiele aller eingetragenen Spielserver (damit Spieler sie aus dem Cache laden)."""
+    out, seen = [], set()
+    for x in load_servers():
+        g = game_of(x)
+        a = GAMES.get(g, {}).get("appid")
+        if a and a not in seen:
+            seen.add(a)
+            out.append({"id": int(a), "name": GAMES[g]["label"], "server": True})
+    return out
+
+
+async def _prefill_sync_server_games() -> None:
+    s = prefill.settings()
+    apps = list(s.get("apps") or [])
+    have = {a["id"] for a in apps}
+    if s.get("server_games", True):
+        new = [a for a in _server_game_apps() if a["id"] not in have]
+        if new:
+            apps += new
+            prefill.save_settings({"apps": apps})
+    if apps:
+        await prefill.write_apps([a["id"] for a in apps])
+
+
 async def _prefill_start(mode: str):
+    try:
+        await _prefill_sync_server_games()
+    except docker_api.DockerError:
+        pass
     s = prefill.settings()
     prefill.job.update(running=True, step="startet …", error=None)
     try:
@@ -2578,7 +2764,8 @@ class PrefillApps(BaseModel):
 
 @app.put("/api/prefill/apps", dependencies=auth)
 async def prefill_apps(data: PrefillApps):
-    apps = [{"id": int(a["id"]), "name": str(a.get("name") or a["id"])[:80], **({"auto": True} if a.get("auto") else {})}
+    apps = [{"id": int(a["id"]), "name": str(a.get("name") or a["id"])[:80], **({"auto": True} if a.get("auto") else {}),
+             **({"server": True} if a.get("server") else {})}
             for a in data.apps if str(a.get("id", "")).isdigit()]
     try:
         await prefill.write_apps([a["id"] for a in apps])
@@ -2590,6 +2777,7 @@ async def prefill_apps(data: PrefillApps):
 
 
 class PrefillSettings(BaseModel):
+    server_games: bool = True
     schedule: str = Field("", max_length=5)
     flags: dict
     yield_: bool = Field(True, alias="yield")
@@ -2604,7 +2792,14 @@ async def prefill_settings(data: PrefillSettings):
     flags = {"recent": bool(f.get("recent")), "recently_purchased": bool(f.get("recently_purchased")),
              "top": max(0, min(100, int(f.get("top") or 0))), "all": bool(f.get("all")), "force": bool(f.get("force")),
              "verbose": bool(f.get("verbose")), "os": f.get("os") if f.get("os") in ("windows", "linux", "macos") else "windows"}
-    return prefill.save_settings({"schedule": data.schedule, "flags": flags, "yield": data.yield_, "yield_mbs": data.yield_mbs})
+    out = prefill.save_settings({"schedule": data.schedule, "flags": flags, "yield": data.yield_, "yield_mbs": data.yield_mbs,
+                                 "server_games": data.server_games})
+    if data.server_games:
+        try:
+            await _prefill_sync_server_games()
+        except docker_api.DockerError:
+            pass
+    return prefill.settings()
 
 
 _autoadd_busy = {"on": False}

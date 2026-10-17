@@ -347,3 +347,9 @@ a.btn{display:inline-flex;align-items:center;padding:7px 12px;border-radius:7px;
 .cfggrid label{font-size:12px;color:var(--muted);display:block;margin-bottom:3px}
 .cfggrid .chk{display:flex;gap:8px;align-items:center;font-size:14px;padding-top:18px}
 .cfggrid .chk input{width:auto}
+.fbrow{display:grid;grid-template-columns:24px 1fr 110px 150px auto;gap:8px;align-items:center;padding:5px 6px;border-bottom:1px solid var(--line);font-size:13px}
+.fbrow:hover{background:color-mix(in srgb,var(--accent) 6%,transparent)}
+.fbrow .n{cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fbrow .acts{display:flex;gap:4px}
+.btn-up span{display:inline-flex;padding:4px 8px;border:1px solid var(--line);border-radius:6px;cursor:pointer}
+a.btn-link{display:inline-flex;align-items:center;padding:3px 7px;border:1px solid var(--line);border-radius:6px;text-decoration:none;color:inherit;font-size:12px}

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=41">
+<link rel="stylesheet" href="/static/app.css?v=43">
 </head>
 <body>
 
@@ -124,7 +124,7 @@
     <!-- SteamPrefill -->
     <section id="view-prefill" class="hidden">
       <div class="topbar"><div><div class="title">SteamPrefill</div><div class="sub" id="pfSub">Spiele vorab in den Lancache laden</div></div>
-        <div style="margin-left:auto" class="row"><button class="primary" id="pfRun">▶ Vorladen starten</button><button id="pfPause">⏸ Pausieren</button><button class="danger" id="pfStop">✕ Abbrechen</button></div></div>
+        <div style="margin-left:auto" class="row"><button class="primary" id="pfRun" title="Übernimmt zuerst die Spiele der Spielserver in die Liste und startet dann den Prefill. Spiele aus den Konto-Optionen (zuletzt gespielt, alle …) erscheinen in der Liste, sobald SteamPrefill sie lädt.">▶ Liste aktualisieren &amp; vorladen</button><button id="pfPause">⏸ Pausieren</button><button class="danger" id="pfStop">✕ Abbrechen</button></div></div>
       <div class="content" style="max-width:1200px">
         <div class="cards" id="pfCards"></div>
         <div class="pfbanner hidden" id="pfBanner"></div>
@@ -148,6 +148,7 @@
           <div class="panel">
             <h2>Optionen &amp; Zeitplan</h2>
             <div class="pfopts">
+              <label><input type="checkbox" id="pfServerGames"> Spiele aller Spielserver automatisch vorhalten (CS2, TF2, Valheim …)</label>
               <label><input type="checkbox" data-pf="recent"> zuletzt gespielte Spiele (2 Wochen)</label>
               <label><input type="checkbox" data-pf="recently_purchased"> kürzlich gekaufte Spiele</label>
               <label><input type="checkbox" data-pf="all"> alle Spiele des Kontos</label>
@@ -296,6 +297,7 @@
           <button data-tab="console">Konsole</button>
           <button data-tab="settings" class="srconly">Einstellungen</button>
           <button data-tab="config" class="needcontainer adminonly">Konfiguration</button>
+          <button data-tab="files" class="needcontainer adminonly">Dateien &amp; Spielstände</button>
           <button data-tab="container" class="needcontainer">Container</button>
           <button id="btnJoin" class="primary hidden" title="Spiel starten und mit diesem Server verbinden">▶ Beitreten</button>
           <button id="btnCopyAddr" class="hidden" title="Adresse kopieren">⧉ <span id="joinAddr"></span></button>
@@ -491,6 +493,25 @@
         </div>
       </div>
 
+      <div class="content hidden" id="tab-files">
+        <div class="panel" id="svSaves">
+          <h2>Spielstände <span class="hint" id="svSavesHint"></span></h2>
+          <div class="row hidden" id="svSaveRow" style="margin-bottom:10px"><input id="svSaveName" placeholder="Name (optional)"><button class="primary" id="btnSaveNow">Jetzt speichern</button></div>
+          <div id="svSavesList"></div>
+        </div>
+        <div class="panel" style="margin-top:16px">
+          <h2>Datei-Browser</h2>
+          <div class="row" style="margin-bottom:8px"><select id="fbRoot"></select><div id="fbCrumb" class="mono hint" style="flex:1"></div>
+            <label class="btn-up"><input type="file" id="fbUpload" multiple style="display:none"><span class="small">⇧ Hochladen</span></label><button class="small" id="fbRefresh">↻</button></div>
+          <div id="fbList" style="max-height:420px;overflow:auto"></div>
+          <div class="hidden" id="fbEdit" style="margin-top:12px">
+            <div class="row" style="margin-bottom:6px"><b class="mono" id="fbEditPath" style="flex:1"></b><button id="fbEditClose">Schließen</button><button class="primary" id="fbEditSave">Speichern</button></div>
+            <textarea id="fbText" class="mono" spellcheck="false" style="width:100%;min-height:360px"></textarea>
+            <div class="hint">Beim Speichern wird eine Sicherung <span class="mono">.bak</span> angelegt. Viele Server lesen Änderungen erst nach einem Neustart.</div>
+          </div>
+        </div>
+      </div>
+
       <div class="content hidden" id="tab-container">
         <div class="cards">
           <div class="card"><div class="k">Container</div><div class="v" id="ctName" style="font-size:16px">–</div><div class="s" id="ctImage"></div></div>
@@ -634,6 +655,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=41"></script>
+<script src="/static/app.js?v=43"></script>
 </body>
 </html>

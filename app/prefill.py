@@ -16,7 +16,7 @@ from . import automation, docker_api, store
 IMAGE = "tpill90/steam-lancache-prefill:latest"
 NAME = "steamprefill"
 SETTINGS = "prefill.json"
-DEFAULTS = {"yield": True, "yield_mbs": 2.0, "schedule": "", "flags": {"recent": False, "recently_purchased": False, "top": 0, "all": False,
+DEFAULTS = {"server_games": True, "yield": True, "yield_mbs": 2.0, "schedule": "", "flags": {"recent": False, "recently_purchased": False, "top": 0, "all": False,
                                       "force": False, "verbose": False, "os": "windows"},
             "apps": [], "last_run": None, "last_scheduled": ""}
 
@@ -33,7 +33,7 @@ def settings() -> dict:
 
 def save_settings(data: dict) -> dict:
     s = settings()
-    for k in ("schedule", "flags", "apps", "last_run", "last_scheduled", "yield", "yield_mbs"):
+    for k in ("schedule", "flags", "apps", "last_run", "last_scheduled", "yield", "yield_mbs", "server_games"):
         if k in data:
             s[k] = data[k]
     store.save(SETTINGS, s)

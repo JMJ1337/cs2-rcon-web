@@ -462,7 +462,6 @@ async function refreshCache(){
   const svc = svcRows(d.services);
   $("#cachePanel").innerHTML = `<div class="dsect"><h3 class="dhead"><span class="gtile" style="background:#7fb3a6">${gicon("cache", 16)}</span>Lancache <span class="hint">${esc(c.container)}${c.error ? " · " + esc(c.error) : ""}</span></h3>
     <div class="cards cachecards">
-      ${savedCard(d.hit_bytes, "24 h")}
       <div class="card"><div class="k">Aus dem Cache (24 h)</div><div class="v" style="color:var(--ok)">${fmtBytes(d.hit_bytes)}</div><div class="s">${d.hit_ratio != null ? d.hit_ratio + " % Trefferquote" : "noch keine Downloads"}</div></div>
       <div class="card"><div class="k">Aus dem Internet (24 h)</div><div class="v">${fmtBytes(d.miss_bytes)}</div><div class="s">${(d.requests || 0).toLocaleString("de-DE")} Anfragen</div></div>
       <div class="card"><div class="k">Durchsatz jetzt</div><div class="v">↑ ${fmtRate(live)}</div><div class="s">${cn.rx_bps != null ? `↓ ${fmtRate(cn.rx_bps)} aus dem Internet · ` : ""}letzte Std. ${fmtBytes((h.hit_bytes||0)+(h.miss_bytes||0))}</div></div>
@@ -693,7 +692,8 @@ $$("#tabs [data-tab]").forEach(b => b.onclick = () => setTab(b.dataset.tab));
 function setTab(t){
   tab = t;
   $$("#tabs [data-tab]").forEach(b => b.classList.toggle("active", b.dataset.tab===t));
-  ["overview","maps","match","console","settings","container","config"].forEach(x => $("#tab-"+x).classList.toggle("hidden", x!==t));
+  ["overview","maps","match","console","settings","container","config","files"].forEach(x => $("#tab-"+x).classList.toggle("hidden", x!==t));
+  if (t === "files"){ loadSaves(); fbOpen(null); }
   if (t === "config") loadConfigTab();
   stopPoll(); stopCt();
   if (t === "container"){ refreshContainer(); ctTimer = setInterval(refreshContainer, 5000); }
@@ -1821,7 +1821,6 @@ async function loadCacheHistory(){
     <td class="mono">${fmtBytes(x.bytes)}</td></tr>`).join("");
   $("#cacheHist").innerHTML = `${bfHtml}
     <div class="cards">
-      ${savedCard(c.hit_bytes, CACHE_RANGES[c.range])}
       <div class="card"><div class="k">Aus dem Internet</div><div class="v">${fmtBytes(c.miss_bytes)}</div><div class="s">${(c.requests || 0).toLocaleString("de-DE")} Anfragen gesamt</div></div>
       <div class="card"><div class="k">Trefferquote</div><div class="v">${c.hit_ratio != null ? c.hit_ratio + " %" : "–"}</div><div class="s">ausgeliefert gesamt ${fmtBytes(total)}</div></div>
       <div class="card"><div class="k">Ø pro Tag</div><div class="v">${fmtBytes(c.per_day)}</div><div class="s">${c.peak.t ? "Spitze " + fmtRate(c.peak.bps) + " (" + new Date(c.peak.t * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"}) + ")" : "noch keine Spitze"}</div></div>
@@ -1927,6 +1926,7 @@ async function loadPrefill(){
     $$("[data-pf]").forEach(el => { const v = s.flags[el.dataset.pf]; if (el.type === "checkbox") el.checked = !!v; else el.value = v ?? ""; });
     $("#pfSchedule").value = s.schedule || "";
     $("#pfYield").checked = s.yield !== false; $("#pfYieldMbs").value = s.yield_mbs ?? 2;
+    $("#pfServerGames").checked = s.server_games !== false;
     renderPfApps();
   } else if (JSON.stringify(s.apps || []) !== JSON.stringify(pfApps)){ pfApps = (s.apps || []).slice(); renderPfApps(); }
   $("#pfSub").textContent = `Konfiguration: ${d.config_dir}` + (d.dns ? ` · Lancache-DNS ${d.dns.join(", ")}` : " · kein Lancache-DNS gefunden");
@@ -1965,7 +1965,7 @@ async function loadPrefill(){
   if (run && paused) $("#pfBanner").innerHTML = `<b>⏸ Prefill pausiert</b> – ${esc(d.auto.reason || "")}${d.auto.since ? ` · seit ${new Date(d.auto.since * 1000).toLocaleTimeString("de-DE")}` : ""}${(d.who || []).length ? `<div style="margin-top:4px">Gerade am Laden: ${d.who.map(w => `<b>${esc(w.name || w.ip)}</b> ${fmtRate(w.bps)}`).join(" · ")}</div>` : ""}${d.auto.manual ? "" : "<div class='hint'>Läuft automatisch weiter, wenn 30 s lang niemand anderes über den Cache lädt. Der eigene Prefill-Traffic wird dabei herausgerechnet.</div>"}`;
 }
 function renderPfApps(){
-  $("#pfApps").innerHTML = pfApps.length ? pfApps.map((a, i) => `<div class="pfapp"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/${a.id}/capsule_sm_120.jpg" alt="" referrerpolicy="no-referrer" onerror="this.remove()"><span>${esc(a.name)} <span class="hint mono">${a.id}</span>${a.auto ? ` <span class="pill" title="Von SteamPrefill über die Optionen (zuletzt gespielt, alle …) geladen">über Optionen</span>` : ""}</span><button class="small danger" data-pfdel="${i}">✕</button></div>`).join("")
+  $("#pfApps").innerHTML = pfApps.length ? pfApps.map((a, i) => `<div class="pfapp"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/${a.id}/capsule_sm_120.jpg" alt="" referrerpolicy="no-referrer" onerror="this.remove()"><span>${esc(a.name)} <span class="hint mono">${a.id}</span>${a.auto ? ` <span class="pill" title="Von SteamPrefill über die Optionen (zuletzt gespielt, alle …) geladen">über Optionen</span>` : ""}${a.server ? ` <span class="pill" title="Spiel eines eingetragenen Spielservers">Spielserver</span>` : ""}</span><button class="small danger" data-pfdel="${i}">✕</button></div>`).join("")
     : `<div class="hint">Noch keine Spiele ausgewählt.</div>`;
   $$("[data-pfdel]").forEach(b => b.onclick = async () => { pfApps.splice(+b.dataset.pfdel, 1); await savePfApps(); });
 }
@@ -2013,7 +2013,7 @@ $("#pfInput").addEventListener("keydown", e => { if (e.key === "Enter") pfSend()
 $("#pfSaveOpts").onclick = async () => {
   const flags = {};
   $$("[data-pf]").forEach(el => flags[el.dataset.pf] = el.type === "checkbox" ? el.checked : el.type === "number" ? (+el.value || 0) : el.value);
-  try { await api("/api/prefill/settings", {method: "PUT", body: {schedule: $("#pfSchedule").value, flags, yield: $("#pfYield").checked, yield_mbs: +$("#pfYieldMbs").value || 2}}); toast("Gespeichert"); loadPrefill(); }
+  try { await api("/api/prefill/settings", {method: "PUT", body: {schedule: $("#pfSchedule").value, flags, server_games: $("#pfServerGames").checked, yield: $("#pfYield").checked, yield_mbs: +$("#pfYieldMbs").value || 2}}); toast("Gespeichert"); loadPrefill(); }
   catch (e) { toast(e.message, true); }
 };
 setInterval(() => { if (view === "prefill" && !document.hidden) loadPrefill(); }, 2000);
@@ -2156,5 +2156,87 @@ $("#btnSfSave").onclick = async () => {
   const v = readInputs("data-sf"), options = {};
   Object.entries(v).forEach(([k, x]) => { if (!k.startsWith("_")) options[k] = typeof x === "boolean" ? (x ? "True" : "False") : x; });
   try { await api(`/api/servers/${current.id}/satisfactory/options`, {method: "PUT", body: {options, server_name: v._name || null, client_password: v._pw ? v._pw : null}}); toast("Übernommen"); loadConfigTab(); }
+  catch (e) { toast(e.message, true); }
+};
+
+/* ================= Dateien & Spielstände ================= */
+let fbPath = null, fbRoots = [];
+const fmtTime = t => t ? new Date(t * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit"}) : "";
+const dlUrl = p => `/api/servers/${current.id}/files/download?path=${encodeURIComponent(p)}`;
+async function fbOpen(path){
+  if (!current) return;
+  let r;
+  try { r = await api(`/api/servers/${current.id}/files` + (path ? `?path=${encodeURIComponent(path)}` : "")); }
+  catch (e) { $("#fbList").innerHTML = `<div class="hint">${esc(e.message)}</div>`; return; }
+  fbPath = r.path; fbRoots = r.roots;
+  $("#fbRoot").innerHTML = r.roots.map(x => `<option ${r.path.startsWith(x) ? "selected" : ""}>${esc(x)}</option>`).join("");
+  const root = r.roots.find(x => r.path === x || r.path.startsWith(x.replace(/\/$/, "") + "/")) || "/";
+  const rel = r.path.slice(root.length).split("/").filter(Boolean);
+  let acc = root;
+  $("#fbCrumb").innerHTML = `<a href="#" data-fbgo="${esc(root)}">${esc(root)}</a>` + rel.map(seg => { acc = acc.replace(/\/$/, "") + "/" + seg; return ` / <a href="#" data-fbgo="${esc(acc)}">${esc(seg)}</a>`; }).join("");
+  const up = r.path !== root ? `<div class="fbrow"><span>↰</span><span class="n" data-fbgo="${esc(r.path.replace(/\/[^/]*$/, "") || "/")}">..</span><span></span><span></span><span></span></div>` : "";
+  $("#fbList").innerHTML = up + (r.items.length ? r.items.map(it => {
+    const p = r.path.replace(/\/$/, "") + "/" + it.name;
+    return `<div class="fbrow"><span>${it.dir ? "📁" : it.text ? "📄" : "▫"}</span>
+      <span class="n" ${it.dir ? `data-fbgo="${esc(p)}"` : it.text ? `data-fbedit="${esc(p)}"` : ""} title="${esc(it.name)}">${esc(it.name)}</span>
+      <span class="hint mono">${it.dir ? "" : fmtBytes(it.size)}</span><span class="hint">${fmtTime(it.mtime)}</span>
+      <span class="acts">${it.text ? `<button class="small" data-fbedit="${esc(p)}">Bearbeiten</button>` : ""}<a class="small btn-link" href="${dlUrl(p)}" title="${it.dir ? "Ordner als .tar.gz" : "Herunterladen"}">⇩</a><button class="small danger" data-fbdel="${esc(p)}">✕</button></span></div>`;
+  }).join("") : `<div class="hint" style="padding:8px">Ordner ist leer.</div>`);
+  $$("[data-fbgo]").forEach(el => el.onclick = e => { e.preventDefault(); fbOpen(el.dataset.fbgo); });
+  $$("[data-fbedit]").forEach(el => el.onclick = () => fbEdit(el.dataset.fbedit));
+  $$("[data-fbdel]").forEach(el => el.onclick = async () => {
+    if (!confirm(`„${el.dataset.fbdel}“ endgültig löschen?`)) return;
+    try { await api(`/api/servers/${current.id}/files?path=${encodeURIComponent(el.dataset.fbdel)}`, {method: "DELETE"}); toast("Gelöscht"); fbOpen(fbPath); } catch (e) { toast(e.message, true); }
+  });
+}
+async function fbEdit(p){
+  try {
+    const r = await api(`/api/servers/${current.id}/files/text?path=${encodeURIComponent(p)}`);
+    $("#fbEdit").classList.remove("hidden"); $("#fbEditPath").textContent = r.path; $("#fbText").value = r.content;
+    $("#fbEdit").scrollIntoView({behavior: "smooth", block: "nearest"});
+  } catch (e) { toast(e.message, true); }
+}
+$("#fbEditClose").onclick = () => $("#fbEdit").classList.add("hidden");
+$("#fbEditSave").onclick = async () => {
+  try { await api(`/api/servers/${current.id}/files/text`, {method: "PUT", body: {path: $("#fbEditPath").textContent, content: $("#fbText").value}}); toast("Gespeichert"); fbOpen(fbPath); }
+  catch (e) { toast(e.message, true); }
+};
+$("#fbRoot").onchange = () => fbOpen($("#fbRoot").value);
+$("#fbRefresh").onclick = () => fbOpen(fbPath);
+$("#fbUpload").onchange = async () => {
+  const files = [...$("#fbUpload").files];
+  for (const f of files){
+    try {
+      const res = await fetch(`/api/servers/${current.id}/files/upload?dir=${encodeURIComponent(fbPath)}&name=${encodeURIComponent(f.name)}`, {method: "POST", body: f, credentials: "same-origin"});
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+      toast(`Hochgeladen: ${f.name}`);
+    } catch (e) { toast(`${f.name}: ${e.message}`, true); }
+  }
+  $("#fbUpload").value = ""; fbOpen(fbPath);
+};
+async function loadSaves(){
+  if (!current) return;
+  let r;
+  try { r = await api(`/api/servers/${current.id}/saves`); } catch (e) { $("#svSavesList").innerHTML = `<div class="hint">${esc(e.message)}</div>`; return; }
+  $("#svSaveRow").classList.toggle("hidden", !r.can_save);
+  $("#svSavesHint").textContent = r.error ? r.error : r.files.length || r.sessions ? "" : "keine bekannten Spielstand-Ordner – im Datei-Browser unten suchen";
+  let h = "";
+  if (r.sessions && r.sessions.length){
+    h += r.sessions.map(se => `<div style="margin-bottom:8px"><b>Sitzung ${esc(se.name)}</b>${se.saves.slice(0, 8).map(v => `<div class="fbrow"><span>💾</span><span class="n">${esc(v.name)}</span><span class="hint">${v.playtime ? Math.round(v.playtime / 3600) + " h gespielt" : ""}</span><span class="hint">${esc((v.time || "").replace("T", " ").slice(0, 16))}</span>
+      <span class="acts"><button class="small primary" data-load="${esc(v.name)}">Laden</button></span></div>`).join("")}</div>`).join("");
+  }
+  if (r.files.length){
+    h += r.files.slice(0, 40).map(f => `<div class="fbrow"><span>${f.dir ? "🌍" : "💾"}</span><span class="n" title="${esc(f.path)}">${esc(f.name)} <span class="hint mono">${esc(f.dirpath)}</span></span>
+      <span class="hint mono">${f.dir ? "" : fmtBytes(f.size)}</span><span class="hint">${fmtTime(f.mtime)}</span>
+      <span class="acts">${r.can_load && r.game === "factorio" && f.name.endsWith(".zip") ? `<button class="small primary" data-load="${esc(f.path)}">Laden</button>` : ""}<a class="small btn-link" href="${dlUrl(f.path)}" title="Sichern/Herunterladen">⇩ Sichern</a></span></div>`).join("");
+  }
+  $("#svSavesList").innerHTML = h || "";
+  $$("[data-load]").forEach(b => b.onclick = async () => {
+    if (!confirm(`Spielstand „${b.dataset.load}“ laden? Ungespeicherter Fortschritt geht verloren.`)) return;
+    try { const x = await api(`/api/servers/${current.id}/saves/load`, {body: {name: b.dataset.load}}); toast(x.output || "Wird geladen"); } catch (e) { toast(e.message, true); }
+  });
+}
+$("#btnSaveNow").onclick = async () => {
+  try { const r = await api(`/api/servers/${current.id}/saves/now`, {body: {name: $("#svSaveName").value.trim()}}); toast(r.output || "Gespeichert"); $("#svSaveName").value = ""; setTimeout(loadSaves, 1500); }
   catch (e) { toast(e.message, true); }
 };
