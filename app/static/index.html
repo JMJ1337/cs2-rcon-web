@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=32">
+<link rel="stylesheet" href="/static/app.css?v=33">
 </head>
 <body>
 
@@ -83,13 +83,18 @@
     <!-- SteamPrefill -->
     <section id="view-prefill" class="hidden">
       <div class="topbar"><div><div class="title">SteamPrefill</div><div class="sub" id="pfSub">Spiele vorab in den Lancache laden</div></div>
-        <div style="margin-left:auto" class="row"><button class="primary" id="pfRun">⇩ Jetzt vorladen</button><button id="pfStop">■ Stopp</button></div></div>
+        <div style="margin-left:auto" class="row"><button class="primary" id="pfRun">▶ Vorladen starten</button><button id="pfPause">⏸ Pausieren</button><button class="danger" id="pfStop">✕ Abbrechen</button></div></div>
       <div class="content" style="max-width:1200px">
         <div class="cards" id="pfCards"></div>
+        <div class="pfbanner hidden" id="pfBanner"></div>
         <div class="panel hidden" id="pfPrompt" style="margin-bottom:14px">
           <h2 id="pfPromptTitle">Eingabe</h2>
           <div class="hint" id="pfPromptHint" style="margin-bottom:8px"></div>
           <div class="row"><input id="pfInput" autocomplete="off" style="flex:1"><button class="primary" id="pfSend">Senden</button></div>
+        </div>
+        <div class="panel" style="margin-bottom:16px">
+          <h2>Fortschritt je Spiel <span class="hint">(aktueller bzw. letzter Lauf)</span></h2>
+          <div id="pfAppsProg"></div>
         </div>
         <div class="grid2">
           <div class="panel">
@@ -115,14 +120,11 @@
             <div class="row" style="margin-top:10px"><button class="primary" id="pfSaveOpts">Speichern</button></div>
           </div>
         </div>
+
         <div class="panel" style="margin-top:16px">
-          <h2>Fortschritt je Spiel <span class="hint">(aktueller bzw. letzter Lauf)</span></h2>
-          <div id="pfAppsProg"></div>
-        </div>
-        <div class="panel" style="margin-top:16px">
-          <h2>Ausgabe <span class="hint" id="pfState"></span></h2>
-          <div class="bar hidden" id="pfProgWrap" style="margin-bottom:8px"><i id="pfProg" style="background:var(--ct)"></i></div>
-          <pre class="pflog" id="pfLog">–</pre>
+          <details><summary class="hint" style="cursor:pointer">Technische Ausgabe anzeigen <span id="pfState"></span></summary>
+          <div class="bar hidden" id="pfProgWrap" style="margin:8px 0"><i id="pfProg" style="background:var(--ct)"></i></div>
+          <pre class="pflog" id="pfLog">–</pre></details>
         </div>
       </div>
     </section>
@@ -561,6 +563,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=32"></script>
+<script src="/static/app.js?v=33"></script>
 </body>
 </html>

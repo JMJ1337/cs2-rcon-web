@@ -21,7 +21,7 @@ RE_LINE = re.compile(
 from collections import deque
 _recent: deque = deque()        # (Zeitstempel, Bytes, Treffer) der letzten 2 Minuten für den Live-Durchsatz
 
-storage = {"cache_bytes": None, "logs": [], "limit": None, "max_age": None, "updated": None, "running": False, "error": None}
+storage = {"measured": None, "cache_bytes": None, "logs": [], "limit": None, "max_age": None, "updated": None, "running": False, "error": None}
 
 state = {"container": None, "offset": 0, "buckets": {}, "disk": None, "error": None, "updated": None,
          "detected": False}
@@ -243,8 +243,9 @@ def _size(txt: str) -> int | None:
     return int(float(m.group(1)) * {"": 1, "k": 1e3, "m": 1e6, "g": 1e9, "t": 1e12, "p": 1e15}[m.group(2)])
 
 
-async def poll_storage() -> None:
-    """Belegung von Cache- und Log-Ordner im Lancache-Container (du kann bei vielen TB dauern – läuft im Hintergrund)."""
+async def poll_storage(full: bool = False) -> None:
+    """Log-Dateien (billig) messen; den Cache-Ordner nur auf Wunsch (full) – du über viele TB belastet das NAS stark.
+    Sonst wird die Cache-Größe aus den Logs geschätzt (alles aus dem Internet Geholte, begrenzt auf das Limit)."""
     name = state["container"]
     if not name or storage["running"]:
         return
@@ -255,9 +256,11 @@ async def poll_storage() -> None:
         storage["limit"] = _size(env.get("CACHE_DISK_SIZE", "")) if env.get("CACHE_DISK_SIZE") else None
         storage["limit_raw"] = env.get("CACHE_DISK_SIZE")
         storage["max_age"] = env.get("CACHE_MAX_AGE")
-        out = await docker_api.exec_cmd(name, ["sh", "-c",
-                                               "for f in /data/logs/*; do [ -e \"$f\" ] && du -sb \"$f\"; done; echo '#CACHE'; "
-                                               "timeout 900 du -sb /data/cache 2>/dev/null | tail -1"], timeout=960)
+        cmd = "for f in /data/logs/*; do [ -f \"$f\" ] && echo \"$(stat -c %s \"$f\")\t$f\"; done; echo '#CACHE'; "
+        if full:
+            # niedrigste I/O- und CPU-Priorität, damit Downloads nicht leiden
+            cmd += "(command -v ionice >/dev/null && ionice -c3 nice -n19 du -sb /data/cache || nice -n19 du -sb /data/cache) 2>/dev/null | tail -1"
+        out = await docker_api.exec_cmd(name, ["sh", "-c", cmd], timeout=3600 if full else 30)
         logs_part, _, cache_part = out.partition("#CACHE")
         logs = []
         for line in logs_part.splitlines():
@@ -268,6 +271,7 @@ async def poll_storage() -> None:
         m = re.match(r"^\s*(\d+)", cache_part.strip())
         if m:
             storage["cache_bytes"] = int(m.group(1))
+            storage["measured"] = time.time()
         storage["updated"] = time.time()
         storage["error"] = None
     except (docker_api.DockerError, ValueError) as e:

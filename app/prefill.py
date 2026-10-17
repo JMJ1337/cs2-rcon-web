@@ -21,6 +21,7 @@ DEFAULTS = {"yield": True, "yield_mbs": 2.0, "schedule": "", "flags": {"recent":
             "apps": [], "last_run": None, "last_scheduled": ""}
 
 _stdin: dict = {"writer": None, "container": None}
+_pulled: dict = {"t": 0.0}
 job: dict = {"running": False, "step": None, "error": None}
 
 
@@ -89,9 +90,15 @@ async def write_apps(apps: list[int]) -> None:
 
 async def start(cmd: list[str], dns: list[str] | None) -> None:
     """Alten Lauf entfernen, neuen Container starten, stdin verbinden."""
-    if not await docker_api.image_exists(IMAGE):
-        job["step"] = "Image wird geladen …"
-        await docker_api.pull(IMAGE)
+    # SteamPrefill automatisch aktuell halten (höchstens alle 6 h prüfen)
+    if not await docker_api.image_exists(IMAGE) or time.time() - _pulled.get("t", 0) > 6 * 3600:
+        job["step"] = "SteamPrefill wird aktualisiert …"
+        try:
+            await docker_api.pull(IMAGE)
+            _pulled["t"] = time.time()
+        except docker_api.DockerError:
+            if not await docker_api.image_exists(IMAGE):
+                raise
     try:
         await docker_api.remove_container(NAME)
     except docker_api.DockerError:
@@ -127,6 +134,11 @@ async def send(text: str) -> None:
 
 
 async def stop() -> None:
+    try:
+        await pause(False)
+    except docker_api.DockerError:
+        pass
+    auto.update(paused=False, manual=False, since=None, reason=None)
     await docker_api._req("POST", f"/containers/{NAME}/stop", params={"t": "5"}, timeout=30)
 
 
@@ -224,7 +236,13 @@ def parse_progress(text: str) -> dict:
     return {"apps": apps, "current": next((a for a in reversed(apps) if a["state"] == "läuft"), None)}
 
 
-auto = {"paused": False, "since": None, "reason": None, "busy": 0, "quiet": 0}
+auto = {"paused": False, "manual": False, "since": None, "reason": None, "busy": 0, "quiet": 0}
+
+
+async def manual_pause(on: bool) -> None:
+    await pause(on)
+    auto.update(paused=on, manual=on, since=time.time() if on else None, reason="von Hand pausiert" if on else None,
+                busy=0, quiet=0)
 
 
 async def pause(on: bool) -> None:
@@ -243,7 +261,9 @@ async def yield_check(cache_tx: float | None, prefill_rx: float | None, others_d
         info = None
     is_paused = bool(info and (info.get("State") or {}).get("Paused"))
     if not running:
-        auto.update(paused=False, since=None, reason=None, busy=0, quiet=0)
+        auto.update(paused=False, manual=False, since=None, reason=None, busy=0, quiet=0)
+        return
+    if auto.get("manual"):
         return
     if not s.get("yield"):
         if is_paused and auto["paused"]:

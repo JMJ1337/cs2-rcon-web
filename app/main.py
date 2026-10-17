@@ -1029,6 +1029,7 @@ async def cache_metrics():
     if cache_stats.state["updated"] is None:
         await cache_stats.poll(automation.get_settings().get("cache_container") or "")
     out = cache_stats.summary()
+    out["storage"] = _storage_view()
     try:
         out["games_24h"] = _enrich_games(depots.games(cache_history.series("24h").get("depots") or {})[:6])
         asyncio.create_task(depots.run())
@@ -1162,11 +1163,33 @@ async def cache_history_api(range: str = "30d"):
     out["container"] = cache_stats.state["container"]
     out["error"] = cache_stats.state["error"]
     out["disk_now"] = cache_stats.state["disk"]
-    out["storage"] = {k: v for k, v in cache_stats.storage.items() if k != "running"} | {"busy": cache_stats.storage["running"]}
+    out["storage"] = _storage_view()
     out["games"] = _enrich_games(depots.games(out.pop("depots", {}) or {})[:30])
     asyncio.create_task(depots.run())
     out["clients"] = await netnames.annotate(out["clients"], {x["host"] for x in load_servers()})
     return out
+
+
+def _storage_view() -> dict:
+    st = {k: v for k, v in cache_stats.storage.items() if k != "running"} | {"busy": cache_stats.storage["running"]}
+    # Schätzung ohne Festplattenzugriff: alles je aus dem Internet Geholte (365 Tage), höchstens das Limit
+    try:
+        est = sum(v.get("mb", 0) for v in cache_history._h.values())
+    except Exception:  # noqa: BLE001
+        est = None
+    if est is not None and st.get("limit"):
+        est = min(est, st["limit"])
+    st["estimate"] = est
+    return st
+
+
+@app.post("/api/cache/measure", dependencies=auth)
+async def cache_measure():
+    """Cache-Ordner einmal genau messen (du, niedrige I/O-Priorität – dauert bei vielen TB lange)."""
+    if cache_stats.storage["running"]:
+        return {"ok": True, "busy": True}
+    asyncio.create_task(cache_stats.poll_storage(full=True))
+    return {"ok": True}
 
 
 def _enrich_games(games: list[dict]) -> list[dict]:
@@ -2193,6 +2216,19 @@ async def prefill_input(data: PrefillInput):
 async def prefill_stop():
     try:
         await prefill.stop()
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    return {"ok": True}
+
+
+class PrefillPause(BaseModel):
+    on: bool
+
+
+@app.post("/api/prefill/pause", dependencies=auth)
+async def prefill_pause(data: PrefillPause):
+    try:
+        await prefill.manual_pause(data.on)
     except docker_api.DockerError as e:
         raise HTTPException(502, str(e))
     return {"ok": True}

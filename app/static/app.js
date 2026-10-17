@@ -396,16 +396,17 @@ function svcRows(list){
 function storageCard(st, disk){
   st = st || {};
   const logs = (st.logs || []).reduce((a, x) => a + x.bytes, 0);
-  if (st.cache_bytes == null){
-    return `<div class="card"><div class="k">Cache-Ordner</div><div class="v">${st.busy ? "…" : "–"}</div><div class="s">${st.busy ? "wird gezählt (kann bei vielen TB dauern)" : esc(st.error || "noch nicht gemessen")}</div></div>`;
-  }
-  const lim = st.limit, pct = lim ? Math.min(100, Math.round(st.cache_bytes / lim * 100)) : null;
-  return `<div class="card" title="Gemessen im Container: /data/cache und /data/logs${st.updated ? " · " + new Date(st.updated * 1000).toLocaleString("de-DE") : ""}${disk ? " · Datenträger: " + fmtBytes(disk.used) + " von " + fmtBytes(disk.total) : ""}">
-    <div class="k">Cache-Ordner${lim ? " (Limit " + esc(st.limit_raw || fmtBytes(lim)) + ")" : ""}</div><div class="v">${fmtBytes(st.cache_bytes)}</div>
+  const measured = st.cache_bytes != null && st.measured;
+  const val = measured ? st.cache_bytes : st.estimate;
+  const lim = st.limit, pct = lim && val != null ? Math.min(100, Math.round(val / lim * 100)) : null;
+  return `<div class="card" title="${measured ? "Gemessen " + new Date(st.measured * 1000).toLocaleString("de-DE") : "Geschätzt aus den Logs (alles, was in den Cache geladen wurde) – ohne Festplattenzugriff"}">
+    <div class="k">Cache-Ordner${lim ? " (Limit " + esc(st.limit_raw || fmtBytes(lim)) + ")" : ""}</div><div class="v">${val != null ? (measured ? "" : "≈ ") + fmtBytes(val) : "–"}</div>
     ${pct != null ? `<div class="bar" style="margin-top:6px"><i class="${lvl(pct)}" style="width:${pct}%"></i></div>` : ""}
-    <div class="s">${pct != null ? pct + " % vom Limit · " : ""}Logs ${fmtBytes(logs)}${st.max_age ? " · max. Alter " + esc(st.max_age) : ""}</div></div>`;
+    <div class="s">${pct != null ? pct + " % vom Limit · " : ""}Logs ${fmtBytes(logs)} · ${st.busy ? "wird gemessen …" : `<a href="#" onclick="measureCache();return false" title="Zählt den Ordner einmal genau – mit niedrigster I/O-Priorität, dauert bei vielen TB lange">genau messen</a>`}</div></div>`;
 }
-
+async function measureCache(){
+  try { await api("/api/cache/measure", {method: "POST"}); toast("Messung läuft im Hintergrund (niedrige Priorität)"); } catch (e) { toast(e.message, true); }
+}
 async function loadGameIcons(extra = []){
   try { const r = await api("/api/gameicons?apps=" + extra.join(",")); ICONS_URL.apps = {...ICONS_URL.apps, ...r.apps}; ICONS_URL.games = r.games; } catch {}
 }
@@ -1761,7 +1762,7 @@ async function loadCacheHistory(){
     ${c.depot_backfill && !c.depot_backfill.done && c.depot_backfill.size ? `<div class="hint" style="margin:-8px 0 14px">Spiele aus dem alten Log werden nachgetragen … ${Math.floor(c.depot_backfill.pos / c.depot_backfill.size * 100)} %</div>` : ""}
     ${(c.storage && c.storage.logs && c.storage.logs.length) ? `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:6px">Ordner im Lancache-Container <span class="hint">${c.storage.updated ? "gemessen " + new Date(c.storage.updated * 1000).toLocaleString("de-DE") : ""}</span></h2>
       <table class="cachetable"><tbody>
-        <tr><td class="mono">/data/cache</td><td class="mono">${fmtBytes(c.storage.cache_bytes)}</td><td class="hint">${c.storage.limit_raw ? "Limit " + esc(c.storage.limit_raw) : ""}</td></tr>
+        <tr><td class="mono">/data/cache</td><td class="mono">${c.storage.measured ? fmtBytes(c.storage.cache_bytes) : "≈ " + fmtBytes(c.storage.estimate)}</td><td class="hint">${c.storage.limit_raw ? "Limit " + esc(c.storage.limit_raw) : ""}</td></tr>
         ${c.storage.logs.map(l => `<tr><td class="mono">/data/logs/${esc(l.name)}</td><td class="mono">${fmtBytes(l.bytes)}</td><td class="hint">${l.name.startsWith("stream") ? "HTTPS-Durchleitung (wird nicht gecacht)" : l.name.startsWith("access") ? "Downloads (Grundlage der Statistik)" : ""}</td></tr>`).join("")}
       </tbody></table></div>` : ""}
     <div class="cgrid">
@@ -1834,7 +1835,7 @@ async function loadDnsCheck(){
 
 /* ================= SteamPrefill ================= */
 let pfData = null, pfApps = [], pfLoaded = false, pfLastPrompt = null;
-const PF_PROMPTS = {user: ["Steam-Login: Benutzername", "SteamPrefill braucht einmalig ein Steam-Konto (am besten ein eigenes für den Cache).", "text"],
+const PF_PROMPTS = {user: ["Steam-Anmeldung: Kontoname", "SteamPrefill braucht einmalig ein Steam-Konto (am besten ein eigenes für den Cache).", "text"],
   password: ["Steam-Login: Passwort", "Wird direkt an SteamPrefill im Container weitergegeben und nicht im Tool gespeichert.", "password"],
   code: ["Steam Guard", "Code aus der Steam-App bzw. der E-Mail eingeben.", "text"],
   yesno: ["Rückfrage", "Antwort eingeben (y = ja, n = nein).", "text"]};
@@ -1868,9 +1869,9 @@ async function loadPrefill(){
   $("#pfState").textContent = run ? "läuft …" + (d.rate != null ? " · " + fmtRate(d.rate) : "") : "";
   const ap = d.apps_progress || [];
   $("#pfAppsProg").innerHTML = ap.length ? `<table class="cachetable"><thead><tr><th>Spiel</th><th style="width:40%">Fortschritt</th><th>Status</th><th></th></tr></thead><tbody>${ap.map(a => `<tr>
-      <td><b>${esc(a.name)}</b></td>
-      <td><div class="bar"><i style="width:${Math.min(100, a.pct)}%;background:${a.state === "Fehler" ? "var(--bad)" : a.state === "läuft" ? "var(--ct)" : "var(--ok)"}"></i></div></td>
-      <td class="mono">${a.state === "läuft" ? a.pct.toFixed(0) + " %" : esc(a.state)}</td><td class="hint">${esc(a.info || "")}</td></tr>`).join("")}</tbody></table>`
+      <td><div class="row" style="gap:8px;flex-wrap:nowrap">${appIcon(((s.apps || []).find(x => x.name === a.name) || {}).id, 24)}<b>${esc(a.name)}</b></div></td>
+      <td><div class="bar"><i style="width:${Math.min(100, a.pct)}%;background:${d.auto && d.auto.paused && a.state === "läuft" ? "var(--warn,#e5a50a)" : a.state === "Fehler" ? "var(--bad)" : a.state === "läuft" ? "var(--ct)" : "var(--ok)"}"></i></div></td>
+      <td class="mono">${a.state === "läuft" ? (d.auto && d.auto.paused && run ? "⏸ " : "") + a.pct.toFixed(0) + " %" : esc(a.state)}</td><td class="hint">${esc(a.info || "")}</td></tr>`).join("")}</tbody></table>`
     : `<div class="hint">Noch kein Lauf in diesem Container.</div>`;
   $("#pfProgWrap").classList.toggle("hidden", !(run && d.progress));
   if (d.progress) $("#pfProg").style.width = Math.min(100, d.progress.pct) + "%";
@@ -1878,6 +1879,12 @@ async function loadPrefill(){
   el.textContent = (d.log || "").trim() || "Noch keine Ausgabe – „Jetzt vorladen“ starten.";
   if (atEnd) el.scrollTop = el.scrollHeight;
   $("#pfRun").disabled = !!run; $("#pfStop").disabled = !run;
+  const paused = !!(d.auto && d.auto.paused);
+  $("#pfPause").disabled = !run;
+  $("#pfPause").textContent = paused ? "▶ Fortsetzen" : "⏸ Pausieren";
+  $("#pfPause").dataset.on = paused ? "0" : "1";
+  $("#pfBanner").classList.toggle("hidden", !(run && paused));
+  if (run && paused) $("#pfBanner").innerHTML = `<b>⏸ Prefill pausiert</b> – ${esc(d.auto.reason || "")}${d.auto.since ? ` · seit ${new Date(d.auto.since * 1000).toLocaleTimeString("de-DE")}` : ""}${d.auto.manual ? "" : "<div class='hint'>Läuft automatisch weiter, wenn 30 s lang niemand anderes über den Cache lädt.</div>"}`;
 }
 function renderPfApps(){
   $("#pfApps").innerHTML = pfApps.length ? pfApps.map((a, i) => `<div class="pfapp"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/${a.id}/capsule_sm_120.jpg" alt="" referrerpolicy="no-referrer" onerror="this.remove()"><span>${esc(a.name)} <span class="hint mono">${a.id}</span></span><button class="small danger" data-pfdel="${i}">✕</button></div>`).join("")
@@ -1911,7 +1918,13 @@ $("#pfRun").onclick = async () => {
   try { await api("/api/prefill/run", {body: {mode: "prefill"}}); toast("SteamPrefill gestartet"); } catch (e) { toast(e.message, true); }
   loadPrefill();
 };
-$("#pfStop").onclick = async () => { try { await api("/api/prefill/stop", {method: "POST"}); } catch (e) { toast(e.message, true); } loadPrefill(); };
+$("#pfStop").onclick = async () => {
+  if (!confirm("Prefill abbrechen? Bereits geladene Daten bleiben im Cache.")) return;
+  try { await api("/api/prefill/stop", {method: "POST"}); toast("Prefill abgebrochen"); } catch (e) { toast(e.message, true); } loadPrefill();
+};
+$("#pfPause").onclick = async () => {
+  try { await api("/api/prefill/pause", {body: {on: $("#pfPause").dataset.on === "1"}}); } catch (e) { toast(e.message, true); } loadPrefill();
+};
 async function pfSend(){
   const v = $("#pfInput").value;
   try { await api("/api/prefill/input", {body: {text: v}}); $("#pfInput").value = ""; } catch (e) { toast(e.message, true); }

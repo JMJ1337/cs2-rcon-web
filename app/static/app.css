@@ -332,3 +332,5 @@ body:not(.g-wreckfest) #wfPanel{display:none!important}
 .gtile.gimg svg{display:none}
 .gtile img+svg{display:none}
 .gicon{border-radius:5px;flex:none}
+.pfbanner{border:1px solid color-mix(in srgb,var(--warn,#e5a50a) 60%,var(--line));background:color-mix(in srgb,var(--warn,#e5a50a) 12%,transparent);border-radius:9px;padding:10px 14px;margin-bottom:14px;font-size:14px}
+.pfbanner b{color:var(--warn,#e5a50a)}
