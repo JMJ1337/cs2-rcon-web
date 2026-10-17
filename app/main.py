@@ -293,7 +293,16 @@ async def public_servers(request: Request):
     out.sort(key=lambda x: (not x["online"], GAMES.get(x["game"], {}).get("label", x["game"]), x["name"].lower()))
     games = {k: {kk: v.get(kk) for kk in ("label", "short", "color")} for k, v in GAMES.items()}
     lan = client_is_lan(request)
-    return {"servers": out, "games": games, "updated": time.time(), "net": "lan" if lan else "internet",
+    lc = cache_stats.state.get("container")
+    ld = livestats.data.get(lc or "") or {}
+    fresh = ld and time.time() - ld.get("t", 0) < 10
+    try:
+        hr = (cache_stats.summary().get("last_hour") or {}).get("hit_ratio")
+    except Exception:  # noqa: BLE001
+        hr = None
+    cache = {"found": bool(lc), "running": bool(fresh and ld.get("running", True)) if lc else False,
+             "tx_bps": ld.get("tx_bps") if fresh else None, "rx_bps": ld.get("rx_bps") if fresh else None, "hit_ratio": hr}
+    return {"servers": out, "games": games, "updated": time.time(), "net": "lan" if lan else "internet", "cache": cache,
             "address": None if lan else await wan_host()}
 
 

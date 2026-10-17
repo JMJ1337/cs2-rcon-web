@@ -187,12 +187,18 @@ async function refreshPublic(){
     renderPublic();
   } catch { $("#pubGrid").innerHTML = `<div class="hint">Serverliste gerade nicht erreichbar …</div>`; }
 }
+function pubCacheHtml(c){
+  if (!c || !c.found) return "";
+  if (!c.running) return `<span class="pubcache off" title="Lancache-Container läuft nicht – Downloads gehen direkt ins Internet"><i class="cdot"></i>Lancache aus</span>`;
+  const tx = c.tx_bps || 0;
+  return `<span class="pubcache" title="Lancache: was gerade an die Spieler im LAN ausgeliefert wird${c.hit_ratio != null ? ` · Trefferquote letzte Stunde ${c.hit_ratio} %` : ""}"><i class="cdot"></i>Lancache · ↓ ${fmtRate(tx)}${c.hit_ratio != null ? ` · ${Math.round(c.hit_ratio)} % aus dem Cache` : ""}</span>`;
+}
 function renderPublic(){
   const r = pubData; if (!r) return;
   const on = r.servers.filter(x => x.online), pl = on.reduce((a, x) => a + (x.players || 0), 0);
   $("#pubStat").innerHTML = `<b>${on.length}</b> von ${r.servers.length} Servern online · <b>${pl}</b> Spieler · ` +
     (r.net === "internet" ? `<span class="pill" title="Du kommst aus dem Internet – Adressen zeigen die öffentliche IP">🌐 Internet${r.address ? " · " + esc(r.address) : ""}</span>`
-                          : `<span class="pill ok" title="Du bist im LAN – Adressen zeigen die LAN-IP">LAN</span>`);
+                          : `<span class="pill ok" title="Du bist im LAN – Adressen zeigen die LAN-IP">LAN</span>`) + pubCacheHtml(r.cache);
   if (!r.servers.length){ $("#pubGrid").innerHTML = `<div class="hint">Noch keine Server eingerichtet.</div>`; return; }
   $("#pubGrid").innerHTML = r.servers.map((x, i) => {
     const g = GAMES[x.game] || r.games[x.game] || {label: x.game, color: "#888"};

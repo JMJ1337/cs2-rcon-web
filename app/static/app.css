@@ -428,3 +428,7 @@ a.btn{display:inline-flex;align-items:center;gap:4px;text-decoration:none;border
 .szl .bar{height:5px}
 .szl b{font-family:var(--mono);font-weight:500;font-size:11px;color:var(--text);white-space:nowrap}
 @media (max-width:700px){.szload{grid-template-columns:1fr;padding-left:0}}
+
+.pubcache{margin-left:10px;font-size:12px;color:var(--muted);white-space:nowrap}
+.pubcache .cdot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:5px;vertical-align:1px}
+.pubcache.off .cdot{background:var(--bad)}
