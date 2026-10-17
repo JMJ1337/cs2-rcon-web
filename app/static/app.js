@@ -2251,4 +2251,4 @@ async function refreshDisks(){
     return `<div class="hl-row" title="${esc(d.mount)} (${esc(d.device)}): ${fmtBytes(d.used)} von ${fmtBytes(d.size)} belegt, ${fmtBytes(d.avail)} frei"><span>${d.network ? "🗄" : "💽"} ${esc(name)}</span><div class="bar"><i class="${lvl(pct)}" style="width:${pct}%"></i></div><b>${pct} %</b></div>`;
   }).join("");
 }
-refreshDisks(); setInterval(refreshDisks, 60000);
+
