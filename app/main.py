@@ -92,7 +92,7 @@ def token_user(token: str | None) -> dict | None:
     return u
 
 
-ADMIN_PATHS = ("/api/users", "/api/settings", "/api/prefill", "/api/storage", "/api/scan", "/api/cache/measure")
+ADMIN_PATHS = ("/api/users", "/api/settings", "/api/prefill", "/api/storage", "/api/scan", "/api/cache/measure", "/api/docker/image-check")
 
 # Benötigte Rechtestufe für Server-Unterseiten (users.LEVELS): 1 sehen, 2 bedienen, 3 verwalten, 4 anlegen/löschen
 _MANAGE_RX = re.compile(r"(config(/file)?|files(/.*)?|saves/load|container(/(env|diag|use-lancache|steamfix))?|wreckfest/.*|"
@@ -2322,6 +2322,24 @@ def _container_of(sid: str) -> str:
         raise HTTPException(400, "Kein Container verknüpft (Server bearbeiten → Container)")
     _need_docker()
     return s["container"]
+
+
+@app.get("/api/docker/image-check", dependencies=auth)
+async def image_check(images: str = ""):
+    """Prüft, ob Images in der Registry existieren (ohne Download) – für den Spielekatalog."""
+    if not docker_api.available():
+        raise HTTPException(400, "Docker nicht erreichbar")
+    names = [x.strip() for x in images.split(",") if x.strip()] or sorted({t["image"] for t in templates.TEMPLATES.values()})
+    sem = asyncio.Semaphore(4)
+
+    async def one(img):
+        async with sem:
+            try:
+                await docker_api._req("GET", f"/distribution/{img}/json", timeout=30)
+                return img, True
+            except docker_api.DockerError as e:
+                return img, str(e)[:120]
+    return dict(await asyncio.gather(*(one(i) for i in names[:80])))
 
 
 @app.get("/api/servers/{sid}/container", dependencies=auth)
