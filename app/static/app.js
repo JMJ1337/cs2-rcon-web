@@ -1600,15 +1600,23 @@ async function loadWfConfig(force){
   if (!r.exists){ $("#wfFields").innerHTML = `<div class="hint">Server installiert sich noch – Einstellungen erscheinen danach.</div>`; $("#wfLan").innerHTML = ""; return; }
   const v = r.values;
   $("#wfFields").innerHTML = WF_FIELDS.map(([k, l]) => `<div><label>${esc(l)}</label><input data-wf="${k}" value="${esc(v[k] ?? "")}" ${k === "gamemode" ? 'list="wfModes"' : ""}></div>`).join("");
-  $("#wfLan").innerHTML = r.lan_ok && r.host_net
-    ? `<span class="pill ok">LAN-Suche: Host-Netzwerk, Query-Port ${esc(v.query_port)} – im Spiel unter „LAN“ sichtbar</span> <span class="hint">Spielport ${esc(v.game_port || "")}</span>`
+  $("#wfLan").innerHTML = r.host_net
+    ? `<div class="pill warn" style="margin-bottom:6px">Host-Netzwerk aktiv</div>
+       <div class="hint" style="margin-bottom:6px">Startet der Server im Host-Netz nicht (Neustart-Schleife), zurück ins normale Netz stellen.</div>
+       <button class="primary" id="btnWfBridge">Zurück ins normale Netz (Container wird neu erstellt)</button>`
     : r.lan_ok
     ? `<div class="pill warn" style="margin-bottom:6px">Ports stimmen, aber die LAN-Suche findet den Server noch nicht</div>
-       <div class="hint" style="margin-bottom:6px">Wreckfest sucht im LAN per Broadcast – den leitet Docker an Container mit Portfreigaben nicht weiter. Abhilfe: Container ins Host-Netzwerk legen.</div>
-       ${r.managed ? `<button class="primary" id="btnWfHost">Host-Netzwerk aktivieren (Container wird neu erstellt)</button>` : `<span class="hint">Im Portainer-Stack <span class="mono">network_mode: host</span> setzen.</span>`}`
+       <div class="hint" style="margin-bottom:6px">Wreckfest sucht im LAN per Broadcast – den leitet Docker an Container mit Portfreigaben nicht weiter. Das Host-Netzwerk hilft hier nicht (Wine/Xvfb stürzt darin ab). Bis dahin: im Spiel unter <b>Online</b> nach dem Servernamen suchen.</div>`
     : `<div class="pill warn" style="margin-bottom:6px">Im LAN-Reiter von Wreckfest nicht sichtbar (Query-Port ${esc(v.query_port || "?")})</div>
        <div class="hint" style="margin-bottom:6px">Wreckfest wird in der LAN-Suche nur auf den Query-Ports 26900–26905 bzw. 27015–27020 gefunden – letztere belegen die CS2-Server.</div>
        ${r.managed ? `<button class="primary" id="btnWfLan">LAN-Sichtbarkeit einrichten (Container wird neu erstellt)</button>` : `<span class="hint">Container nicht vom Tool angelegt – query_port in server_config.cfg und Port-Freigabe selbst anpassen.</span>`}`;
+  const bb = $("#btnWfBridge");
+  if (bb) bb.onclick = async () => {
+    bb.disabled = true; bb.textContent = "wird umgestellt …";
+    try { await api(`/api/servers/${current.id}/wreckfest/bridgenet`, {method: "POST"}); toast("Zurück im normalen Netz – Server startet"); }
+    catch (e) { toast(e.message, true); }
+    loadWfConfig(true);
+  };
   const hb = $("#btnWfHost");
   if (hb) hb.onclick = async () => {
     if (!confirm("Wreckfest-Container wird gestoppt und im Host-Netzwerk neu erstellt (Daten bleiben). Fortfahren?")) return;

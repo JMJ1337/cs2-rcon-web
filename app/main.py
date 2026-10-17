@@ -3442,6 +3442,35 @@ async def wf_lan_fix(sid: str):
     return {"ok": True, "query_port": q, "steam_port": sport, "game_port": gport}
 
 
+@app.post("/api/servers/{sid}/wreckfest/bridgenet", dependencies=auth)
+async def wf_bridgenet(sid: str):
+    """Zurück ins normale Docker-Netz mit Portfreigaben (Host-Netz bringt Wreckfest/Wine zum Absturz)."""
+    s = _wf_server(sid)
+    name = s["container"]
+    try:
+        text = await _wf_read(name)
+        vals = _wf_values(text or "")
+        gport, q, sport = int(vals.get("game_port") or 33540), int(vals.get("query_port") or 26900), int(vals.get("steam_port") or 27115)
+        web = None
+        m = re.search(r"--port (\d+)", " ".join(((await docker_api.inspect(name)).get("Config") or {}).get("Env") or []))
+        if m:
+            web = m.group(1)
+
+        def mutate(cfg, hc):
+            hc["NetworkMode"] = "bridge"
+            hc["PortBindings"] = {f"{gport}/udp": [{"HostPort": str(gport)}], f"{q}/udp": [{"HostPort": str(q)}],
+                                  f"{sport}/udp": [{"HostPort": str(sport)}]}
+            cfg["ExposedPorts"] = {f"{gport}/udp": {}, f"{q}/udp": {}, f"{sport}/udp": {}}
+            cfg["Env"] = [e for e in (cfg.get("Env") or []) if not e.startswith("GOTTY_PARAMS=")]
+            if web:
+                hc["PortBindings"]["8080/tcp"] = [{"HostPort": web}]
+                cfg["ExposedPorts"]["8080/tcp"] = {}
+        await docker_api.recreate(name, mutate)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    return {"ok": True}
+
+
 @app.post("/api/servers/{sid}/wreckfest/hostnet", dependencies=auth)
 async def wf_hostnet(sid: str):
     """Wreckfest ins Host-Netzwerk: Die LAN-Suche des Spiels nutzt UDP-Broadcasts, die Docker-Portfreigaben nicht weiterleiten."""
