@@ -384,7 +384,7 @@ def sf_client(s: dict) -> sfmod.SatisfactoryClient:
 _ts_tried: dict[str, float] = {}
 
 
-_ts_fail: dict[str, tuple[float, str, str]] = {}
+_ts_fail: dict[str, tuple[float, str, str, str]] = {}
 
 
 async def _ts_password_from_logs(s: dict) -> None:
@@ -807,10 +807,24 @@ async def collect_generic(s: dict) -> dict:
             if not s.get("password") and s.get("container") and docker_api.available():
                 await _ts_password_from_logs(s)
             # Nach falschem Login nicht weiter probieren – sonst sperrt TeamSpeak die IP (Flood-Ban, id 3329)
+            # Pause endet bei neuem Passwort oder Neustart des Containers (z. B. nach serveradmin_password=…)
             key = (s.get("password") or "")
             fail = _ts_fail.get(s["id"])
             if fail and fail[1] == key and time.time() - fail[0] < 900:
-                raise tsmod.TeamSpeakError(fail[2])
+                started = ""
+                if s.get("container") and docker_api.available():
+                    try:
+                        started = ((await docker_api.inspect(s["container"])).get("State") or {}).get("StartedAt") or ""
+                    except docker_api.DockerError:
+                        pass
+                if started == fail[3]:
+                    raise tsmod.TeamSpeakError(fail[2])
+            started_now = ""
+            if s.get("container") and docker_api.available():
+                try:
+                    started_now = ((await docker_api.inspect(s["container"])).get("State") or {}).get("StartedAt") or ""
+                except docker_api.DockerError:
+                    pass
             try:
                 st = await tsmod.status(ts_query(s))
                 _ts_fail.pop(s["id"], None)
@@ -819,7 +833,7 @@ async def collect_generic(s: dict) -> dict:
                     msg = ("ServerQuery-Login falsch – unter „Bearbeiten“ das serveradmin-Passwort eintragen. Unbekannt? Im Stack einmal "
                            "command: ts3server serveradmin_password=NEUES_PASSWORT setzen, neu starten, Passwort hier eintragen. "
                            "(Weitere Versuche pausiert, damit TeamSpeak nicht sperrt.)")
-                    _ts_fail[s["id"]] = (time.time(), key, msg)
+                    _ts_fail[s["id"]] = (time.time(), key, msg, started_now)
                     raise tsmod.TeamSpeakError(msg) from e
                 raise
         elif g == "wreckfest":
