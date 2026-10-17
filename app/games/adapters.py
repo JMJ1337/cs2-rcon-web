@@ -252,3 +252,44 @@ async def ac_status(host: str, port: int) -> dict:
             "extra": {k: v for k, v in {"Strecke": j.get("track"), "Autos": ", ".join(j.get("cars") or [])[:80],
                                         "Passwort": "ja" if j.get("pass") else "nein"}.items() if v},
             "updated": time.time()}
+
+
+async def valheim_container_status(container: str) -> dict:
+    """Fallback ohne Steam-Abfrage (z. B. mit -crossplay): Zustand aus dem Server-Log."""
+    from .. import docker_api
+    try:
+        txt = await docker_api.logs(container, 600)
+    except docker_api.DockerError as e:
+        raise a2s.A2SError(str(e)) from e
+    lines = txt.splitlines()
+    up = any(re.search(r"(Game server connected|Session .* registered|Opened Steam server|Registering lobby|World saved|SaveSystem)", l) for l in lines)
+    if not up:
+        raise a2s.A2SError("Valheim startet noch (kein „Game server connected“ im Log)")
+    conns = [int(m.group(1)) for l in lines for m in [re.search(r"Connections (\d+)", l)] if m]
+    world = next((m.group(1) for l in reversed(lines) for m in [re.search(r"Load world:? ?(\S+)|Get create world (\S+)", l)] if m and m.group(1)), None)
+    return {"map": world or "–", "humans": conns[-1] if conns else 0, "bots": 0, "max_players": 10, "players": [],
+            "version": None, "hostname": None, "mode": {"key": "valheim", "label": "Valheim"},
+            "extra": {"Quelle": "Server-Log (Steam-Abfrage aus, z. B. Crossplay)"}, "updated": time.time()}
+
+
+async def factorio_container_status(container: str) -> dict:
+    """Fallback ohne RCON: Spieler aus [JOIN]/[LEAVE] im Log."""
+    from .. import docker_api
+    try:
+        txt = await docker_api.logs(container, 2000)
+    except docker_api.DockerError as e:
+        raise a2s.A2SError(str(e)) from e
+    lines = txt.splitlines()
+    if not any("Hosting game" in l or "changing state from(CreatingGame) to(InGame)" in l or "Matching server game" in l for l in lines):
+        raise a2s.A2SError("Factorio startet noch")
+    online: dict[str, bool] = {}
+    for l in lines:
+        m = re.search(r"\[(JOIN|LEAVE)\] (\S+)", l)
+        if m:
+            online[m.group(2)] = m.group(1) == "JOIN"
+    names = [n for n, on in online.items() if on]
+    save = next((m.group(1) for l in reversed(lines) for m in [re.search(r"Loading map (\S+)", l)] if m), None)
+    return {"map": (save or "–").rsplit("/", 1)[-1], "humans": len(names), "bots": 0, "max_players": 0,
+            "players": [{"name": n, "time": ""} for n in names], "version": None, "hostname": None,
+            "mode": {"key": "factorio", "label": "Factorio"},
+            "extra": {"Quelle": "Server-Log – RCON-Port nicht freigegeben (Konsole ohne RCON nicht möglich)"}, "updated": time.time()}

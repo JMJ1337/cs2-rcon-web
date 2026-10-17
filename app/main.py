@@ -644,11 +644,21 @@ async def collect_generic(s: dict) -> dict:
     g = game_of(s)
     try:
         if g == "factorio":
-            st = await adapters.factorio_status(client_for(s))
+            try:
+                st = await adapters.factorio_status(client_for(s))
+            except RconError:
+                if not (s.get("container") and docker_api.available()):
+                    raise
+                st = await adapters.factorio_container_status(s["container"])
         elif g == "satisfactory":
             st = await sfmod.status(sf_client(s))
         elif g == "valheim":
-            st = await adapters.valheim_status(s["host"], int(s["port"]))
+            try:
+                st = await adapters.valheim_status(s["host"], int(s["port"]))
+            except adapters.a2s.A2SError:
+                if not (s.get("container") and docker_api.available()):
+                    raise
+                st = await adapters.valheim_container_status(s["container"])
         elif g == "tf2":
             try:
                 st = await adapters.tf2_rcon_status(client_for(s))
