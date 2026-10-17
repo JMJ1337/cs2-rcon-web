@@ -92,13 +92,13 @@ function gameLogo(g){
 const GT_MAPS = {tf2: "tf2", garrysmod: "garrysmod", l4d2: "left4dead2", quakelive: "ql", insurgency: "ins"};
 const MAP_GAMES = new Set(["cs2", "wreckfest", "killingfloor2", ...Object.keys(GT_MAPS)]);
 function mapThumb(o, g){
-  let src = "", title = "";
-  if (GT_MAPS[g] && o.map && o.map !== "–"){
+  let src = o.map_image || "", title = o.map_title || o.track_name || o.map || "";
+  if (!src && GT_MAPS[g] && o.map && o.map !== "–"){
     const base = String(o.map).split("/").pop().replace(/\.(bsp|vpk)$/, "").toLowerCase();
     if (/^[a-z0-9_\-]+$/.test(base)) src = `https://image.gametracker.com/images/maps/160x120/${GT_MAPS[g]}/${base}.jpg`;
     title = o.map;
   }
-  if (g === "cs2"){
+  if (g === "cs2" && !src){
     if (o.workshop && o.workshop.preview) { src = o.workshop.preview; title = o.workshop.title; }
     else if (o.map) {
       const base = String(o.map).split("/").pop().replace(/\.vpk$/, "").toLowerCase();
@@ -198,7 +198,7 @@ function renderPublic(){
     const g = GAMES[x.game] || r.games[x.game] || {label: x.game, color: "#888"};
     const j = x.join || {};
     const meta = [x.mode ? esc(x.mode) : "", x.version ? "v" + esc(x.version) : ""].filter(Boolean).join(" · ");
-    const thumb = MAP_GAMES.has(x.game) && x.online ? mapThumb({map: x.map, workshop: x.workshop}, x.game) : "";
+    const thumb = MAP_GAMES.has(x.game) && x.online ? mapThumb({map: x.map, workshop: x.workshop, map_image: x.map_image, map_title: x.map_label}, x.game) : "";
     return `<div class="pubcard${x.online || x.sleeping ? "" : " off"}" style="--gc:${g.color}" data-pub="${esc(x.id)}" tabindex="0" title="Details: Spieler, Rotation">
       ${thumb ? `<div class="pubthumb">${thumb}<span class="pubmap">${esc(x.map_label || x.map || "")}</span></div>` : ""}
       <div class="pubtop">${gameTile(x.game, 18)}<div class="pubname"><b title="${esc(x.name)}">${esc(x.name)}</b><span class="hint">${esc(g.label)}</span></div>
@@ -242,7 +242,7 @@ async function renderPubDetail(){
   let d = null;
   try { d = await (await fetch(`/api/public/${encodeURIComponent(x.id)}`, {cache: "no-store"})).json(); } catch {}
   const g = GAMES[x.game] || {label: x.game, color: "#888"}, j = x.join || {};
-  const thumb = MAP_GAMES.has(x.game) && x.online ? mapThumb({map: x.map, workshop: x.workshop}, x.game) : "";
+  const thumb = MAP_GAMES.has(x.game) && x.online ? mapThumb({map: x.map, workshop: x.workshop, map_image: x.map_image, map_title: x.map_label}, x.game) : "";
   const players = (d && d.players) || [];
   const rot = (d && d.rotation) || [];
   const cur = (d && d.map) || x.map_label || x.map;
@@ -827,7 +827,7 @@ async function refreshDash(){
       ${o.sleeping ? `<div class="sleeprow"><span class="pill">💤 ${o.sleeping === "pause" ? "pausiert" : "angehalten"} – Ruhemodus</span><button class="small primary opsonly" data-wake="${esc(s.id)}">Aufwecken</button></div>` : ""}
       ${o.online ? `<div class="dbody">${mapThumb(o, gameOf(s))}` + (gameOf(s) === "cs2" ? `
       <div class="kv">
-        <span>Map</span><span class="kvmap" title="${esc(o.map)}">${esc((o.workshop && o.workshop.title) || o.map || "?")}</span>
+        <span>Map</span><span class="kvmap" title="${esc(o.map)}">${esc((o.workshop && o.workshop.title) || o.map_title || o.map || "?")}</span>
         <span>Modus</span><span>${esc(o.mode ? o.mode.label : "?")}</span>
         <span>Spieler</span><span>${o.humans ?? 0} / ${slots || "?"}${o.bots ? ` (+${o.bots} Bots)` : ""}</span>
         <span>MatchZy</span><span>${mz}</span>
@@ -942,7 +942,8 @@ async function refreshStatus(){
     $("#stMap").textContent = (ws && ws.title) || st.map || "?";
     $("#stMap").title = st.map || "";
     $("#stMapSub").textContent = ws ? `Workshop ${ws.id}` : (st.password_set ? "Server-Passwort gesetzt" : "");
-    if (ws && ws.preview){ $("#stMapImg").src = ws.preview; $("#stMapImg").classList.remove("hidden"); } else $("#stMapImg").classList.add("hidden");
+    const mimg = (ws && ws.preview) || st.map_image;
+    if (mimg){ $("#stMapImg").src = mimg; $("#stMapImg").classList.remove("hidden"); } else $("#stMapImg").classList.add("hidden");
     $("#stMode").textContent = st.mode ? st.mode.label : "?";
     $("#stRounds").textContent = st.maxrounds ? `max. ${st.maxrounds} Runden` : "";
     const slots = st.visible_players > 0 ? st.visible_players : st.max_players;
@@ -1566,7 +1567,7 @@ function renderGeneric(st){
   $("#stVersion").textContent = st.version ? "Version " + st.version : "";
   $("#stMapLabel").textContent = worldLabel(g);
   $("#stMap").textContent = st.track_name || st.map || "–"; $("#stMapSub").textContent = st.hostname || "";
-  $("#stMapImg").classList.add("hidden");
+  if (st.map_image){ $("#stMapImg").src = st.map_image; $("#stMapImg").classList.remove("hidden"); } else $("#stMapImg").classList.add("hidden");
   $("#stMode").textContent = meta.label; $("#stRounds").textContent = "";
   $("#stPlayers").textContent = `${st.humans ?? 0}${st.max_players ? " / " + st.max_players : ""}`;
   $("#stAuto").textContent = ""; $("#stAuto").style.color = "";

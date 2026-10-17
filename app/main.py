@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import mapimages
 from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
@@ -218,6 +219,11 @@ async def _join_password(s: dict) -> str:
     return pw
 
 
+def _map_image(g: str, st: dict) -> str | None:
+    track = wfd.track_name(st.get("map")) if g == "wreckfest" else None
+    return mapimages.image_for(g, st.get("map"), st.get("workshop"), track)
+
+
 _rot_cache: dict[str, tuple[float, list]] = {}
 
 
@@ -279,7 +285,8 @@ async def public_servers(request: Request):
         out.append({"id": s["id"], "game": g, "name": st.get("hostname") or s.get("name") or g,
                     "online": bool(st.get("online")), "sleeping": (_asleep.get(s["id"]) or {}).get("mode"), "players": st.get("humans"),
                     "max_players": st.get("max_players"), "map": st.get("map"),
-                    "map_label": wfd.track_name(st.get("map")) if g == "wreckfest" else st.get("map"),
+                    "map_label": wfd.track_name(st.get("map")) if g == "wreckfest" else (mapimages.workshop_title(st.get("map")) or st.get("map")),
+                    "map_image": _map_image(g, st),
                     "workshop": {k: (st.get("workshop") or {}).get(k) for k in ("preview", "title")} if st.get("workshop") else None,
                     "mode": (st.get("mode") or {}).get("label") if isinstance(st.get("mode"), dict) else None,
                     "version": st.get("version"), "join": await localize_join(request, s, join), "join_password": await _join_password(s)})
@@ -961,6 +968,8 @@ async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = 
             ws = _last_workshop.pop(s["id"], None) and None   # inzwischen andere Map
         if ws and not ws.get("map"):
             ws = None                                 # noch nicht geladen -> nicht anzeigen
+    if ws and ws.get("map"):
+        mapimages.remember_workshop_map(ws["map"], ws)
     result = {
         "online": True, "raw": raw, **st,
         "mode": {"key": mode["key"], "label": mode["label"]} if mode else
@@ -1110,7 +1119,7 @@ async def status(sid: str, request: Request):
         raise HTTPException(503, f"Server schläft ({'pausiert' if _asleep[sid]['mode'] == 'pause' else 'angehalten'}) – „Aufwecken“ klicken")
     try:
         r = await collect_state(s, apply_auto=True, with_matchzy=True)
-        return {**r, "join": await localize_join(request, s, r.get("join"))}
+        return {**r, "join": await localize_join(request, s, r.get("join")), "map_image": _map_image(game_of(s), r)}
     except RconAuthError as e:
         drop_client(sid)
         raise HTTPException(502, str(e))
@@ -1130,6 +1139,9 @@ async def overview(request: Request):
         if item.get("join"):
             item["join"] = await localize_join(request, s, item["join"])
         item["sleeping"] = (_asleep.get(s["id"]) or {}).get("mode")
+        item["map_image"] = _map_image(game_of(s), st)
+        if game_of(s) == "cs2" and not item.get("workshop") and mapimages.workshop_title(st.get("map")):
+            item["map_title"] = mapimages.workshop_title(st.get("map"))
         item["sleep_mode"] = s.get("sleep_mode") or "off"
         if s.get("container"):
             ld = _loads.get(s["container"])
