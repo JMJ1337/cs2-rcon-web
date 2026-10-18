@@ -2503,6 +2503,7 @@ async function loadCtEnv(){
   ctEnvFor = current.id;
   $("#btnSteamFix").classList.add("hidden"); $("#ctParamsRow").classList.add("hidden");
   $("#btnGsltAssign").classList.toggle("hidden", !(GAMES[gameOf(current)] || {}).gslt);
+  ["#btnTvOn","#btnTvOff"].forEach(b => $(b).classList.toggle("hidden", gameOf(current) !== "cs2"));
   if (permOf(current) < 3) return;
   try {
     const r = await api(`/api/servers/${current.id}/container/env`);
@@ -2735,6 +2736,14 @@ $("#btnGsltAdd").onclick = async () => {
   try { await api("/api/gslt/create", {body: {game: $("#gsltGame").value, memo: $("#gsltMemo").value.trim(), token: $("#gsltToken").value.trim()}}); $("#gsltToken").value = ""; $("#gsltMemo").value = ""; toast("Token hinzugefügt"); loadGslt(); }
   catch (e){ toast(e.message, true); }
 };
+
+async function setTv(on){
+  if (!confirm(on ? "CSTV einschalten (30 s Verzögerung)? Vom Tool angelegte Container werden dafür neu erstellt." : "CSTV ausschalten?")) return;
+  try { const r = await api(`/api/servers/${current.id}/cstv`, {method: "POST", body: {on, delay: 30}}); toast(r.how); }
+  catch (e){ toast(e.message, true); }
+}
+$("#btnTvOn").onclick = () => setTv(true);
+$("#btnTvOff").onclick = () => setTv(false);
 
 $("#btnGsltAssign").onclick = async () => {
   if (!confirm("Freien Steam-Token einsetzen (oder bei Steam neu erstellen)? Der Container wird dafür neu erstellt.")) return;
