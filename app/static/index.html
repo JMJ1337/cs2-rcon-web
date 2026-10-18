@@ -311,7 +311,7 @@
             <div class="field"><label>Erreichbar unter (IP des Docker-Hosts)</label><input id="createHost" class="mono"></div>
           </div>
           <div class="hint" id="createHint" style="margin-top:8px"></div>
-          <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="primary" id="btnCreate">Server anlegen</button></div>
+          <div class="row" style="justify-content:flex-end;margin-top:12px;gap:8px;align-items:center"><label class="hint" for="createCount">Anzahl</label><input id="createCount" type="number" min="1" max="10" value="1" style="width:70px" title="Mehrere Server auf einmal: Nummer, Ports, Ordner und Steam-Token werden je Server hochgezählt"><button class="primary" id="btnCreate">Server anlegen</button></div>
         </div>
         <div class="panel hidden" id="createJob">
           <h2>Fortschritt</h2>
@@ -738,6 +738,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=73"></script>
+<script src="/static/app.js?v=74"></script>
 </body>
 </html>

@@ -4326,11 +4326,106 @@ async def create_server(data: CreateIn, request: Request):
     return job
 
 
+class BatchIn(BaseModel):
+    game: str
+    values: dict[str, str]
+    data_dir: str = Field(min_length=2, max_length=255)
+    host: str | None = Field(None, max_length=255)
+    count: int = Field(2, ge=2, le=10)
+    n: int = Field(1, ge=1, le=999)        # Nummer des ersten Servers (steckt in Name/Servername/Ordner)
+
+
+def _renumber(text: str, n0: int, n: int) -> str:
+    """Nummer n0 in Namen/Ordnern durch n ersetzen (nur ganze Zahl, z. B. CS4 -> CS5, „#4“ -> „#5“)."""
+    return re.sub(rf"(?<!\d){n0}(?!\d)", str(n), text or "")
+
+
+@app.post("/api/create/batch", dependencies=auth)
+async def create_batch(data: BatchIn, request: Request):
+    """Mehrere Server desselben Spiels nacheinander anlegen: Nummern, Ports, Ordner und Steam-Tokens automatisch."""
+    _need_docker()
+    if data.game not in templates.TEMPLATES:
+        raise HTTPException(400, "Unbekanntes Spiel")
+    need_game(request, data.game, 4)
+    used = set(await _used_ports())
+    names = {x.get("container") for x in load_servers()} | {x["name"] for x in load_servers()}
+    port_fields = {f for f, *_ in templates.PORT_PLAN.get(data.game, [])}
+    plans = []
+    for i in range(data.count):
+        n = data.n + i
+        vals = dict(data.values)
+        if i:
+            for k in ("name", "server_name", "memo"):
+                if k in vals:
+                    vals[k] = _renumber(vals[k], data.n, n)
+            vals.update({k: str(v) for k, v in templates.suggest_ports(data.game, used).items()})
+            vals.pop("token", None)           # jeder Server bekommt seinen eigenen Token
+        try:
+            b = templates.build(data.game, vals, _renumber(data.data_dir, data.n, n) if i else data.data_dir)
+        except ValueError as e:
+            if "Steam-Token" in str(e):       # Token wird erst im Job zugeteilt
+                b = None
+            else:
+                raise HTTPException(400, f"Server {i + 1}: {e}")
+        if b:
+            clash = [p for p in templates.host_ports(b["spec"]) if p in used]
+            if clash:
+                raise HTTPException(400, f"Server {i + 1}: Port {clash[0]} schon belegt")
+            used |= set(templates.host_ports(b["spec"]))
+        else:
+            used |= {int(vals[f]) for f in port_fields if str(vals.get(f, "")).isdigit()}
+        if vals.get("name") in names:
+            raise HTTPException(400, f"Server {i + 1}: Name {vals['name']} gibt es schon")
+        names.add(vals.get("name"))
+        plans.append({"values": vals, "data_dir": _renumber(data.data_dir, data.n, n) if i else data.data_dir})
+    host = (data.host or "").strip() or _docker_host_ip(request)
+    bid = secrets.token_hex(6)
+    job = {"id": bid, "game": data.game, "title": f"{data.count} × {templates.TEMPLATES[data.game]['label']} anlegen", "log": [],
+           "step": "", "done": False, "error": None, "server_id": None, "batch": [], "req": None}
+    _jobs[bid] = job
+
+    async def run_all():
+        for k, pl in enumerate(plans):
+            job["step"] = f"Server {k + 1} von {len(plans)}: {pl['values'].get('name')}"
+            _job_log(job, job["step"])
+            sub = CreateIn(game=data.game, values=pl["values"], data_dir=pl["data_dir"], host=host)
+            # Token wie beim Einzelanlegen automatisch
+            if sub.game in gslt.APPS and not (sub.values.get("token") or "").strip():
+                try:
+                    t = await gslt.get_or_create(gslt.APPS[sub.game], (sub.values.get("name") or sub.game)[:32], set(await _token_usage()))
+                except gslt.GsltError as e:
+                    t = None
+                    _job_log(job, f"Steam-Token: {e}")
+                if t:
+                    sub.values["token"] = t["token"]
+                    gslt.assign(t["token"], sub.values.get("name") or "")
+            jid = secrets.token_hex(6)
+            sj = {"id": jid, "game": sub.game, "log": [], "step": "", "done": False, "error": None, "server_id": None,
+                  "req": {"game": sub.game, "values": sub.values, "data_dir": sub.data_dir, "host": host}, "stage": "start",
+                  "title": sub.values.get("name")}
+            _jobs[jid] = sj
+            job["batch"].append(jid)
+            _save_jobs(True)
+            await _create_job(sj, sub, host)
+            _job_log(job, f"{sub.values.get('name')}: " + ("Fehler – " + sj["error"] if sj["error"] else "fertig"))
+            job["server_id"] = sj.get("server_id") or job["server_id"]
+        job["done"] = True
+        job["t_done"] = time.time()
+        job["step"] = f"{len(plans)} Server angelegt"
+    asyncio.create_task(run_all())
+    return {"id": bid, "names": [p["values"].get("name") for p in plans]}
+
+
 @app.get("/api/jobs/{jid}", dependencies=auth)
 async def get_job(jid: str):
     if jid not in _jobs:
         raise HTTPException(404)
-    return _jobs[jid]
+    j = _jobs[jid]
+    if j.get("batch"):                     # Sammel-Job: Fortschritt und Log des laufenden Servers mit anzeigen
+        cur = _jobs.get(j["batch"][-1]) or {}
+        return {**j, "progress": cur.get("progress"), "log": j["log"] + [f"  {x}" for x in (cur.get("log") or [])[-12:]],
+                "step": j["step"] + (f" – {cur.get('step')}" if cur.get("step") and not j["done"] else "")}
+    return j
 
 
 def _docker_host_ip(request: Request | None = None) -> str:
