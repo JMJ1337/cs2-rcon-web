@@ -175,9 +175,48 @@ async def run_scheduled(dns: list[str] | None) -> None:
             if st and st.get("running"):
                 continue
             save_settings(svc, {"last_scheduled": time.strftime("%Y-%m-%d")})
+            if await any_running():
+                enqueue({"svc": svc, "opts": cfg})
+                continue
             try:
                 if svc == "battlenet" and cfg.get("mode") != "all":
                     await write_selection(svc, cfg.get("products") or [])
                 await start(svc, build_cmd(svc, cfg), dns)
             except (ValueError, docker_api.DockerError):
                 pass
+
+
+# ---------------------------------------------------------------- Warteschlange: immer nur ein Prefill gleichzeitig
+def queue() -> list[dict]:
+    return store.load("prefill_queue.json", [])
+
+
+def enqueue(item: dict) -> None:
+    q = [x for x in queue() if x.get("svc") != item.get("svc")]
+    q.append({**item, "t": time.time()})
+    store.save("prefill_queue.json", q)
+
+
+def pop_queue() -> dict | None:
+    q = queue()
+    if not q:
+        return None
+    item = q.pop(0)
+    store.save("prefill_queue.json", q)
+    return item
+
+
+def drop_queue(svc: str) -> None:
+    store.save("prefill_queue.json", [x for x in queue() if x.get("svc") != svc])
+
+
+async def any_running() -> str | None:
+    """Läuft gerade irgendein Prefill? -> Dienstname"""
+    st = await steam_prefill.container_state()
+    if st and st.get("running"):
+        return "steam"
+    for svc in SERVICES:
+        s = await state(svc)
+        if s and s.get("running"):
+            return svc
+    return None

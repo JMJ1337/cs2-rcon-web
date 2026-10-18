@@ -622,12 +622,12 @@ function gamesTable(list, label){
   const missing = list.filter(g => g.app && !(String(g.app) in ICONS_URL.apps)).map(g => g.app);
   if (missing.length) loadGameIcons(missing);
   const max = Math.max(1, ...list.map(g => g.hit + g.miss));
-  return `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:6px">Welche Spiele wurden geladen? <span class="hint">(Steam, ${esc(label)})</span></h2>
+  return `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:6px">Welche Spiele wurden geladen? <span class="hint">(Steam, Epic, Battle.net · ${esc(label)})</span></h2>
     <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Spiel</th><th>Traffic</th><th>aus dem Cache</th><th>aus dem Internet</th><th style="min-width:180px">Im Cache</th></tr></thead><tbody>
     ${list.map(g => { const tot = g.hit + g.miss, p = tot ? Math.round(g.hit / tot * 100) : 0;
       const cp = g.cached_pct;
-      return `<tr><td><div class="row" style="gap:8px;flex-wrap:nowrap">${appIcon(g.app)}
-        <div><b>${esc(g.name)}</b>${g.app ? `<div class="hint mono">App ${g.app}${g.depots > 1 ? " · " + g.depots + " Depots" : ""}</div>` : `<div class="hint">Spiel wird ermittelt …</div>`}</div></div></td>
+      return `<tr><td><div class="row" style="gap:8px;flex-wrap:nowrap">${g.service ? svcIcon(g.service, 18) : appIcon(g.app)}
+        <div><b>${esc(g.name)}</b>${g.app ? `<div class="hint mono">App ${g.app}${g.depots > 1 ? " · " + g.depots + " Depots" : ""}</div>` : g.service ? `<div class="hint">${esc(cacheName(g.service))}</div>` : `<div class="hint">Spiel wird ermittelt …</div>`}</div></div></td>
         <td class="mono" title="${p} % davon aus dem Cache">${fmtBytes(tot)}<div class="cachebar" style="margin-top:3px"><i style="width:${(tot / max * 100).toFixed(1)}%;background:linear-gradient(90deg,var(--ok) ${p}%,#8a7a66 ${p}%)"></i></div></td>
         <td class="mono" style="color:var(--ok)">${fmtBytes(g.hit)}</td><td class="mono">${fmtBytes(g.miss)}</td>
         <td>${cp != null ? `<div class="cachebar" title="${fmtBytes(g.stored)} von ${fmtBytes(g.size)} (Download-Größe laut Steam)"><i style="width:${cp}%;background:var(--ct)"></i></div>
@@ -3076,7 +3076,9 @@ async function loadPf2(full){
   const svc = pfSvc;
   let d; try { d = await api(`/api/prefill2/${svc}`); } catch (e){ $("#pfOther").innerHTML = `<div class="hint">${esc(e.message)}</div>`; return; }
   const st = d.state, run = st && st.running, s = d.settings || {};
-  const status = run ? `<span class="pill ok">läuft</span>` : st ? `<span class="pill">beendet${st.exit ? " (Code " + st.exit + ")" : ""}</span>` : `<span class="pill">noch nie gelaufen</span>`;
+  const status = (run ? (d.paused ? `<span class="pill warn" title="${esc(d.pause_reason || "")}">⏸ pausiert${d.pause_reason ? " – " + esc(d.pause_reason) : ""}</span>` : `<span class="pill ok">läuft${d.rate ? " · ↓ " + fmtRate(d.rate) : ""}</span>`)
+      : d.queued ? `<span class="pill warn">wartet in der Warteschlange</span>` : st ? `<span class="pill">beendet${st.exit ? " (Code " + st.exit + ")" : ""}</span>` : `<span class="pill">noch nie gelaufen</span>`)
+    + (d.queue && d.queue.length ? ` <span class="hint">Warteschlange: ${esc(d.queue.map(x => x === "steam" ? "Steam" : x === "battlenet" ? "Battle.net" : "Epic").join(" → "))}</span>` : "");
   if (full || !$("#pf2Box") || $("#pf2Box").dataset.svc !== svc){
     const opts = svc === "battlenet"
       ? `<div class="hint" style="margin-bottom:6px">Battle.net braucht kein Konto – einfach Spiele wählen.</div>
@@ -3096,7 +3098,7 @@ async function loadPf2(full){
     const collect = () => svc === "battlenet"
       ? {products: [...$$("[data-pf2p]").filter(c => c.checked).map(c => c.dataset.pf2p), ...($("#pf2Extra").value || "").split(/\s+/).filter(Boolean)]}
       : {mode: ($$('input[name="pf2mode"]').find(r => r.checked) || {}).value || "all"};
-    const go = async force => { try { await api(`/api/prefill2/${svc}/run`, {body: {...collect(), force}}); toast(`${d.label}-Prefill gestartet`); setTimeout(() => loadPf2(), 2000); } catch (e){ toast(e.message, true); } };
+    const go = async force => { try { const r = await api(`/api/prefill2/${svc}/run`, {body: {...collect(), force}}); toast(r.queued ? `${d.label}-Prefill wartet – startet, wenn der laufende Prefill fertig ist` : `${d.label}-Prefill gestartet`); setTimeout(() => loadPf2(), 2000); } catch (e){ toast(e.message, true); } };
     $("#pf2Run").onclick = () => go(false);
     $("#pf2Force").onclick = () => go(true);
     $("#pf2Stop").onclick = async () => { try { await api(`/api/prefill2/${svc}/stop`, {method: "POST"}); toast("Abgebrochen"); loadPf2(); } catch (e){ toast(e.message, true); } };

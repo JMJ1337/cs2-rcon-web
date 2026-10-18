@@ -59,11 +59,24 @@ def _parse(line: str):
 RE_DEPOT = re.compile(r'"[A-Z]+ /depot/(\d+)/')
 
 
+RE_EPIC = re.compile(r'"[A-Z]+ /Builds/(?:Org/(o-[a-z0-9]+)/([A-Za-z0-9]+)|([A-Za-z0-9_\-]+))/')
+RE_BNET = re.compile(r'"[A-Z]+ /tpr/([A-Za-z0-9_\-]+)/')
+
+
 def depot_of(line: str, svc: str) -> str | None:
-    if svc != "steam":
+    """Steam: Depot-ID · Epic: epic:<Spiel> · Battle.net: bnet:<CDN-Pfad> (Spiel aus der Download-Adresse)."""
+    if svc == "steam":
+        m = RE_DEPOT.search(line)
+        return m.group(1) if m else None
+    if svc == "epicgames":
+        m = RE_EPIC.search(line)
+        if m:
+            return f"epic:{m.group(3) or m.group(2)}"
         return None
-    m = RE_DEPOT.search(line)
-    return m.group(1) if m else None
+    if svc == "blizzard":
+        m = RE_BNET.search(line)
+        return f"bnet:{m.group(1).lower()}" if m else None
+    return None
 
 
 def ingest(text: str) -> int:

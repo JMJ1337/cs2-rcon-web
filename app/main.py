@@ -397,6 +397,7 @@ async def version():
 
 
 auth = [Depends(require_auth)]
+prefill.EXTRA_NAMES[:] = [sv["name"] for sv in prefill_more.SERVICES.values()]
 
 
 @app.get("/api/me")
@@ -1442,11 +1443,14 @@ async def load_loop():
             try:
                 lc_ = cache_stats.state.get("container")
                 cd = livestats.data.get(lc_ or "") or {}
-                pd = livestats.data.get(prefill.NAME) or {}
+                prx = sum((livestats.data.get(n_) or {}).get("rx_bps") or 0 for n_ in [prefill.NAME] + prefill.EXTRA_NAMES)
+                # alles, was gerade installiert, lädt, kopiert oder aktualisiert -> Prefills pausieren
                 dls = [x["name"] for x in load_servers() if x.get("container") and
-                       ((install_watch.state.get(x["container"]) or {}).get("progress") or {}).get("phase") == "downloading"]
+                       (install_watch.state.get(x["container"]) or {}).get("progress")]
+                dls += [j.get("title") or j.get("game") for j in _jobs.values() if not j.get("done") and j.get("req")]
                 lh = livestats.host
-                await prefill.yield_check(cd.get("tx_bps"), pd.get("rx_bps"), dls, _lan_client_tx(lh))
+                await prefill.yield_check(cd.get("tx_bps"), prx, dls, _lan_client_tx(lh))
+                await _prefill_queue_tick()
             except docker_api.DockerError:
                 pass
             except Exception:  # noqa: BLE001
@@ -4416,6 +4420,30 @@ async def _create_job(job: dict, data: CreateIn, host: str):
         _job_log(job, job["step"])
     async with _create_lock:
         await _create_job_inner(job, data, host)
+        if not job.get("error") and job.get("server_id"):
+            await _wait_installed(job, job["server_id"])
+
+
+async def _wait_installed(job: dict, sid: str, timeout: float = 4 * 3600) -> None:
+    """Erst wenn der Server fertig installiert/aktualisiert ist und antwortet, kommt der nächste dran."""
+    t0 = time.time()
+    job["installing"] = True
+    try:
+        while time.time() - t0 < timeout:
+            if job.get("cancelled"):
+                return
+            st = _state.get(sid) or {}
+            s = next((x for x in load_servers() if x["id"] == sid), None)
+            if not s:
+                return
+            prog = (install_watch.state.get(s.get("container") or "") or {}).get("progress")
+            if st.get("online") and not prog:
+                _job_log(job, "Server ist installiert und online")
+                return
+            await asyncio.sleep(10)
+        _job_log(job, "Installation dauert sehr lange – nächster Server startet trotzdem")
+    finally:
+        job["installing"] = False
 
 
 async def _create_job_inner(job: dict, data: CreateIn, host: str):
@@ -5234,7 +5262,33 @@ def _apps_cache_status(appids) -> dict:
     return out
 
 
-async def _prefill_start(mode: str):
+async def _prefill_queue_tick() -> None:
+    """Nächsten Prefill aus der Warteschlange starten, sobald keiner mehr läuft."""
+    if await prefill_more.any_running():
+        return
+    item = prefill_more.pop_queue()
+    if not item:
+        return
+    try:
+        if item["svc"] == "steam":
+            await _prefill_start(item.get("mode") or "prefill", queued=True)
+        else:
+            opts = item.get("opts") or {}
+            if item["svc"] == "battlenet" and opts.get("mode") != "all":
+                await prefill_more.write_selection("battlenet", opts.get("products") or [])
+            await prefill_more.start(item["svc"], prefill_more.build_cmd(item["svc"], opts), await lancache_dns())
+        log.info("Prefill-Warteschlange: %s gestartet", item["svc"])
+    except (ValueError, docker_api.DockerError) as e:
+        log.warning("Prefill-Warteschlange %s: %s", item.get("svc"), e)
+
+
+async def _prefill_start(mode: str, queued: bool = False):
+    if mode != "select-apps" and not queued:
+        other = await prefill_more.any_running()
+        if other and other != "steam":
+            prefill_more.enqueue({"svc": "steam", "mode": mode})
+            prefill.job["note"] = f"wartet – erst wird der {prefill_more.SERVICES[other]['label']}-Prefill fertig"
+            return
     try:
         await _prefill_sync_server_games()
     except docker_api.DockerError:
@@ -5426,7 +5480,10 @@ async def prefill2_get(svc: str):
     return {"service": svc, "label": prefill_more.SERVICES[svc]["label"], "settings": prefill_more.settings().get(svc) or {},
             "state": st, "log": "\n".join(lines[-80:]), "prompt": prefill_more.prompt_of(text) if st and st.get("running") else None,
             "login_url": prefill_more.login_url(text) if st and st.get("running") else None,
-            "products": prefill_more.BNET_PRODUCTS if svc == "battlenet" else []}
+            "products": prefill_more.BNET_PRODUCTS if svc == "battlenet" else [],
+            "queued": any(x.get("svc") == svc for x in prefill_more.queue()), "queue": [x.get("svc") for x in prefill_more.queue()],
+            "paused": prefill.auto.get("paused"), "pause_reason": prefill.auto.get("reason"),
+            "rate": (livestats.data.get(prefill_more.SERVICES[svc]["name"]) or {}).get("rx_bps")}
 
 
 class Prefill2Run(BaseModel):
@@ -5444,6 +5501,10 @@ async def prefill2_run(svc: str, data: Prefill2Run):
     prefill_more.save_settings(svc, {k: opts[k] for k in ("products", "mode") if k in opts})
     try:
         cmd = prefill_more.build_cmd(svc, opts)
+        other = await prefill_more.any_running()
+        if other and other != svc:
+            prefill_more.enqueue({"svc": svc, "opts": opts})
+            return {"ok": True, "queued": True, "after": other}
         if svc == "battlenet" and opts.get("mode") != "all":
             await prefill_more.write_selection(svc, opts.get("products") or [])
         await prefill_more.start(svc, cmd, await lancache_dns())
@@ -5468,6 +5529,7 @@ async def prefill2_put(svc: str, data: Prefill2Run):
 @app.post("/api/prefill2/{svc}/stop", dependencies=auth)
 async def prefill2_stop(svc: str):
     _psvc(svc)
+    prefill_more.drop_queue(svc)
     try:
         await prefill_more.stop(svc)
     except docker_api.DockerError as e:
@@ -5593,7 +5655,10 @@ async def _run_batch(job: dict) -> None:
                 continue
             job["step"] = f"Server {k + 1} von {len(plans)}: {pl['values'].get('name')}"
             _job_log(job, job["step"])
-            sub = CreateIn(game=game, values=dict(pl["values"]), data_dir=pl["data_dir"], host=host)
+            vals_k = dict(pl["values"])
+            if game == "cs2" and k > 0 and job.get("first_sid"):
+                vals_k["_copy_from"] = job["first_sid"]      # vom gerade fertig installierten ersten Server kopieren
+            sub = CreateIn(game=game, values=vals_k, data_dir=pl["data_dir"], host=host)
             # Token wie beim Einzelanlegen automatisch
             if sub.game in gslt.APPS and not (sub.values.get("token") or "").strip():
                 try:
@@ -5621,6 +5686,8 @@ async def _run_batch(job: dict) -> None:
             await _create_job(sj, sub, host)
             _job_log(job, f"{sub.values.get('name')}: " + ("Fehler – " + sj["error"] if sj["error"] else "fertig"))
             job["server_id"] = sj.get("server_id") or job["server_id"]
+            if k == 0 and sj.get("server_id") and not sj.get("error"):
+                job["first_sid"] = sj["server_id"]
             _save_jobs(True)
         job["step"] = f"{len(plans)} Server angelegt"
     except asyncio.CancelledError:

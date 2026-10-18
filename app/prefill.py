@@ -275,21 +275,42 @@ async def manual_pause(on: bool) -> None:
                 busy=0, quiet=0)
 
 
+EXTRA_NAMES: list[str] = []      # weitere Prefill-Container (Battle.net, Epic) – werden zusammen pausiert
+
+
+async def _running_names() -> list[str]:
+    out = []
+    for n in [NAME] + EXTRA_NAMES:
+        try:
+            st = (await docker_api.inspect(n)).get("State") or {}
+        except docker_api.DockerError:
+            continue
+        if st.get("Running"):
+            out.append(n)
+    return out
+
+
 async def pause(on: bool) -> None:
-    await docker_api._req("POST", f"/containers/{NAME}/{'pause' if on else 'unpause'}", timeout=30)
+    for n in await _running_names():
+        try:
+            await docker_api._req("POST", f"/containers/{n}/{'pause' if on else 'unpause'}", timeout=30)
+        except docker_api.DockerError:
+            pass
 
 
 async def yield_check(cache_tx: float | None, prefill_rx: float | None, others_downloading: list[str],
                       lan_tx: float | None = None) -> None:
     """Alle 5 s: Prefill pausieren, solange andere über den Cache laden (oder Server-Updates laufen), danach fortsetzen."""
     s = settings()
-    st = await container_state()
-    running = bool(st and st.get("running"))
-    try:
-        info = await docker_api.inspect(NAME) if running else None
-    except docker_api.DockerError:
-        info = None
-    is_paused = bool(info and (info.get("State") or {}).get("Paused"))
+    names = await _running_names()
+    running = bool(names)
+    is_paused = False
+    for n in names:
+        try:
+            if ((await docker_api.inspect(n)).get("State") or {}).get("Paused"):
+                is_paused = True
+        except docker_api.DockerError:
+            pass
     if not running:
         auto.update(paused=False, manual=False, since=None, reason=None, busy=0, quiet=0)
         return

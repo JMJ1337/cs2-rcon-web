@@ -1,5 +1,6 @@
 """Steam-Depot-ID -> Spiel (App-ID + Name). Ergebnisse werden im Volume gespeichert."""
 import asyncio
+import re
 import time
 
 import httpx
@@ -53,7 +54,7 @@ def want(depots) -> None:
     m = _load()
     for d in depots:
         d = str(d)
-        if d.startswith("_"):
+        if d.startswith("_") or not d.isdigit():
             continue
         e = m.get(d)
         retry = not e or (not e.get("app") and (time.time() - e.get("t", 0) > 86400 or e.get("v", 1) < RESOLVER_V))
@@ -182,11 +183,37 @@ async def run() -> None:
         _running = False
 
 
+# Battle.net: CDN-Pfad (…/tpr/<pfad>/…) -> Spiel
+BNET_NAMES = {"wow": "World of Warcraft", "hs": "Hearthstone", "sc2": "StarCraft II", "s2": "StarCraft II", "sc1": "StarCraft Remastered",
+              "s1": "StarCraft Remastered", "d3": "Diablo III", "fenris": "Diablo IV", "osi": "Diablo II: Resurrected",
+              "ovw": "Overwatch 2", "pro": "Overwatch 2", "hero": "Heroes of the Storm", "w3": "Warcraft III: Reforged",
+              "war3": "Warcraft III: Reforged", "anbs": "Diablo Immortal", "gryphon": "Warcraft Rumble", "zeus": "CoD: Black Ops Cold War",
+              "odin": "CoD: Modern Warfare 2019", "viper": "CoD: Black Ops 4", "auks": "Call of Duty", "nina": "CoD: MW II",
+              "pinta": "CoD: MW III", "btlr": "CoD: Black Ops 6", "fore": "CoD: Vanguard", "lazr": "CoD: MW2 Remastered",
+              "wlby": "Crash Bandicoot 4", "rtro": "Blizzard Arcade Collection", "scor": "Sea of Thieves", "aqua": "Avowed",
+              "catalogs": "Battle.net-Katalog", "bna": "Battle.net-App", "agent": "Battle.net-Agent", "configs": "Battle.net-Konfiguration"}
+
+
+def _nice(name: str) -> str:
+    return re.sub(r"(?<=[a-z])(?=[A-Z0-9])", " ", name).replace("_", " ").strip() or name
+
+
 def games(depots: dict) -> list[dict]:
-    """{depot: [hit, miss]} -> nach Spiel zusammengefasst."""
+    """{depot: [hit, miss]} -> nach Spiel zusammengefasst (Steam-Depots, Epic- und Battle.net-Spiele)."""
     want(depots.keys())
     agg: dict = {}
     for d, (h, mi) in depots.items():
+        d = str(d)
+        if d.startswith(("epic:", "bnet:")):
+            kind, _, code = d.partition(":")
+            if kind == "epic":
+                name = _nice(code) if not code.startswith("o-") and not re.fullmatch(r"[0-9a-f]{20,}", code) else "Epic-Spiel"
+                svc = "epicgames"
+            else:
+                name, svc = BNET_NAMES.get(code, code.upper()), "blizzard"
+            g = agg.setdefault(f"{svc}:{name}", {"app": None, "name": name, "service": svc, "hit": 0, "miss": 0, "depots": 0})
+            g["hit"] += h; g["miss"] += mi; g["depots"] += 1
+            continue
         e = lookup(d)
         key = e["app"] if e else f"d{d}"
         g = agg.setdefault(key, {"app": e["app"] if e else None, "name": (e or {}).get("name") or f"Depot {d}",
