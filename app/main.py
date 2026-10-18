@@ -3246,14 +3246,17 @@ def _save_jobs(force: bool = False) -> None:
     if not force and time.time() - _jobs_saved["t"] < 5:
         return
     _jobs_saved["t"] = time.time()
-    keep = [j for j in _jobs.values() if j.get("req") and (not j["done"] or time.time() - j.get("t_done", time.time()) < 3600)]
+    keep = [j for j in _jobs.values() if (j.get("req") or j.get("plans")) and (not j["done"] or time.time() - j.get("t_done", time.time()) < 3600)]
     store.save("jobs.json", keep[-20:])
 
 
 def _resume_jobs() -> None:
     for j in store.load("jobs.json", []):
         _jobs[j["id"]] = j
-        if not j.get("done") and j.get("req"):
+        if not j.get("done") and j.get("plans"):
+            _job_log(j, "Tool wurde neu gestartet – Stapel wird fortgesetzt")
+            asyncio.create_task(_run_batch(j))
+        elif not j.get("done") and j.get("req"):
             _job_log(j, "Tool wurde neu gestartet – Anlegen wird fortgesetzt")
             r = j["req"]
             asyncio.create_task(_create_job(j, CreateIn(**{k: r[k] for k in ("game", "values", "data_dir", "host")}), r["host"]))
@@ -4442,6 +4445,63 @@ def _renumber(text: str, n0: int, n: int) -> str:
     return re.sub(rf"(?<!\d){n0}(?!\d)", str(n), text or "")
 
 
+async def _run_batch(job: dict) -> None:
+    """Server eines Stapels nacheinander anlegen. Übersteht Neustarts des Tools: bereits begonnene
+    Teil-Jobs laufen über _resume_jobs weiter, hier wird auf sie gewartet und dann mit dem nächsten weitergemacht."""
+    plans, host, game = job["plans"], job["host"], job["game"]
+    try:
+        for k, pl in enumerate(plans):
+            if k < len(job["batch"]):                      # schon begonnen (vor einem Neustart)
+                sj = _jobs.get(job["batch"][k])
+                while sj and not sj["done"]:
+                    await asyncio.sleep(3)
+                if sj and k == len(job["batch"]) - 1 and not any(f"{pl['values'].get('name')}:" in x for x in job["log"]):
+                    _job_log(job, f"{pl['values'].get('name')}: " + ("Fehler – " + sj["error"] if sj["error"] else "fertig"))
+                    job["server_id"] = sj.get("server_id") or job["server_id"]
+                continue
+            job["step"] = f"Server {k + 1} von {len(plans)}: {pl['values'].get('name')}"
+            _job_log(job, job["step"])
+            sub = CreateIn(game=game, values=dict(pl["values"]), data_dir=pl["data_dir"], host=host)
+            # Token wie beim Einzelanlegen automatisch
+            if sub.game in gslt.APPS and not (sub.values.get("token") or "").strip():
+                try:
+                    t = await gslt.get_or_create(gslt.APPS[sub.game], (sub.values.get("name") or sub.game)[:32], set(await _token_usage()))
+                except gslt.GsltError as e:
+                    t = None
+                    _job_log(job, f"Steam-Token: {e}")
+                if t:
+                    if gslt.STYLE.get(sub.game) == "env":
+                        sub.values["token"] = t["token"]
+                    else:
+                        base = sub.values.get("params")
+                        if base is None:
+                            base = catmod.CATALOG.get(sub.game, {}).get("params", "")
+                        base = re.sub(r"\s*(\+sv_setsteamaccount\s+\S+|-GSLTToken=\S+)", "", base)
+                        sub.values["params"] = (base + " " + gslt.token_param(sub.game, t["token"])).strip()
+                    gslt.assign(t["token"], sub.values.get("name") or "")
+            jid = secrets.token_hex(6)
+            sj = {"id": jid, "game": sub.game, "log": [], "step": "", "done": False, "error": None, "server_id": None,
+                  "req": {"game": sub.game, "values": sub.values, "data_dir": sub.data_dir, "host": host}, "stage": "start",
+                  "title": sub.values.get("name")}
+            _jobs[jid] = sj
+            job["batch"].append(jid)
+            _save_jobs(True)
+            await _create_job(sj, sub, host)
+            _job_log(job, f"{sub.values.get('name')}: " + ("Fehler – " + sj["error"] if sj["error"] else "fertig"))
+            job["server_id"] = sj.get("server_id") or job["server_id"]
+            _save_jobs(True)
+        job["step"] = f"{len(plans)} Server angelegt"
+    except asyncio.CancelledError:
+        _save_jobs(True)
+        raise
+    except Exception as e:  # noqa: BLE001 – Fehler im Job anzeigen statt still abbrechen
+        log.exception("Stapel-Anlegen")
+        job["error"] = str(e) or e.__class__.__name__
+    job["done"] = True
+    job["t_done"] = time.time()
+    _save_jobs(True)
+
+
 @app.post("/api/create/batch", dependencies=auth)
 async def create_batch(data: BatchIn, request: Request):
     """Mehrere Server desselben Spiels nacheinander anlegen: Nummern, Ports, Ordner und Steam-Tokens automatisch."""
@@ -4483,45 +4543,11 @@ async def create_batch(data: BatchIn, request: Request):
     host = (data.host or "").strip() or _docker_host_ip(request)
     bid = secrets.token_hex(6)
     job = {"id": bid, "game": data.game, "title": f"{data.count} × {templates.TEMPLATES[data.game]['label']} anlegen", "log": [],
-           "step": "", "done": False, "error": None, "server_id": None, "batch": [], "req": None}
+           "step": "", "done": False, "error": None, "server_id": None, "batch": [], "req": None,
+           "plans": plans, "host": host}
     _jobs[bid] = job
-
-    async def run_all():
-        for k, pl in enumerate(plans):
-            job["step"] = f"Server {k + 1} von {len(plans)}: {pl['values'].get('name')}"
-            _job_log(job, job["step"])
-            sub = CreateIn(game=data.game, values=pl["values"], data_dir=pl["data_dir"], host=host)
-            # Token wie beim Einzelanlegen automatisch
-            if sub.game in gslt.APPS and not (sub.values.get("token") or "").strip():
-                try:
-                    t = await gslt.get_or_create(gslt.APPS[sub.game], (sub.values.get("name") or sub.game)[:32], set(await _token_usage()))
-                except gslt.GsltError as e:
-                    t = None
-                    _job_log(job, f"Steam-Token: {e}")
-                if t:
-                    if gslt.STYLE.get(sub.game) == "env":
-                        sub.values["token"] = t["token"]
-                    else:
-                        base = sub.values.get("params")
-                        if base is None:
-                            base = catmod.CATALOG.get(sub.game, {}).get("params", "")
-                        base = re.sub(r"\s*(\+sv_setsteamaccount\s+\S+|-GSLTToken=\S+)", "", base)
-                        sub.values["params"] = (base + " " + gslt.token_param(sub.game, t["token"])).strip()
-                    gslt.assign(t["token"], sub.values.get("name") or "")
-            jid = secrets.token_hex(6)
-            sj = {"id": jid, "game": sub.game, "log": [], "step": "", "done": False, "error": None, "server_id": None,
-                  "req": {"game": sub.game, "values": sub.values, "data_dir": sub.data_dir, "host": host}, "stage": "start",
-                  "title": sub.values.get("name")}
-            _jobs[jid] = sj
-            job["batch"].append(jid)
-            _save_jobs(True)
-            await _create_job(sj, sub, host)
-            _job_log(job, f"{sub.values.get('name')}: " + ("Fehler – " + sj["error"] if sj["error"] else "fertig"))
-            job["server_id"] = sj.get("server_id") or job["server_id"]
-        job["done"] = True
-        job["t_done"] = time.time()
-        job["step"] = f"{len(plans)} Server angelegt"
-    asyncio.create_task(run_all())
+    _save_jobs(True)
+    asyncio.create_task(_run_batch(job))
     return {"id": bid, "names": [p["values"].get("name") for p in plans]}
 
 

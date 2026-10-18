@@ -1886,7 +1886,7 @@ function adopt(x){
 }
 
 /* ================= Neuen Server anlegen ================= */
-let tpl = null, createGame = "cs2", jobTimer = null, createN = 1;
+let tpl = null, createGame = "cs2", jobTimer = null, createN = 1, createCountFor = null;
 async function initCreate(){
   try { tpl = await api("/api/templates"); } catch(err){ return toast(err.message, true); }
   $("#createNoDocker").classList.toggle("hidden", tpl.docker);
@@ -1901,7 +1901,8 @@ async function initCreate(){
   const t = tpl.templates[createGame];
   let sug = {values: {}, n: servers.filter(s => gameOf(s) === createGame).length + 1, used: []};
   try { sug = await api(`/api/templates/${createGame}/suggest`); } catch {}
-  const n = sug.n; createN = n; $("#createCount").value = 1;
+  const n = sug.n; createN = n;
+  if (createCountFor !== createGame){ $("#createCount").value = 1; createCountFor = createGame; }   // Anzahl nur beim Spielwechsel zurücksetzen
   const fill = (v, k) => sug.values[k] != null ? String(sug.values[k]) : String(v).replace("{n}", n).replace("{port}", 27014 + n).replace("{tvport}", 27020 + n);
   $("#createFields").innerHTML = t.fields.map(([k, label, type, def, hint]) => `<div class="field"><label>${esc(label)}</label>${
     type === "select" ? `<select data-cf="${k}">${hint.split(",").map(o => `<option ${o===def?"selected":""}>${o}</option>`).join("")}</select>`
@@ -1938,7 +1939,7 @@ $("#btnCreate").onclick = async () => {
     } catch(err){ toast(err.message, true); }
     return;
   }
-  if (!confirm(`${tpl.templates[createGame].label}-Server „${values.name}“ anlegen und starten?\nDaten: ${$("#createDataDir").value}`)) return;
+  if (!confirm(`1 × ${tpl.templates[createGame].label}-Server „${values.name}“ anlegen und starten? (Für mehrere: Feld „Anzahl“)\nDaten: ${$("#createDataDir").value}`)) return;
   try {
     const job = await api("/api/create", {body:{game: createGame, values, data_dir: $("#createDataDir").value.trim(), host: $("#createHost").value.trim()}});
     $("#createJob").classList.remove("hidden"); $("#btnCreateOpen").classList.add("hidden");
