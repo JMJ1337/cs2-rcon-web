@@ -39,6 +39,11 @@ def _load() -> dict:
     return _map
 
 
+def depots_of(appid: int) -> list[str]:
+    """Alle bekannten Depot-IDs einer App."""
+    return [k for k, e in _load().items() if k[:1] != "_" and isinstance(e, dict) and e.get("app") == int(appid)] + [str(appid)]
+
+
 def lookup(depot: str) -> dict | None:
     e = _load().get(str(depot))
     return e if e and e.get("app") else None

@@ -81,6 +81,31 @@ async def config_files() -> list[str]:
         return []
 
 
+async def forget_depots(depot_ids: list[str]) -> int:
+    """Einzelne Depots aus SteamPrefills Liste „schon geladen“ streichen – dann lädt er diese Spiele beim nächsten Lauf neu.
+    Nötig, wenn der Cache die Daten nicht mehr hat (neuer Cache, Platz freigeräumt), SteamPrefill sie aber für erledigt hält."""
+    if not depot_ids:
+        return 0
+    try:
+        raw = await docker_api.run_helper([f"{config_dir()}:/target"], ["sh", "-c", "cat /target/successfullyDownloadedDepots.json 2>/dev/null"], timeout=60)
+        data = json.loads(raw or "{}")
+    except (docker_api.DockerError, ValueError):
+        return 0
+    drop = set(str(d) for d in depot_ids)
+    if isinstance(data, dict):
+        new = {k: v for k, v in data.items() if str(k) not in drop}
+    elif isinstance(data, list):
+        new = [x for x in data if str(x.get("DepotId", x) if isinstance(x, dict) else x) not in drop]
+    else:
+        return 0
+    removed = len(data) - len(new)
+    if removed:
+        b64 = base64.b64encode(json.dumps(new).encode()).decode()
+        await docker_api.run_helper([f"{config_dir()}:/target"],
+                                    ["sh", "-c", f"echo {b64} | base64 -d > /target/successfullyDownloadedDepots.json && echo ok"], timeout=60)
+    return removed
+
+
 async def forget_downloaded() -> None:
     """Neuer/geleerter Cache: SteamPrefills Liste „schon geladen“ löschen, sonst überspringt er Spiele, die nicht mehr im Cache sind."""
     await docker_api.run_helper([f"{config_dir()}:/target"], ["sh", "-c", "rm -f /target/successfullyDownloadedDepots.json; echo ok"], timeout=60)

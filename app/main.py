@@ -4092,6 +4092,18 @@ async def _prefill_start(mode: str):
     except docker_api.DockerError:
         pass
     s0 = prefill.settings()
+    prefill.job["note"] = None
+    if mode != "select-apps" and s0.get("apps"):
+        # Spiele, die laut Cache-Messung (fast) fehlen, aus SteamPrefills „erledigt“-Liste streichen – sonst meldet er „Up To Date“
+        try:
+            stat = _apps_cache_status([a["id"] for a in s0["apps"]])
+            missing = [a for a in s0["apps"] if (stat.get(str(a["id"])) or {}).get("pct") is not None and stat[str(a["id"])]["pct"] < 50]
+            if missing:
+                n = await prefill.forget_depots([d for a in missing for d in depots.depots_of(a["id"])])
+                if n:
+                    prefill.job["note"] = f"{len(missing)} Spiele fehlen im Cache und werden neu geladen: " + ", ".join(a["name"] for a in missing[:5])
+        except Exception:  # noqa: BLE001
+            log.exception("Prefill: Abgleich mit dem Cache")
     if mode != "select-apps" and s0.get("skip_cached", True) and s0.get("apps"):
         # gecachte Spiele überspringen – einmal pro Woche aber alles laufen lassen, damit Updates mitkommen
         full_due = not s0.get("last_full") or time.time() - s0["last_full"] > FULL_CHECK_DAYS * 86400
@@ -4103,7 +4115,8 @@ async def _prefill_start(mode: str):
             todo = [a["id"] for a in s0["apps"] if (stat.get(str(a["id"])) or {}).get("pct") is None
                     or stat[str(a["id"])]["pct"] < CACHED_PCT]
             skipped = len(s0["apps"]) - len(todo)
-            prefill.job["note"] = f"{skipped} Spiele schon im Cache übersprungen, {len(todo)} werden geladen" if skipped else None
+            if skipped:
+                prefill.job["note"] = " · ".join(x for x in (prefill.job.get("note"), f"{skipped} Spiele schon im Cache übersprungen, {len(todo)} werden geladen") if x)
             try:
                 await prefill.write_apps(todo)
             except docker_api.DockerError:
