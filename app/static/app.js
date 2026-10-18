@@ -1309,7 +1309,7 @@ function renderTeams(){
     $(`#t${t}Count`).textContent = `${list.length} / ${ppt} Spieler` + (list.length > ppt ? " – zu viele!" : "");
     $(`#t${t}Count`).style.color = list.length > ppt ? "var(--bad)" : "";
   }
-  const pool = players.filter(p => !f || p.name.toLowerCase().includes(f) || p.steamid.includes(f));
+  const pool = players.filter(p => p.steamid && (!f || p.name.toLowerCase().includes(f) || p.steamid.includes(f)));
   $("#poolChips").innerHTML = pool.map(p => chip(p, assign[p.steamid] ? "t" + assign[p.steamid] : "")).join("") ||
     `<span class="hint">Keine Spieler gespeichert – unter „Spieler &amp; SteamIDs“ anlegen.</span>`;
   $$("#t1Chips .chip, #t2Chips .chip, #poolChips .chip").forEach(c => c.onclick = () => {
@@ -1322,7 +1322,7 @@ $("#poolFilter").addEventListener("input", renderTeams);
 $("#btnPoolClear").onclick = () => { Object.keys(assign).forEach(k => delete assign[k]); renderTeams(); };
 $("#btnPoolShuffle").onclick = () => {
   const ids = players.filter(p => assign[p.steamid]).map(p => p.steamid);
-  const pick = ids.length ? ids : players.map(p => p.steamid);
+  const pick = ids.length ? ids : players.filter(p => p.steamid).map(p => p.steamid);
   pick.sort(() => Math.random() - .5);
   Object.keys(assign).forEach(k => delete assign[k]);
   const ppt = presets[preset].players_per_team;
@@ -1412,22 +1412,47 @@ async function loadHistory(){
 }
 
 /* ================= Spieler-Verwaltung ================= */
+let plTimer = null, plMerge = null;
 async function loadPlayers(){
+  clearTimeout(plTimer);
   try { players = await api("/api/players"); } catch(err){ toast(err.message, true); }
   renderPlayerRows();
+  if (view === "players") plTimer = setTimeout(() => { if (!document.activeElement || !document.activeElement.dataset.rename) loadPlayers(); }, 15000);
 }
+const agoTxt = t => { if (!t) return "–"; const d = Date.now() / 1000 - t; return d < 120 ? "gerade" : d < 3600 ? `${Math.round(d / 60)} min` : d < 86400 ? `${Math.round(d / 3600)} h` : new Date(t * 1000).toLocaleDateString("de-DE"); };
 function renderPlayerRows(){
-  const f = $("#plFilter").value.trim().toLowerCase();
-  const list = players.filter(p => !f || p.name.toLowerCase().includes(f) || p.steamid.includes(f));
-  $("#plRows").innerHTML = list.length ? list.map(p => `<tr>
+  const f = $("#plFilter").value.trim().toLowerCase(), onlyOn = $("#plOnlyOn").checked;
+  const hay = p => [p.name, p.nick, p.ts_name, p.steamid, p.lan_ip, p.wan_ip, ...(p.names || [])].filter(Boolean).join(" ").toLowerCase();
+  const list = players.filter(p => (!f || hay(p).includes(f)) && (!onlyOn || (p.online || []).length));
+  const on = players.filter(p => (p.online || []).length);
+  $("#plCount").textContent = `${players.length} gesamt · ${on.length} online`;
+  // Übersicht: wer ist wo
+  const bySrv = {};
+  on.forEach(p => p.online.forEach(o => { (bySrv[o.sid] = bySrv[o.sid] || {o, list: []}).list.push(p); }));
+  $("#plOnline").innerHTML = Object.values(bySrv).map(({o, list}) => `<div class="plsrv">${gameTile(o.game, 16)}<b>${esc(o.server)}</b><span class="hint">${list.length}</span>
+    <div>${list.map(p => `<span class="pill ok" title="${esc([p.steamid, p.lan_ip, p.wan_ip].filter(Boolean).join(" · "))}">${esc(p.name)}</span>`).join(" ")}</div></div>`).join("") || `<div class="hint">Gerade ist niemand auf einem Server.</div>`;
+  $("#plRows").innerHTML = list.length ? list.map(p => `<tr class="${(p.online || []).length ? "plon" : ""}${plMerge === p.id ? " plmerge" : ""}">
     <td>${p.avatar ? `<img class="avatar" src="${esc(p.avatar)}" alt="">` : `<span class="avatar" style="display:inline-block"></span>`}</td>
-    <td><input value="${esc(p.name)}" data-rename="${esc(p.steamid)}" style="max-width:240px"></td>
-    <td class="mono"><a href="https://steamcommunity.com/profiles/${esc(p.steamid)}" target="_blank" rel="noopener" style="color:inherit">${esc(p.steamid)}</a></td>
-    <td><button class="small danger" data-pldel="${esc(p.steamid)}">Löschen</button></td></tr>`).join("")
-    : `<tr><td colspan="4" class="muted">Noch keine Spieler.</td></tr>`;
-  $$("[data-rename]").forEach(i => i.onchange = async () => { players = await api(`/api/players/${i.dataset.rename}`, {method:"PUT", body:{name: i.value.trim() || i.dataset.rename}}); toast("Name gespeichert"); });
-  $$("[data-pldel]").forEach(b => b.onclick = async () => { if (!confirm("Spieler löschen?")) return; players = await api(`/api/players/${b.dataset.pldel}`, {method:"DELETE"}); renderPlayerRows(); });
+    <td><input value="${esc(p.nick || "")}" placeholder="${esc(p.name)}" data-rename="${esc(p.id)}" style="max-width:180px"></td>
+    <td class="hint">${(p.names || []).slice(-3).map(esc).join(", ")}${p.ts_name ? ` <span class="pill" title="TeamSpeak">🎧 ${esc(p.ts_name)}</span>` : ""}</td>
+    <td>${(p.online || []).map(o => `<span class="pill ok">${gameTile(o.game, 12)} ${esc(o.server)}</span>`).join(" ") || `<span class="hint">${esc(Object.values(p.servers || {}).sort((a, b) => b.last - a.last).slice(0, 1).map(x => x.name).join("") || "")}</span>`}</td>
+    <td class="mono">${p.steamid ? `<a href="https://steamcommunity.com/profiles/${esc(p.steamid)}" target="_blank" rel="noopener" style="color:inherit">${esc(p.steamid)}</a>` : "–"}</td>
+    <td class="mono">${esc(p.lan_ip || "–")}</td><td class="mono">${esc(p.wan_ip || "–")}</td>
+    <td class="hint" title="${p.last_seen ? new Date(p.last_seen * 1000).toLocaleString("de-DE") : ""}">${agoTxt(p.last_seen)}</td>
+    <td style="white-space:nowrap"><button class="small" data-plmerge="${esc(p.id)}" title="${plMerge ? (plMerge === p.id ? "Zusammenführen abbrechen" : "in den markierten Eintrag übernehmen") : "mit anderem Eintrag zusammenführen"}">⇄</button><button class="small danger" data-pldel="${esc(p.id)}">✕</button></td></tr>`).join("")
+    : `<tr><td colspan="9" class="muted">${players.length ? "Keine Treffer." : "Noch keine Spieler – sie erscheinen automatisch, sobald jemand auf einen Server kommt."}</td></tr>`;
+  $$("[data-rename]").forEach(i => i.onchange = async () => { players = await api(`/api/players/${encodeURIComponent(i.dataset.rename)}`, {method: "PUT", body: {name: i.value.trim()}}); toast("Nickname gespeichert"); renderPlayerRows(); });
+  $$("[data-pldel]").forEach(b => b.onclick = async () => { if (!confirm("Spieler löschen?")) return; players = await api(`/api/players/${encodeURIComponent(b.dataset.pldel)}`, {method: "DELETE"}); renderPlayerRows(); });
+  $$("[data-plmerge]").forEach(b => b.onclick = async () => {
+    const id = b.dataset.plmerge;
+    if (!plMerge || plMerge === id){ plMerge = plMerge === id ? null : id; if (plMerge) toast("Jetzt beim zweiten Eintrag derselben Person auf ⇄ klicken"); return renderPlayerRows(); }
+    const a = players.find(p => p.id === plMerge), c = players.find(p => p.id === id);
+    if (!confirm(`„${c.name}“ in „${a.name}“ übernehmen? (ein Eintrag bleibt übrig)`)) return;
+    try { players = await api(`/api/players/${encodeURIComponent(plMerge)}/merge`, {body: {other: id}}); toast("Zusammengeführt"); } catch (e){ toast(e.message, true); }
+    plMerge = null; renderPlayerRows();
+  });
 }
+$("#plOnlyOn").addEventListener("change", renderPlayerRows);
 $("#plFilter").addEventListener("input", renderPlayerRows);
 $("#btnPlAdd").onclick = async () => {
   const input = $("#plInput").value.trim(); if (!input) return;

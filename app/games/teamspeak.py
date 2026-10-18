@@ -83,7 +83,7 @@ class Query:
 
 
 async def status(q: Query) -> dict:
-    info_raw, clients_raw = await q.run("serverinfo", "clientlist -times")
+    info_raw, clients_raw = await q.run("serverinfo", "clientlist -times -ip -uid")
     info = parse(info_raw)[0]
     clients = [c for c in parse(clients_raw) if c.get("client_type") == "0"]
     up = int(info.get("virtualserver_uptime") or 0)
@@ -92,7 +92,8 @@ async def status(q: Query) -> dict:
         "map": name or "–", "humans": len(clients), "bots": 0,
         "max_players": int(info.get("virtualserver_maxclients") or 0),
         "players": [{"name": c.get("client_nickname", "?"),
-                     "time": f"{int(c.get('client_idle_time') or 0) // 60000} min inaktiv"} for c in clients],
+                     "time": f"{int(c.get('client_idle_time') or 0) // 60000} min inaktiv",
+                     "ip": c.get("connection_client_ip") or "", "uid": c.get("client_unique_identifier") or ""} for c in clients],
         "version": re.sub(r"\s*\[.*", "", info.get("virtualserver_version") or ""), "hostname": name,
         "mode": {"key": "teamspeak", "label": "TeamSpeak 3"},
         "extra": {k: v for k, v in {"Kanäle": info.get("virtualserver_channelsonline"),

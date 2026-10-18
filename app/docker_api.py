@@ -80,6 +80,19 @@ async def logs(name: str, tail: int = 200) -> str:
     return raw.decode("utf-8", "replace") if info.get("Config", {}).get("Tty") else _demux(raw)
 
 
+async def logs_since(name: str, since: int = 0, tail: int = 5000) -> str:
+    """Log-Zeilen ab Zeitpunkt (Unix-Sekunden); since=0 -> die letzten `tail` Zeilen."""
+    info = await inspect(name)
+    params = {"stdout": "1", "stderr": "1", "timestamps": "0"}
+    if since:
+        params["since"] = str(int(since))
+    else:
+        params["tail"] = str(max(10, min(tail, 50000)))
+    r = await _req("GET", f"/containers/{name}/logs", params=params, timeout=60)
+    raw = r.content
+    return raw.decode("utf-8", "replace") if info.get("Config", {}).get("Tty") else _demux(raw)
+
+
 async def stats(name: str) -> dict:
     s = (await _req("GET", f"/containers/{name}/stats", params={"stream": "false"}, timeout=20)).json()
     cpu = s.get("cpu_stats", {})

@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import mapimages, gslt, matchlog, steamlist
+from . import mapimages, gslt, matchlog, steamlist, playerdb
 from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
@@ -57,7 +57,8 @@ COOKIE = "cs2rcon_session"
 @asynccontextmanager
 async def lifespan(_app):
     tasks = [asyncio.create_task(watcher()), asyncio.create_task(scan_loop()),
-             asyncio.create_task(load_loop()), asyncio.create_task(live_loop())] if WATCH_ENABLED else []
+             asyncio.create_task(load_loop()), asyncio.create_task(live_loop()),
+             asyncio.create_task(player_loop())] if WATCH_ENABLED else []
     try:
         _resume_jobs()
     except Exception:  # noqa: BLE001
@@ -68,6 +69,7 @@ async def lifespan(_app):
     try:
         metrics.maybe_save(force=True)
         cache_history.maybe_save(force=True)
+        playerdb.save(True)
     except Exception:  # noqa: BLE001
         pass
 
@@ -2472,47 +2474,114 @@ class PlayerIn(BaseModel):
     name: str | None = Field(None, max_length=64)
 
 
+# ---------------------------------------------------------------- Spieler automatisch erfassen
+LOG_GAMES = {"cs2", "tf2", "minecraft", "valheim"} | set(gslt.SRCDS_GAMES)
+_plog_since: dict[str, int] = {}
+
+
+async def _collect_players_once() -> None:
+    now = int(time.time())
+    for s in load_servers():
+        g, c = game_of(s), s.get("container")
+        st = _state.get(s["id"]) or {}
+        name = st.get("hostname") or s.get("name") or g
+        # 1) Logs der Container (SteamID + IP beim Verbinden)
+        if c and g in LOG_GAMES and docker_api.available():
+            since = _plog_since.get(c, 0)
+            try:
+                text = await docker_api.logs_since(c, since - 5 if since else 0, tail=40000)
+                playerdb.parse_log(text, g, s["id"], name)
+                _plog_since[c] = now
+            except docker_api.DockerError:
+                pass
+        # 2) aktueller Status (Namen; TeamSpeak mit IP und eindeutiger ID)
+        if not st.get("online"):
+            continue
+        for pl in st.get("players") or []:
+            if not isinstance(pl, dict) or pl.get("bot"):
+                continue
+            if g == "teamspeak":
+                if pl.get("uid"):
+                    playerdb.link_ts(pl["uid"], pl.get("name") or "", pl.get("ip") or "")
+                continue
+            p = playerdb.seen(name=pl.get("name") or "", ip=pl.get("address") or "", sid=s["id"], server=name, game=g)
+            if p is None:
+                continue
+    playerdb.save()
+
+
+async def player_loop():
+    await asyncio.sleep(20)
+    while True:
+        try:
+            await _collect_players_once()
+        except Exception:  # noqa: BLE001
+            log.exception("Spieler erfassen")
+        await asyncio.sleep(60)
+
+
+def _players_out(request: Request | None = None) -> list[dict]:
+    on = playerdb.online_index(load_servers(), _state, game_of)
+    admin = request is None or (getattr(request.state, "user", None) or {}).get("role") == "admin"
+    out = []
+    for p in playerdb.all_players():
+        if not p.get("steamid") and not p.get("names") and not p.get("ts_name") and not p.get("nick"):
+            continue
+        r = {**p, "steamid": p.get("steamid") or "", "name": playerdb.display(p), "online": on.get(p["id"], [])}
+        if not admin:                       # IP-Adressen nur für Administratoren
+            r.pop("lan_ip", None); r.pop("wan_ip", None)
+        out.append(r)
+    out.sort(key=lambda x: (not x["online"], -(x.get("last_seen") or 0)))
+    return out
+
+
 @app.get("/api/players", dependencies=auth)
-async def list_players():
-    return store.load("players.json", [])
+async def list_players(request: Request):
+    return _players_out(request)
 
 
 @app.post("/api/players", dependencies=auth)
-async def add_player(data: PlayerIn):
+async def add_player(data: PlayerIn, request: Request):
     try:
         p = await steam.resolve_player(data.input)
     except steam.SteamError as e:
         raise HTTPException(400, str(e))
-    players = store.load("players.json", [])
-    name = (data.name or p["name"] or p["steamid"]).strip()
-    existing = next((x for x in players if x["steamid"] == p["steamid"]), None)
-    if existing:
-        existing.update(name=data.name or existing["name"], avatar=p["avatar"] or existing.get("avatar", ""))
-    else:
-        players.append({"steamid": p["steamid"], "name": name, "avatar": p["avatar"], "added": int(time.time())})
-    store.save("players.json", players)
-    return {"player": existing or players[-1], "players": players, "offline": p["offline"]}
+    rec = playerdb.add_manual(p["steamid"], (data.name or "").strip() or p["name"] or "", p["avatar"] or "")
+    lst = _players_out(request)
+    return {"player": next((x for x in lst if x["id"] == rec["id"]), rec), "players": lst, "offline": p["offline"]}
 
 
 class PlayerUpdate(BaseModel):
-    name: str = Field(min_length=1, max_length=64)
+    name: str = Field("", max_length=64)       # Nickname (leer = automatischer Name)
 
 
-@app.put("/api/players/{steamid}", dependencies=auth)
-async def rename_player(steamid: str, data: PlayerUpdate):
-    players = store.load("players.json", [])
-    for p in players:
-        if p["steamid"] == steamid:
-            p["name"] = data.name.strip()
-    store.save("players.json", players)
-    return players
+@app.put("/api/players/{pid}", dependencies=auth)
+async def rename_player(pid: str, data: PlayerUpdate, request: Request):
+    try:
+        playerdb.set_nick(pid, data.name)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return _players_out(request)
 
 
-@app.delete("/api/players/{steamid}", dependencies=auth)
-async def delete_player(steamid: str):
-    players = [p for p in store.load("players.json", []) if p["steamid"] != steamid]
-    store.save("players.json", players)
-    return players
+class MergeIn(BaseModel):
+    other: str = Field(max_length=120)
+
+
+@app.post("/api/players/{pid}/merge", dependencies=auth)
+async def merge_player(pid: str, data: MergeIn, request: Request):
+    """Zwei Einträge derselben Person zusammenführen (z. B. TeamSpeak + Steam)."""
+    try:
+        playerdb.merge(pid, data.other)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return _players_out(request)
+
+
+@app.delete("/api/players/{pid}", dependencies=auth)
+async def delete_player(pid: str, request: Request):
+    playerdb.remove(pid)
+    return _players_out(request)
 
 
 @app.post("/api/servers/{sid}/players/import", dependencies=auth)
@@ -2529,18 +2598,14 @@ async def import_players(sid: str):
         found = steam.extract_steamids(out)
         if found:
             break
-    players = store.load("players.json", [])
-    known = {p["steamid"] for p in players}
+    known = {p.get("steamid") for p in playerdb.all_players()}
     added = 0
     for f in found:
         if f["steamid"] not in known:
-            players.append({"steamid": f["steamid"], "name": f["name"] or f["steamid"], "avatar": "",
-                            "added": int(time.time())})
-            known.add(f["steamid"])
             added += 1
-    if added:
-        store.save("players.json", players)
-    return {"found": found, "added": added, "tried": tried, "players": players}
+        playerdb.seen(steamid=f["steamid"], name=f["name"] or "", sid=sid, server=s.get("name") or "", game=game_of(s))
+    playerdb.save(True)
+    return {"found": found, "added": added, "tried": tried, "players": _players_out()}
 
 
 # ---------------------------------------------------------------- Wettkampf (MatchZy)
@@ -2612,7 +2677,7 @@ class MatchIn(BaseModel):
 
 
 def build_match(data: MatchIn) -> dict:
-    db = {p["steamid"]: p["name"] for p in store.load("players.json", [])}
+    db = {p["steamid"]: playerdb.display(p) for p in playerdb.all_players() if p.get("steamid")}
     maps = [re.sub(r"[^\w\-/]", "", m) for m in data.maplist if m.strip()]
     if len(maps) < data.num_maps:
         raise HTTPException(400, f"Mindestens {data.num_maps} Map(s) in der Mapliste nötig")

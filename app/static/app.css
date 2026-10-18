@@ -493,3 +493,10 @@ a.btn.tvbtn{background:var(--panel2);color:var(--text);border:1px solid var(--li
 aside .head{gap:8px}
 aside .head .logo{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pubcache.net .cdot{background:#4f9dde;box-shadow:0 0 6px #4f9dde}
+
+.ploverview{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px;margin-bottom:12px}
+.plsrv{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--panel2);display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.plsrv > div{flex-basis:100%;display:flex;flex-wrap:wrap;gap:4px}
+.pltable tr.plon td:first-child{box-shadow:inset 3px 0 0 var(--ok)}
+.pltable tr.plmerge td{background:rgba(232,137,43,.12)}
+.pltable td{vertical-align:middle;font-size:13px}
