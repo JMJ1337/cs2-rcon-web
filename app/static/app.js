@@ -2487,7 +2487,7 @@ async function loadCtEnv(){
   if (!current || !current.container || ctEnvFor === current.id) return;
   ctEnvFor = current.id;
   $("#btnSteamFix").classList.add("hidden"); $("#ctParamsRow").classList.add("hidden");
-  $("#btnGsltAssign").classList.toggle("hidden", !["cs2", "tf2"].includes(gameOf(current)));
+  $("#btnGsltAssign").classList.toggle("hidden", !(GAMES[gameOf(current)] || {}).gslt);
   if (permOf(current) < 3) return;
   try {
     const r = await api(`/api/servers/${current.id}/container/env`);
@@ -2699,6 +2699,8 @@ async function loadGslt(){
   let r; try { r = await api("/api/gslt"); } catch (e) { $("#gsltRows").innerHTML = `<tr><td colspan="6" class="hint">${esc(e.message)}</td></tr>`; return; }
   $("#gsltKey").placeholder = r.has_key ? "•••• gespeichert (neu eintragen zum Ändern)" : "leer lassen = Tokens nur von Hand";
   $("#btnGsltSync").disabled = !r.has_key;
+  const gsel = $("#gsltGame"), cur = gsel.value;
+  gsel.innerHTML = Object.entries(r.games || {cs2: "Counter-Strike 2", tf2: "Team Fortress 2"}).map(([k, l]) => `<option value="${k}" ${k === cur ? "selected" : ""}>${esc(l)}</option>`).join("");
   const free = r.tokens.filter(t => !t.used_by && !t.assigned && !t.expired && !t.deleted).length;
   $("#gsltRows").innerHTML = r.tokens.length ? r.tokens.map(t => `<tr>
     <td>${esc(t.app)}</td><td>${esc(t.memo || "")}</td><td class="mono">${esc(t.token_short)}</td>

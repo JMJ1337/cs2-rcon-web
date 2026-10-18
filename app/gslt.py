@@ -15,6 +15,55 @@ FILE = "gslt.json"
 API = "https://api.steampowered.com/IGameServersService"
 APPS = {"cs2": 730, "tf2": 440}
 APP_LABEL = {730: "CS2", 440: "TF2"}
+# Weitere Spiele, deren Server einen Token annehmen – Art, wie er übergeben wird:
+#   "srcds" = Startparameter +sv_setsteamaccount TOKEN (Source-Engine), "sandstorm" = -GSLTToken=TOKEN
+# Wreckfest, Valheim, Satisfactory … kennen keine Gameserver-Tokens (laufen anonym).
+STYLE = {"cs2": "env", "tf2": "env"}
+SRCDS_GAMES = ["l4d2", "l4d", "garrysmod", "dods", "hl2dm", "nmrih", "zps", "fof", "pvkii", "asrd"]
+
+
+def register_catalog(catalog: dict) -> None:
+    for k in SRCDS_GAMES:
+        if k in catalog and catalog[k].get("appid"):
+            APPS[k] = int(catalog[k]["appid"]); STYLE[k] = "srcds"; APP_LABEL[APPS[k]] = catalog[k].get("short") or k
+    if "insurgency" in catalog:
+        APPS["insurgency"] = int(catalog["insurgency"]["appid"]); STYLE["insurgency"] = "sandstorm"
+        APP_LABEL[APPS["insurgency"]] = catalog["insurgency"].get("short") or "Sandstorm"
+
+
+def token_param(game: str, token: str) -> str:
+    return f"+sv_setsteamaccount {token}" if STYLE.get(game) == "srcds" else f"-GSLTToken={token}" if STYLE.get(game) == "sandstorm" else ""
+
+
+def token_from_env(env: list[str]) -> str:
+    """Token aus SRCDS_TOKEN oder aus den Startparametern (GAME_PARAMS) lesen."""
+    import re
+    for e in env:
+        if e.startswith("SRCDS_TOKEN=") and len(e) > 20:
+            return e.split("=", 1)[1]
+    for e in env:
+        if e.startswith("GAME_PARAMS="):
+            m = re.search(r"(?:\+sv_setsteamaccount\s+|-GSLTToken=)([A-Za-z0-9]{20,})", e)
+            if m:
+                return m.group(1)
+    return ""
+
+
+def set_token_env(game: str, env: list[str], token: str) -> list[str]:
+    """Token in die Container-Umgebung schreiben (SRCDS_TOKEN bzw. in GAME_PARAMS)."""
+    import re
+    if STYLE.get(game) == "env":
+        return [e for e in env if not e.startswith("SRCDS_TOKEN=")] + [f"SRCDS_TOKEN={token}"]
+    out, done = [], False
+    for e in env:
+        if e.startswith("GAME_PARAMS="):
+            p = re.sub(r"\s*(\+sv_setsteamaccount\s+\S+|-GSLTToken=\S+)", "", e.split("=", 1)[1]).strip()
+            e = f"GAME_PARAMS={(p + ' ' + token_param(game, token)).strip()}"
+            done = True
+        out.append(e)
+    if not done:
+        out.append(f"GAME_PARAMS={token_param(game, token)}")
+    return out
 
 
 class GsltError(Exception):

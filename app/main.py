@@ -18,6 +18,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import mapimages, gslt
+from .games import catalog as _catalog_for_gslt
+gslt.register_catalog(_catalog_for_gslt.CATALOG)
+for _g in gslt.APPS:
+    if _g in GAMES:
+        GAMES[_g]["gslt"] = True
 from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
@@ -3228,9 +3233,9 @@ async def _token_usage() -> dict[str, str]:
             env = ((await docker_api.inspect(s_["container"])).get("Config") or {}).get("Env") or []
         except docker_api.DockerError:
             continue
-        for e in env:
-            if e.startswith("SRCDS_TOKEN=") and len(e) > 20:
-                out[e.split("=", 1)[1]] = s_["name"]
+        tok = gslt.token_from_env(env)
+        if tok:
+            out[tok] = s_["name"]
     return out
 
 
@@ -3241,7 +3246,8 @@ async def gslt_list():
     for t, full in zip(lst, gslt.tokens()):      # gleiche Reihenfolge
         t["used_by"] = use.get(full.get("token") or "")
     unknown = [n for tok, n in use.items() if tok not in {x.get("token") for x in gslt.tokens()}]
-    return {"has_key": gslt.has_key(), "tokens": lst, "unknown_in_use": unknown}
+    return {"has_key": gslt.has_key(), "tokens": lst, "unknown_in_use": unknown,
+            "games": {g: (GAMES.get(g) or {}).get("label", g) for g in gslt.APPS}}
 
 
 class GsltKeyIn(BaseModel):
@@ -3277,7 +3283,7 @@ class GsltNewIn(BaseModel):
 @app.post("/api/gslt/create", dependencies=auth)
 async def gslt_create(data: GsltNewIn):
     if data.game not in gslt.APPS:
-        raise HTTPException(400, "Nur CS2 oder TF2")
+        raise HTTPException(400, "Dieses Spiel kennt keine Steam-Gameserver-Tokens")
     try:
         if data.token:
             gslt.add_manual(data.token, gslt.APPS[data.game], data.memo)
@@ -3301,7 +3307,7 @@ async def gslt_import():
             env = ((await docker_api.inspect(s_["container"])).get("Config") or {}).get("Env") or []
         except docker_api.DockerError:
             continue
-        tok = next((e.split("=", 1)[1] for e in env if e.startswith("SRCDS_TOKEN=")), "")
+        tok = gslt.token_from_env(env)
         if len(tok) >= 20:
             if tok not in known:
                 try:
@@ -3334,13 +3340,13 @@ async def gslt_assign(sid: str):
     s = get_server(sid)
     g = game_of(s)
     if g not in gslt.APPS:
-        raise HTTPException(400, "Nur für CS2/TF2")
+        raise HTTPException(400, "Dieses Spiel kennt keine Steam-Gameserver-Tokens")
     name = _container_of(sid)
     info = await docker_api.inspect(name)
     if ((info.get("Config") or {}).get("Labels") or {}).get("gsm.managed") != "1":
         raise HTTPException(400, "Container stammt aus einem Portainer-Stack – Token dort als TOKEN eintragen")
     use = await _token_usage()
-    old = next((e.split("=", 1)[1] for e in (info.get("Config") or {}).get("Env") or [] if e.startswith("SRCDS_TOKEN=")), "")
+    old = gslt.token_from_env((info.get("Config") or {}).get("Env") or [])
     try:
         t = await gslt.get_or_create(gslt.APPS[g], name, set(use) | {old})
     except gslt.GsltError as e:
@@ -3349,7 +3355,7 @@ async def gslt_assign(sid: str):
         raise HTTPException(400, "Kein freier Token – unter Einstellungen → Steam-Tokens einen anlegen oder den API-Schlüssel hinterlegen")
 
     def mutate(cfg, hc):
-        cfg["Env"] = [e for e in (cfg.get("Env") or []) if not e.startswith("SRCDS_TOKEN=")] + [f"SRCDS_TOKEN={t['token']}"]
+        cfg["Env"] = gslt.set_token_env(g, cfg.get("Env") or [], t["token"])
     try:
         await docker_api.recreate(name, mutate)
     except docker_api.DockerError as e:
@@ -4290,7 +4296,13 @@ async def create_server(data: CreateIn, request: Request):
             t = None
             log.warning("GSLT: %s", e)
         if t:
-            data.values["token"] = t["token"]
+            if gslt.STYLE.get(data.game) == "env":
+                data.values["token"] = t["token"]
+            else:   # Source-/Sandstorm-Server: Token als Startparameter
+                base = data.values.get("params")
+                if base is None:
+                    base = catmod.CATALOG.get(data.game, {}).get("params", "")
+                data.values["params"] = (base + " " + gslt.token_param(data.game, t["token"])).strip()
             gslt.assign(t["token"], data.values.get("name") or "")
     try:
         b = templates.build(data.game, data.values, data.data_dir)  # früh validieren
@@ -4397,7 +4409,14 @@ async def create_batch(data: BatchIn, request: Request):
                     t = None
                     _job_log(job, f"Steam-Token: {e}")
                 if t:
-                    sub.values["token"] = t["token"]
+                    if gslt.STYLE.get(sub.game) == "env":
+                        sub.values["token"] = t["token"]
+                    else:
+                        base = sub.values.get("params")
+                        if base is None:
+                            base = catmod.CATALOG.get(sub.game, {}).get("params", "")
+                        base = re.sub(r"\s*(\+sv_setsteamaccount\s+\S+|-GSLTToken=\S+)", "", base)
+                        sub.values["params"] = (base + " " + gslt.token_param(sub.game, t["token"])).strip()
                     gslt.assign(t["token"], sub.values.get("name") or "")
             jid = secrets.token_hex(6)
             sj = {"id": jid, "game": sub.game, "log": [], "step": "", "done": False, "error": None, "server_id": None,
