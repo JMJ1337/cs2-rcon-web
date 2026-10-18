@@ -189,6 +189,8 @@ def summary() -> dict:
     from . import depots
     grp: dict = {}
     for x in win:
+        if str(x[3]).startswith("127.") or x[3] in ("::1", "localhost"):   # Heartbeat/Healthcheck
+            continue
         dep = x[5] if len(x) > 5 else None
         e = depots.lookup(dep) if dep else None
         key = (x[3], x[4] if len(x) > 4 else "?", e["app"] if e else (f"d{dep}" if dep else ""))
@@ -200,7 +202,7 @@ def summary() -> dict:
         if dep and not e:
             depots.want([dep])
     live_downloads = sorted(({**g, "bps": round(g["bytes"] / 60), "hit_pct": round(g["hit"] / g["bytes"] * 100) if g["bytes"] else None}
-                             for g in grp.values()), key=lambda g: -g["bytes"])[:12]
+                             for g in grp.values() if g["bytes"] >= 256 * 1024), key=lambda g: -g["bytes"])[:12]
     rate = sum(x[1] for x in win) / 60
     hit_rate = sum(x[1] for x in win if x[2]) / 60
     return {"container": state["container"], "error": state["error"], "updated": state["updated"],
