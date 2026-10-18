@@ -17,12 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import mapimages, gslt
-from .games import catalog as _catalog_for_gslt
-gslt.register_catalog(_catalog_for_gslt.CATALOG)
-for _g in gslt.APPS:
-    if _g in GAMES:
-        GAMES[_g]["gslt"] = True
+from . import mapimages, gslt, matchlog
 from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
@@ -31,6 +26,11 @@ from .games import teamspeak as tsmod
 from .games import catalog as catmod
 from .games import wreckfest_data as wfd
 from .rcon import RconAuthError, RconClient, RconError
+
+gslt.register_catalog(catmod.CATALOG)
+for _g in gslt.APPS:
+    if _g in GAMES:
+        GAMES[_g]["gslt"] = True
 
 log = logging.getLogger("cs2rcon")
 logging.basicConfig(level=logging.INFO)
@@ -105,7 +105,7 @@ def token_user(token: str | None) -> dict | None:
 ADMIN_PATHS = ("/api/users", "/api/gslt", "/api/settings", "/api/prefill", "/api/storage", "/api/scan", "/api/cache/measure", "/api/cache/reset", "/api/docker/image-check", "/api/docker/helperlogs")
 
 # Benötigte Rechtestufe für Server-Unterseiten (users.LEVELS): 1 sehen, 2 bedienen, 3 verwalten, 4 anlegen/löschen
-_MANAGE_RX = re.compile(r"(config(/file)?|files(/.*)?|saves/load|container(/(env|diag|use-lancache|steamfix))?|wreckfest/.*|sleep/config|gslt|"
+_MANAGE_RX = re.compile(r"(config(/file)?|files(/.*)?|saves/load|container(/(env|diag|use-lancache|steamfix))?|wreckfest/.*|sleep/config|gslt|cstv|"
                         r"satisfactory/options|claim)")
 _MANAGE_GET_RX = re.compile(r"(config(/file)?|files(/.*)?|container/env|wreckfest/config|satisfactory/options)")
 
@@ -285,7 +285,28 @@ async def public_server(sid: str):
         current = wfd.track_name(current)
     return {"id": sid, "game": g, "name": st.get("hostname") or s.get("name"), "online": bool(st.get("online")),
             "map": current, "mode": (st.get("mode") or {}).get("label") if isinstance(st.get("mode"), dict) else None,
-            "players": players, "max_players": st.get("max_players"), "rotation": await _public_rotation(s)}
+            "players": players, "max_players": st.get("max_players"), "rotation": await _public_rotation(s),
+            "matches": [_public_match(m) for m in matchlog.recent(sid, 3)]}
+
+
+@app.post("/api/matchzy/events/{sid}")
+async def matchzy_event(sid: str, request: Request):
+    """Empfang der MatchZy-Ereignisse (vom CS2-Server, mit geheimem Header)."""
+    s = next((x for x in load_servers() if x["id"] == sid), None)
+    if not s or not hmac.compare_digest(request.headers.get("x-gsm-key", ""), matchlog.secret(sid, SECRET)):
+        raise HTTPException(403, "falscher Schlüssel")
+    try:
+        ev = await request.json()
+    except ValueError:
+        raise HTTPException(400, "kein JSON")
+    if isinstance(ev, dict):
+        matchlog.ingest(sid, s.get("name") or sid, ev)
+    return {"ok": True}
+
+
+def _public_match(m: dict) -> dict:
+    return {k: m.get(k) for k in ("server", "sid", "map", "maps", "live", "finished", "started", "ended", "updated", "series")} | {
+        "team1": m["team1"], "team2": m["team2"]}
 
 
 @app.get("/api/public")
@@ -301,7 +322,8 @@ async def public_servers(request: Request):
             join = None
         out.append({"id": s["id"], "game": g, "name": st.get("hostname") or s.get("name") or g,
                     "online": bool(st.get("online")), "sleeping": (_asleep.get(s["id"]) or {}).get("mode"),
-                    "install": _public_install(s), "players": st.get("humans"),
+                    "install": _public_install(s),
+                    "tv": (st.get("tv") or {}).get("enabled") and bool((st.get("join") or {}).get("tv_url")), "players": st.get("humans"),
                     "max_players": st.get("max_players"), "map": st.get("map"),
                     "map_label": wfd.track_name(st.get("map")) if g == "wreckfest" else (mapimages.workshop_title(st.get("map")) or st.get("map")),
                     "map_image": _map_image(g, st),
@@ -321,6 +343,7 @@ async def public_servers(request: Request):
     cache = {"found": bool(lc), "running": bool(fresh and ld.get("running", True)) if lc else False,
              "tx_bps": ld.get("tx_bps") if fresh else None, "rx_bps": ld.get("rx_bps") if fresh else None, "hit_ratio": hr}
     return {"servers": out, "games": games, "updated": time.time(), "net": "lan" if lan else "internet", "cache": cache,
+            "matches": [_public_match(m) for m in matchlog.recent(None, 6)],
             "address": None if lan else await wan_host()}
 
 
@@ -636,7 +659,8 @@ def parse_status(text: str) -> dict:
     return info
 
 
-STATE_CVARS = ["game_type", "game_mode", "sv_visiblemaxplayers", "mp_maxrounds", "sv_password", "bot_quota", "sv_hibernate_when_empty"]
+STATE_CVARS = ["game_type", "game_mode", "sv_visiblemaxplayers", "mp_maxrounds", "sv_password", "bot_quota", "sv_hibernate_when_empty",
+               "tv_enable", "tv_port"]
 
 
 async def _matchzy_info(s: dict) -> dict:
@@ -728,7 +752,7 @@ async def localize_join(request: Request, s: dict, join: dict | None) -> dict | 
         return {**join, "net": "lan", "hint": (join.get("hint") or "") + " (Öffentliche Adresse unbekannt – in den Einstellungen eintragen.)"}
     lan = _join_host(s)
     j = dict(join)
-    for k in ("address", "url"):
+    for k in ("address", "url", "tv_url", "tv_address"):
         if j.get(k):
             j[k] = j[k].replace(lan, wan)
     if j.get("hint"):
@@ -743,6 +767,19 @@ def _join_host(s: dict) -> str:
     if h in ("127.0.0.1", "localhost", "::1", "0.0.0.0"):
         return _docker_host_ip()
     return h
+
+
+def _with_tv(j: dict, s: dict, cv: dict) -> dict:
+    """CSTV (Zuschauen): steam://connect auf den TV-Port, wenn tv_enable an ist."""
+    try:
+        on = str(cv.get("tv_enable") or "").strip() in ("1", "true", "1.000000")
+        port = int(float(cv.get("tv_port") or 0))
+    except ValueError:
+        on, port = False, 0
+    if on and port:
+        host = _join_host(s)
+        return {**j, "tv_url": f"steam://connect/{host}:{port}", "tv_address": f"{host}:{port}"}
+    return j
 
 
 def join_info(s: dict, password: str | None = None) -> dict:
@@ -870,6 +907,16 @@ def _mode_hostname(s: dict, hostname: str | None, mode_label: str, settings: dic
     return re.sub(r'["\\;]', "", name).strip()[:63] or None
 
 
+_mzlog_set: dict[str, float] = {}
+TOOL_PORT = int(os.getenv("TOOL_PORT", "8090"))
+
+
+def _tool_url(s: dict) -> str:
+    """Adresse, unter der die Spielserver das Tool erreichen (Einstellung public_url, sonst LAN-IP:8090)."""
+    pub = (automation.get_settings().get("public_url") or "").rstrip("/")
+    return pub or f"http://{_join_host(s)}:{TOOL_PORT}"
+
+
 _mz_off: dict[str, float] = {}          # Server -> MatchZy von uns entladen (Zeitpunkt)
 
 
@@ -983,6 +1030,15 @@ async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = 
             pass
     if apply_auto and s.get("auto_bots", True) and settings.get("auto_bots", True):
         bots_auto = await _auto_bots(s, c, st, cv, mode, target or visible)
+    mzc = (_state.get(s["id"], {}).get("_matchzy") or {})
+    if apply_auto and mzc.get("installed") and not mzc.get("unloaded") and time.time() - _mzlog_set.get(s["id"], 0) > 1800:
+        try:   # MatchZy meldet Matches (Teams, Spielstand, Spielerwerte) an das Tool
+            url = f"{_tool_url(s)}/api/matchzy/events/{s['id']}"
+            await c.execute(f'matchzy_remote_log_url "{url}"; matchzy_remote_log_header_key "X-GSM-Key"; '
+                            f'matchzy_remote_log_header_value "{matchlog.secret(s["id"], SECRET)}"')
+            _mzlog_set[s["id"]] = time.time()
+        except RconError:
+            pass
     ws = _last_workshop.get(s["id"])
     base = automation.map_basename(st["map"])
     if ws:
@@ -1005,8 +1061,10 @@ async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = 
         "visible_players": visible, "maxrounds": cv["mp_maxrounds"],
         "password_set": bool(cv["sv_password"]), "join_password": cv["sv_password"] or "", "bot_quota": cv["bot_quota"],
         "auto": {"enabled": auto_on, "target": target, "reason": reason, "capped": capped, "applied": applied, "bots": bots_auto},
-        "join": join_info(s, cv["sv_password"] or None),
+        "join": _with_tv(join_info(s, cv["sv_password"] or None), s, cv),
         "workshop": ws,
+        "tv": {"enabled": str(cv.get("tv_enable") or "").strip() in ("1", "true", "1.000000"),
+               "port": int(float(cv["tv_port"])) if str(cv.get("tv_port") or "").replace(".", "").isdigit() else None},
         "updated": time.time(),
     }
     if apply_auto and mode and s.get("mode_name", True):
@@ -3332,6 +3390,38 @@ async def gslt_renew(steamid: str):
 async def gslt_delete(tid: str):
     gslt.remove(tid)
     return {"ok": True}
+
+
+class TvIn(BaseModel):
+    on: bool = True
+    delay: int = Field(30, ge=0, le=300)
+
+
+@app.post("/api/servers/{sid}/cstv", dependencies=auth)
+async def cstv_toggle(sid: str, data: TvIn):
+    """CSTV (Zuschauen) an/aus. Vom Tool angelegte Container: dauerhaft über TV_ENABLE; sonst per RCON (bis zum Neustart)."""
+    s = get_server(sid)
+    if game_of(s) != "cs2":
+        raise HTTPException(400, "Nur für CS2")
+    managed = False
+    if s.get("container") and docker_api.available():
+        try:
+            info = await docker_api.inspect(s["container"])
+            managed = ((info.get("Config") or {}).get("Labels") or {}).get("gsm.managed") == "1"
+        except docker_api.DockerError:
+            pass
+    if managed:
+        def mutate(cfg, hc):
+            env = [e for e in (cfg.get("Env") or []) if not e.startswith(("TV_ENABLE=", "TV_DELAY="))]
+            cfg["Env"] = env + [f"TV_ENABLE={1 if data.on else 0}", f"TV_DELAY={data.delay}"]
+        try:
+            await docker_api.recreate(s["container"], mutate)
+        except docker_api.DockerError as e:
+            raise HTTPException(502, str(e))
+        drop_client(sid)
+        return {"ok": True, "how": "Container neu erstellt – CSTV ist nach dem Start aktiv"}
+    await run(s, f"tv_enable {1 if data.on else 0}; tv_delay {data.delay}")
+    return {"ok": True, "how": "Per RCON gesetzt – wirkt ab dem nächsten Mapwechsel. Dauerhaft: im Portainer-Stack TV_ENABLE auf \"1\" stellen."}
 
 
 @app.post("/api/servers/{sid}/gslt", dependencies=auth)

@@ -196,6 +196,17 @@ function pubCacheHtml(c){
   const tx = c.tx_bps || 0;
   return `<span class="pubcache" title="Lancache: was gerade an die Spieler im LAN ausgeliefert wird${c.hit_ratio != null ? ` · Trefferquote letzte Stunde ${c.hit_ratio} %` : ""}"><i class="cdot"></i>Lancache · ↓ ${fmtRate(tx)}${c.hit_ratio != null ? ` · ${Math.round(c.hit_ratio)} % aus dem Cache` : ""}</span>`;
 }
+function matchHtml(m){
+  const t1 = m.team1 || {}, t2 = m.team2 || {}, when = m.ended || m.updated || m.started;
+  const pl = t => (t.players || []).slice(0, 5).map(p => `<tr><td>${esc(p.name)}</td><td class="mono">${p.kills ?? "–"}</td><td class="mono">${p.deaths ?? "–"}</td><td class="mono">${p.assists ?? "–"}</td></tr>`).join("");
+  const has = (t1.players || []).length || (t2.players || []).length;
+  return `<details class="mcard"><summary>
+      <span class="mstate ${m.live ? "live" : m.finished ? "" : "warm"}">${m.live ? "LIVE" : m.finished ? "Ende" : "läuft an"}</span>
+      <b>${esc(t1.name || "Team 1")}</b> <span class="mscore">${t1.score ?? 0} : ${t2.score ?? 0}</span> <b>${esc(t2.name || "Team 2")}</b>
+      <span class="hint">${esc(m.map || "")} · ${esc(m.server || "")} · ${when ? new Date(when * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"}) : ""}</span></summary>
+    ${has ? `<div class="mteams">${[t1, t2].map(t => `<table class="cachetable"><thead><tr><th>${esc(t.name || "")}</th><th>K</th><th>D</th><th>A</th></tr></thead><tbody>${pl(t)}</tbody></table>`).join("")}</div>` : `<div class="hint">Noch keine Spielerwerte.</div>`}
+  </details>`;
+}
 function renderPublic(){
   const r = pubData; if (!r) return;
   const on = r.servers.filter(x => x.online), pl = on.reduce((a, x) => a + (x.players || 0), 0);
@@ -220,10 +231,12 @@ function renderPublic(){
         ${j.address ? `<button class="small" data-pcopy="${esc(j.address)}" title="Adresse kopieren">⧉ <span class="mono">${esc(j.address)}</span></button>` : ""}
         ${x.join_password ? `<button class="small" data-pcopy="${esc(x.join_password)}" title="Passwort kopieren">🔑 <span class="mono">${esc(x.join_password)}</span></button>` : ""}
         ${j.url && x.online ? `<a class="btn primary small" href="${esc(j.url)}">▶ Beitreten</a>` : ""}
+        ${j.tv_url && x.online ? `<a class="btn small tvbtn" href="${esc(j.tv_url)}" title="Als Zuschauer über CSTV verbinden (${esc(j.tv_address || "")})">👁 Zusehen</a>` : ""}
       </div>
       ${j.hint ? `<div class="hint pubhint">${esc(j.hint)}</div>` : ""}
     </div>`;
   }).join("");
+  $("#pubMatches").innerHTML = (r.matches || []).length ? `<h3 class="pdsec" style="margin-top:22px">Letzte Matches</h3><div class="mlist">${r.matches.map(matchHtml).join("")}</div>` : "";
   $$("#pubGrid [data-pcopy]").forEach(b => b.onclick = e => { e.stopPropagation(); copyText(b.dataset.pcopy); });
   $$("#pubGrid a.btn").forEach(a => a.onclick = e => e.stopPropagation());
   $$("#pubGrid [data-pwake]").forEach(b => b.onclick = async e => {
@@ -273,8 +286,10 @@ async function renderPubDetail(){
       ${j.address ? `<button class="small" data-pdcopy="${esc(j.address)}">⧉ Adresse kopieren</button>` : ""}
       ${x.join_password ? `<button class="small" data-pdcopy="${esc(x.join_password)}">🔑 Passwort kopieren</button>` : ""}
       ${j.url && x.online ? `<a class="btn primary small" href="${esc(j.url)}">▶ Beitreten</a>` : ""}
+      ${j.tv_url && x.online ? `<a class="btn small tvbtn" href="${esc(j.tv_url)}">👁 Zusehen (CSTV)</a>` : ""}
     </div>
     ${j.hint ? `<div class="hint" style="margin-bottom:12px">${esc(j.hint)}</div>` : ""}
+    ${(d && d.matches || []).length ? `<h3 class="pdsec">Letzte Matches</h3><div class="mlist">${d.matches.map(matchHtml).join("")}</div>` : ""}
     <h3 class="pdsec">Spieler ${players.length ? `<span class="hint">(${players.length})</span>` : ""}</h3>
     ${players.length ? `<table class="cachetable"><thead><tr><th>Name</th><th>Zeit</th>${players.some(p => p.score != null) ? "<th>Punkte</th>" : ""}${players.some(p => p.ping != null) ? "<th>Ping</th>" : ""}</tr></thead><tbody>
       ${players.map(p => `<tr><td>${esc(p.name)}${p.bot ? ' <span class="pill">Bot</span>' : ""}</td><td class="mono">${esc(p.time || "")}</td>${players.some(q => q.score != null) ? `<td class="mono">${esc(p.score ?? "")}</td>` : ""}${players.some(q => q.ping != null) ? `<td class="mono">${esc(p.ping ?? "")}</td>` : ""}</tr>`).join("")}
