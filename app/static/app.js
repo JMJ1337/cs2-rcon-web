@@ -1813,15 +1813,17 @@ $("#wfRotMix").onclick = () => {
 };
 $("#wfRotShuffle").onclick = () => { wfRot.events.sort(() => Math.random() - .5); renderWfRot(); };
 $("#wfRotClear").onclick = () => { if (confirm("Rotation leeren?")){ wfRot.events = []; renderWfRot(); } };
-$("#btnWfRotSave").onclick = async () => {
+async function wfRotSave(when){
   const globals = {};
   $$("[data-wfg]").forEach(i => { if (i.value.trim() !== "" || (wfRot.globals[i.dataset.wfg] ?? "") !== "") globals[i.dataset.wfg] = i.value.trim(); });
   try {
-    const r = await api(`/api/servers/${current.id}/wreckfest/rotation`, {method: "PUT", body: {events: wfRot.events, globals, restart: true}});
-    toast(`Rotation mit ${r.events} Events gespeichert${r.server_name ? " – Name: " + r.server_name : ""} – Wreckfest startet neu`);
+    const r = await api(`/api/servers/${current.id}/wreckfest/rotation`, {method: "PUT", body: {events: wfRot.events, globals, restart: when !== "never", when}});
+    toast(`Rotation mit ${r.events} Events gespeichert${r.server_name ? " – Name: " + r.server_name : ""} – ` +
+      (when === "now" ? "Wreckfest startet neu" : when === "empty" ? "Neustart, sobald niemand mehr drauf ist" : "gilt ab dem nächsten Neustart"));
     loadWfRotation(true); wfLoadedFor = null;
   } catch (e) { toast(e.message, true); }
-};
+}
+["#btnWfRotSave", "#btnWfRotSaveEmpty", "#btnWfRotSaveOnly"].forEach(id => $(id).onclick = () => wfRotSave($(id).dataset.when));
 $("#btnWfSave").onclick = async () => {
   const values = {};
   $$("[data-wf]").forEach(i => values[i.dataset.wf] = i.value.trim());

@@ -419,7 +419,7 @@
           <div id="wfPick" class="wfpick hidden"><div class="wfpickbox"><div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px"><b id="wfPickTitle">Strecke wählen</b><input id="wfPickFilter" placeholder="Suchen …" style="max-width:220px"><button class="small" id="wfPickClose">✕</button></div><div id="wfPickGrid"></div></div></div>
           <h3 style="margin-top:14px">Lobby &amp; Regeln</h3>
           <div class="wfgrid" id="wfRotGlobals"></div>
-          <div class="row" style="margin-top:12px"><button class="primary" id="btnWfRotSave">Rotation speichern &amp; neu starten</button><span class="hint" id="wfRotName"></span></div>
+          <div class="row" style="margin-top:12px"><button class="primary" id="btnWfRotSave" data-when="now" title="Wreckfest liest die Rotation nur beim Start">Speichern &amp; jetzt neu starten</button><button id="btnWfRotSaveEmpty" data-when="empty" title="Spieler werden nicht rausgeworfen – Neustart, sobald niemand mehr drauf ist">Speichern – Neustart wenn leer</button><button id="btnWfRotSaveOnly" data-when="never">Nur speichern</button><span class="hint" id="wfRotName"></span></div>
           <div class="hint" style="margin-top:6px">Das erste Event wird Startstrecke. Im Spiel schaltet ein Admin die Rotation mit <span class="mono">/eventloop</span> an oder aus; mit „Streckenabstimmung“ stimmen die Spieler über die nächste Strecke ab.</div>
         </div>
 
@@ -772,6 +772,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=86"></script>
+<script src="/static/app.js?v=87"></script>
 </body>
 </html>

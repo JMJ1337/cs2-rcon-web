@@ -27,6 +27,14 @@ def _load() -> list[dict]:
     global _cache
     if _cache is None:
         _cache = store.load(FILE, [])
+        # Aufräumen: Wreckfest-Bots („- *Name“) entfernen, „- “ vor Wreckfest-Namen abschneiden
+        _cache = [p for p in _cache if not (not p.get("steamid") and not p.get("ts_uid") and not p.get("nick")
+                                            and p.get("names") and all(re.match(r"^(-\s+)?\*", x) for x in p["names"]))]
+        for p in _cache:
+            if p.get("names"):
+                p["names"] = [re.sub(r"^-\s+", "", x) for x in p["names"]]
+                if p.get("auto") and not p.get("nick"):
+                    p["name"] = display(p)
         for p in _cache:                         # alte, von Hand angelegte Einträge: Name = Nickname
             if "id" not in p:
                 p["id"] = p.get("steamid") or f"n:{p.get('name', '')}"
@@ -124,6 +132,10 @@ def seen(*, steamid: str = "", name: str = "", ip: str = "", sid: str = "", serv
          ts_uid: str = "", ts_name: str = "", t: float | None = None) -> dict | None:
     """Sichtung eintragen (legt den Spieler bei Bedarf an)."""
     name = (name or "").strip()[:64]
+    if game == "wreckfest" and name.startswith("*"):       # KI-Fahrer
+        return None
+    if name.upper() == "BOT" or name.startswith("BOT "):
+        return None
     if name in ("", "?", "(verbindet …)", "(lädt …)") and not steamid and not ts_uid:
         return None
     ip = _ip_only(ip)

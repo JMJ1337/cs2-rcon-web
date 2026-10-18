@@ -3970,6 +3970,7 @@ class WfRotationIn(BaseModel):
     events: list[dict[str, str | int | None]] = Field(default_factory=list, max_length=60)
     globals: dict[str, str] = Field(default_factory=dict)
     restart: bool = True
+    when: str = "now"          # now = sofort neu starten · empty = sobald niemand drauf ist · never = nur speichern
 
 
 @app.put("/api/servers/{sid}/wreckfest/rotation", dependencies=auth)
@@ -4002,11 +4003,35 @@ async def wf_rotation_put(sid: str, data: WfRotationIn):
         if "OK" not in out:
             raise HTTPException(502, f"Konnte Konfiguration nicht schreiben: {out.strip()[:200]}")
         _rot_cache.pop(sid, None)
-        if data.restart:
+        when = data.when if data.restart else "never"
+        if when == "now":
             await docker_api.action(s["container"], "restart")
+        elif when == "empty":
+            old_t = _wf_pending_restart.get(sid)
+            if old_t and not old_t.done():
+                old_t.cancel()
+            _wf_pending_restart[sid] = asyncio.create_task(_wf_restart_when_empty(sid, s["container"]))
     except docker_api.DockerError as e:
         raise HTTPException(502, str(e))
-    return {"ok": True, "events": len(ev), "server_name": want}
+    return {"ok": True, "events": len(ev), "server_name": want, "when": when}
+
+
+_wf_pending_restart: dict[str, asyncio.Task] = {}
+
+
+async def _wf_restart_when_empty(sid: str, container: str) -> None:
+    """Neustart, sobald keine (menschlichen) Spieler mehr auf dem Server sind – höchstens 12 h warten."""
+    for _ in range(12 * 60 * 2):
+        st = _state.get(sid) or {}
+        if not st.get("online") or not (st.get("humans") or 0):
+            try:
+                await docker_api.action(container, "restart")
+                log.info("%s: Rotation – Neustart, Server war leer", container)
+            except docker_api.DockerError as e:
+                log.warning("%s: Neustart fehlgeschlagen: %s", container, e)
+            break
+        await asyncio.sleep(30)
+    _wf_pending_restart.pop(sid, None)
 
 
 @app.post("/api/servers/{sid}/wreckfest/lan", dependencies=auth)

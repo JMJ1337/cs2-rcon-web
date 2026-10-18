@@ -121,7 +121,8 @@ def _wf_parse(out: str) -> dict:
     for l in cur:
         m = re.search(r"\d\d:\d\d:\d\d\s+(.+?)\s+(?:has\s+)?(joined|left|disconnected|was kicked|timed out)", l, re.I)
         if m:
-            players[m.group(1)] = m.group(2).lower() == "joined"
+            n = re.sub(r"^-\s+", "", m.group(1)).strip()      # Logzeile: "- Name joined"
+            players[n] = m.group(2).lower() == "joined"
     return {"cfg": cfg, "connected": connected, "running": proc, "players": [n for n, on in players.items() if on],
             "log_tail": cur[-5:]}
 
@@ -141,11 +142,12 @@ async def wreckfest_container_status(container: str) -> dict:
     cfg = p["cfg"]
     from . import wreckfest_data as wfd
     mx = int(cfg["max_players"]) if cfg.get("max_players", "").isdigit() else 0
-    names = p["players"]
+    names = [n for n in p["players"] if not n.startswith("*")]       # „*Name“ = KI-Fahrer (Bot)
+    bots = [n for n in p["players"] if n.startswith("*")]
     return {
-        "map": cfg.get("track") or "–", "humans": len(names), "bots": int(cfg["bots"]) if cfg.get("bots", "").isdigit() else 0,
+        "map": cfg.get("track") or "–", "humans": len(names), "bots": len(bots) or (int(cfg["bots"]) if cfg.get("bots", "").isdigit() else 0),
         "max_players": mx,
-        "players": [{"name": n, "time": ""} for n in names],
+        "players": [{"name": n, "time": ""} for n in names] + [{"name": n.lstrip("*"), "time": "", "bot": True} for n in bots],
         "version": None, "hostname": cfg.get("server_name"),
         "mode": {"key": "wreckfest", "label": wfd.MODE_NAMES.get(cfg.get("gamemode") or "", (cfg.get("gamemode") or "Wreckfest").title()).split(" (")[0]},
         "password": cfg.get("password") or "",
