@@ -234,7 +234,11 @@ async def recreate(name: str, mutate) -> None:
         await _req("POST", f"/containers/{tmp}/rename", params={"name": name})
         await _req("POST", f"/containers/{name}/start", timeout=60)
         raise
-    await _req("DELETE", f"/containers/{tmp}", params={"force": "1"}, timeout=60)
+    try:
+        await _req("DELETE", f"/containers/{tmp}", params={"force": "1"}, timeout=60)
+    except DockerError as e:          # schon weg (z. B. AutoRemove) – kein Fehler
+        if "No such container" not in str(e):
+            raise
 
 
 async def run_once(image: str, script: str, binds: list[str], user: str = "", env: list[str] | None = None,
