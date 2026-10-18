@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import mapimages, gslt, matchlog, steamlist, playerdb, notify
+from . import mapimages, gslt, matchlog, steamlist, playerdb, notify, prefill_more
 from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
@@ -5291,7 +5291,90 @@ async def _prefill_autoadd(names: list[str]):
         _autoadd_busy["on"] = False
 
 
+# ---------------------------------------------------------------- Prefill für Battle.net und Epic Games
+def _psvc(svc: str) -> str:
+    if svc not in prefill_more.SERVICES:
+        raise HTTPException(404, "Unbekannter Dienst")
+    return svc
+
+
+@app.get("/api/prefill2/{svc}", dependencies=auth)
+async def prefill2_get(svc: str):
+    _psvc(svc)
+    st = await prefill_more.state(svc) if docker_api.available() else None
+    text = await prefill_more.log(svc, 300) if st else ""
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    return {"service": svc, "label": prefill_more.SERVICES[svc]["label"], "settings": prefill_more.settings().get(svc) or {},
+            "state": st, "log": "\n".join(lines[-80:]), "prompt": prefill_more.prompt_of(text) if st and st.get("running") else None,
+            "login_url": prefill_more.login_url(text) if st and st.get("running") else None,
+            "products": prefill_more.BNET_PRODUCTS if svc == "battlenet" else []}
+
+
+class Prefill2Run(BaseModel):
+    products: list[str] | None = None
+    mode: str | None = None
+    force: bool = False
+    schedule: str | None = Field(None, max_length=5)
+
+
+@app.post("/api/prefill2/{svc}/run", dependencies=auth)
+async def prefill2_run(svc: str, data: Prefill2Run):
+    _psvc(svc)
+    _need_docker()
+    opts = {k: v for k, v in data.model_dump().items() if v is not None}
+    prefill_more.save_settings(svc, {k: opts[k] for k in ("products", "mode") if k in opts})
+    try:
+        cmd = prefill_more.build_cmd(svc, opts)
+        if svc == "battlenet" and opts.get("mode") != "all":
+            await prefill_more.write_selection(svc, opts.get("products") or [])
+        await prefill_more.start(svc, cmd, await lancache_dns())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    return {"ok": True, "cmd": cmd}
+
+
+@app.put("/api/prefill2/{svc}", dependencies=auth)
+async def prefill2_put(svc: str, data: Prefill2Run):
+    _psvc(svc)
+    if data.schedule and not re.fullmatch(r"\d\d:\d\d", data.schedule):
+        raise HTTPException(400, "Zeit im Format HH:MM")
+    d = {k: v for k, v in data.model_dump().items() if v is not None and k in ("products", "mode", "schedule")}
+    if data.schedule == "":
+        d["schedule"] = ""
+    return prefill_more.save_settings(svc, d).get(svc)
+
+
+@app.post("/api/prefill2/{svc}/stop", dependencies=auth)
+async def prefill2_stop(svc: str):
+    _psvc(svc)
+    try:
+        await prefill_more.stop(svc)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    return {"ok": True}
+
+
+class Prefill2Send(BaseModel):
+    text: str = Field(max_length=4000)
+
+
+@app.post("/api/prefill2/{svc}/send", dependencies=auth)
+async def prefill2_send(svc: str, data: Prefill2Send):
+    _psvc(svc)
+    try:
+        await prefill_more.send(svc, data.text.strip())
+    except (OSError, docker_api.DockerError, asyncio.TimeoutError) as e:
+        raise HTTPException(502, str(e))
+    return {"ok": True}
+
+
 async def prefill_scheduler():
+    try:
+        await prefill_more.run_scheduled(await lancache_dns())
+    except Exception:  # noqa: BLE001
+        log.exception("Prefill (Battle.net/Epic) geplant")
     s = prefill.settings()
     if not prefill.due(s.get("schedule"), s.get("last_scheduled") or ""):
         return

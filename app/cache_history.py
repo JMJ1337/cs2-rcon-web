@@ -196,6 +196,7 @@ def series(rng: str) -> dict:
     while h <= now_h:
         hb = mb = rx = tx = 0
         has_net = False
+        psvc: dict = {}
         for x in range(h, min(h + step, now_h + 1)):
             b = _h.get(x)
             if not b:
@@ -207,10 +208,12 @@ def series(rng: str) -> dict:
             tot["req"] += b["hr"] + b["mr"]
             for s, (a, m) in b["svc"].items():
                 svc[s][0] += a; svc[s][1] += m
+                ps = psvc.setdefault(s, [0, 0]); ps[0] += a; ps[1] += m
             if b["hb"] + b["mb"] > peak_v:
                 peak_v, peak_h = b["hb"] + b["mb"], x
         tot["hit"] += hb; tot["miss"] += mb
-        pts.append({"t": h * 3600, "hit": hb, "miss": mb, "rx": rx if has_net else None, "tx": tx if has_net else None})
+        pts.append({"t": h * 3600, "hit": hb, "miss": mb, "rx": rx if has_net else None, "tx": tx if has_net else None,
+                    "svc": psvc})
         h += step
     deps = defaultdict(lambda: [0, 0])
     for x in range(first, now_h + 1):

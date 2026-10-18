@@ -333,7 +333,7 @@ function showView(v){
   if (v === "players") loadPlayers();
   if (v === "auto"){ renderAuto(); loadGslt(); loadNotify(); loadBackup(); }
   if (v === "cache"){ loadCacheLive(); loadCacheHistory(); loadDnsCheck(); }
-  if (v === "prefill"){ pfLoaded = false; loadPrefill(); }
+  if (v === "prefill"){ pfLoaded = false; showPfSvc(pfSvc); }
   if (v === "storage"){ loadStorage(true); loadFolders(); }
   if (v === "game") renderGameView();
 }
@@ -577,7 +577,7 @@ function svcIcon(id, size = 16){
   const key = (id || "").toLowerCase(), dom = SVC_FAVICON[key];
   const own = svcIconOwn(key, size);
   if (!dom) return own;
-  return `<span class="svcorig"><img src="https://${dom}/favicon.ico" width="${size + 4}" height="${size + 4}" alt="" loading="lazy" referrerpolicy="no-referrer"
+  return `<span class="svcorig"><img src="https://www.google.com/s2/favicons?domain=${dom}&sz=32" width="${size + 4}" height="${size + 4}" alt="" loading="lazy" referrerpolicy="no-referrer"
     onerror="this.parentNode.classList.add('fail')">${own}</span>`;
 }
 function svcIconOwn(key, size){
@@ -2343,21 +2343,37 @@ function fmtBucket(t, stepH){
   if (stepH === 24) return d.toLocaleDateString("de-DE", {weekday: "short", day: "2-digit", month: "2-digit", year: "numeric"});
   return "Woche ab " + d.toLocaleDateString("de-DE", {day: "2-digit", month: "2-digit", year: "numeric"});
 }
+// eigene, gut unterscheidbare Farben je Dienst für Diagramme
+const SVC_CHART = {steam: "#4f9dde", wsus: "#f2c14e", windowsupdates: "#f2c14e", epicgames: "#d7dae0", blizzard: "#a37bff",
+  origin: "#f57c3a", riot: "#e84a4a", uplay: "#2bc4a6", xboxlive: "#6cc04a", sony: "#3d55d6", nintendo: "#ff6fa8",
+  apple: "#9aa3ad", wargaming: "#c28a4a", rockstar: "#ffcc00", _other: "#7d7466"};
+const svcColor = s => SVC_CHART[(s || "").toLowerCase()] || "#8a7a66";
 function cacheChart(points, stepH){
   const w = 900, h = 180, n = points.length || 1, bw = w / n;
   const max = Math.max(1, ...points.map(p => p.hit + p.miss));
+  const order = {};       // Dienste nach Gesamtmenge, größter unten
+  points.forEach(p => Object.entries(p.svc || {}).forEach(([s, [a, m]]) => { order[s] = (order[s] || 0) + a + m; }));
+  const svcs = Object.keys(order).sort((a, b) => order[b] - order[a]);
   const bars = points.map((p, i) => {
-    const hh = p.hit / max * (h - 4), mh = p.miss / max * (h - 4), x = (i * bw).toFixed(2), wd = Math.max(0.6, bw - (bw > 4 ? 1 : 0)).toFixed(2);
-    const tip = `${fmtBucket(p.t, stepH)}\naus dem Cache (gespart): ${fmtBytes(p.hit)}\naus dem Internet: ${fmtBytes(p.miss)}`;
-    return `<g><title>${esc(tip)}</title><rect x="${x}" y="0" width="${wd}" height="${h}" fill="transparent"/>
-      ${mh ? `<rect x="${x}" y="${(h - hh - mh).toFixed(1)}" width="${wd}" height="${mh.toFixed(1)}" fill="#8a7a66"/>` : ""}
-      ${hh ? `<rect x="${x}" y="${(h - hh).toFixed(1)}" width="${wd}" height="${hh.toFixed(1)}" fill="var(--ok)"/>` : ""}</g>`;
+    const x = (i * bw).toFixed(2), wd = Math.max(0.6, bw - (bw > 4 ? 1 : 0)).toFixed(2);
+    let y = h, rects = "";
+    const parts = svcs.length ? svcs.map(s => [s, ...((p.svc || {})[s] || [0, 0])]) : [["_", p.hit, p.miss]];
+    for (const [s, a, m] of parts){
+      const ha = a / max * (h - 4), hm = m / max * (h - 4);
+      if (ha){ y -= ha; rects += `<rect x="${x}" y="${y.toFixed(1)}" width="${wd}" height="${ha.toFixed(1)}" fill="${svcs.length ? svcColor(s) : "var(--ok)"}"/>`; }
+      if (hm){ y -= hm; rects += `<rect x="${x}" y="${y.toFixed(1)}" width="${wd}" height="${hm.toFixed(1)}" fill="${svcs.length ? svcColor(s) : "#8a7a66"}" fill-opacity="0.45" stroke="${svcs.length ? svcColor(s) : "#8a7a66"}" stroke-width="0.6" stroke-dasharray="2 2"/>`; }
+    }
+    const tip = `${fmtBucket(p.t, stepH)}\naus dem Cache (gespart): ${fmtBytes(p.hit)}\naus dem Internet: ${fmtBytes(p.miss)}` +
+      parts.filter(([, a, m]) => a + m).map(([s, a, m]) => `\n• ${cacheName(s)}: ${fmtBytes(a + m)}${m ? ` (davon ${fmtBytes(m)} Internet)` : ""}`).join("");
+    return `<g><title>${esc(tip)}</title><rect x="${x}" y="0" width="${wd}" height="${h}" fill="transparent"/>${rects}</g>`;
   }).join("");
   const first = points[0], last = points[points.length - 1];
+  const legend = svcs.length ? `<div class="row hint" style="gap:12px;flex-wrap:wrap;margin-top:6px">${svcs.map(s => `<span><span class="lgd" style="background:${svcColor(s)}"></span> ${esc(cacheName(s))} ${fmtBytes(order[s])}</span>`).join("")}
+      <span><span class="lgd" style="background:transparent;border:1px dashed var(--muted)"></span> blass = aus dem Internet</span></div>` : "";
   return `<svg class="cachechart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${bars}
       <line x1="0" y1="${h - 0.5}" x2="${w}" y2="${h - 0.5}" stroke="var(--line)"/></svg>
     <div class="row hint" style="justify-content:space-between;margin-top:4px"><span>${first ? esc(fmtBucket(first.t, stepH)) : ""}</span>
-      <span>max. ${fmtBytes(max)} je ${stepH < 24 ? stepH + " h" : stepH === 24 ? "Tag" : "Woche"}</span><span>${last ? esc(fmtBucket(last.t, stepH)) : ""}</span></div>`;
+      <span>max. ${fmtBytes(max)} je ${stepH < 24 ? stepH + " h" : stepH === 24 ? "Tag" : "Woche"}</span><span>${last ? esc(fmtBucket(last.t, stepH)) : ""}</span></div>${legend}`;
 }
 async function loadCacheHistory(){
   $$("#cacheRangeSeg [data-crange]").forEach(b => b.classList.toggle("active", b.dataset.crange === cacheRange));
@@ -2385,7 +2401,7 @@ async function loadCacheHistory(){
       ${storageCard(c.storage, c.disk_now)}
     </div>
     <div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:8px">Ausgeliefert je ${c.step_h < 24 ? c.step_h + " Stunde(n)" : c.step_h === 24 ? "Tag" : "Woche"}
-      <span class="hint"><span class="lgd" style="background:var(--ok)"></span> aus dem Cache (gespart) <span class="lgd" style="background:#8a7a66"></span> aus dem Internet</span></h2>
+      <span class="hint">Farbe = Dienst · kräftig = aus dem Cache (gespart), blass = aus dem Internet</span></h2>
       ${total ? cacheChart(c.points, c.step_h) : `<div class="hint">Für diesen Zeitraum liegen noch keine Daten vor.</div>`}</div>
     ${c.points.some(p => p.rx != null) ? `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:8px">Netzwerk des Lancache-Containers
       <span class="hint">${netLegend()} (Download = aus dem Internet, Upload = an Clients; erst ab heute gemessen)</span></h2>
@@ -3014,3 +3030,56 @@ $("#btnNamesApply").onclick = async () => {
   try { const r = await api("/api/names/apply", {method: "POST"}); toast(`${r.renamed.length} Server umbenannt: ` + r.renamed.map(x => x.name).join(", ")); await loadServers(); }
   catch (e){ toast(e.message, true); }
 };
+
+/* ================= Prefill: Battle.net / Epic Games ================= */
+let pfSvc = "steam", pf2Timer = null;
+function showPfSvc(svc){
+  pfSvc = svc;
+  $$("#pfSvcSeg [data-pfsvc]").forEach(b => b.classList.toggle("active", b.dataset.pfsvc === svc));
+  $("#pfSteam").classList.toggle("hidden", svc !== "steam"); $("#pfSteamBtns").classList.toggle("hidden", svc !== "steam");
+  $("#pfOther").classList.toggle("hidden", svc === "steam");
+  clearTimeout(pf2Timer);
+  if (svc === "steam") loadPrefill(); else loadPf2(true);
+}
+$$("#pfSvcSeg [data-pfsvc]").forEach(b => b.onclick = () => showPfSvc(b.dataset.pfsvc));
+async function loadPf2(full){
+  clearTimeout(pf2Timer);
+  if (view !== "prefill" || pfSvc === "steam") return;
+  const svc = pfSvc;
+  let d; try { d = await api(`/api/prefill2/${svc}`); } catch (e){ $("#pfOther").innerHTML = `<div class="hint">${esc(e.message)}</div>`; return; }
+  const st = d.state, run = st && st.running, s = d.settings || {};
+  const status = run ? `<span class="pill ok">läuft</span>` : st ? `<span class="pill">beendet${st.exit ? " (Code " + st.exit + ")" : ""}</span>` : `<span class="pill">noch nie gelaufen</span>`;
+  if (full || !$("#pf2Box") || $("#pf2Box").dataset.svc !== svc){
+    const opts = svc === "battlenet"
+      ? `<div class="hint" style="margin-bottom:6px">Battle.net braucht kein Konto – einfach Spiele wählen.</div>
+         <div class="row" style="flex-wrap:wrap;gap:10px">${d.products.map(([k, l]) => `<label class="hint" style="display:flex;gap:5px;align-items:center"><input type="checkbox" data-pf2p="${k}" ${(s.products || []).includes(k) ? "checked" : ""} style="width:auto"> ${esc(l)} <span class="mono">${k}</span></label>`).join("")}</div>
+         <div class="row" style="gap:8px;margin-top:8px;align-items:center"><label class="hint">weitere Codes (Leerzeichen getrennt)</label><input id="pf2Extra" class="mono" style="max-width:260px" value="${esc((s.products || []).filter(p => !d.products.some(([k]) => k === p)).join(" "))}"></div>`
+      : `<div class="hint" style="margin-bottom:6px">Epic braucht einmal eine Anmeldung: Beim ersten Start erscheint unten ein Link – im Browser öffnen, anmelden, den angezeigten Code hier eintragen. Danach merkt sich der Prefill die Anmeldung.</div>
+         <div class="row" style="gap:12px"><label class="hint"><input type="radio" name="pf2mode" value="all" ${s.mode !== "selected" ? "checked" : ""} style="width:auto"> alle Spiele des Kontos</label>
+         <label class="hint"><input type="radio" name="pf2mode" value="selected" ${s.mode === "selected" ? "checked" : ""} style="width:auto"> nur zuvor ausgewählte</label></div>`;
+    $("#pfOther").innerHTML = `<div class="panel" id="pf2Box" data-svc="${svc}">
+      <h2>${esc(d.label)} <span id="pf2Status">${status}</span></h2>
+      ${opts}
+      <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center">
+        <button class="primary" id="pf2Run">▶ Vorladen</button><button id="pf2Force" title="alles neu laden, auch was schon im Cache ist">Erzwingen</button><button class="danger" id="pf2Stop">✕ Abbrechen</button>
+        <label class="hint" style="margin-left:12px">täglich um</label><input id="pf2Sched" value="${esc(s.schedule || "")}" placeholder="z. B. 03:00" style="max-width:90px"><button class="small" id="pf2SchedSave">Zeitplan speichern</button></div>
+      <div id="pf2Prompt"></div>
+      <pre class="out" id="pf2Log" style="max-height:360px;overflow:auto;margin-top:10px"></pre></div>`;
+    const collect = () => svc === "battlenet"
+      ? {products: [...$$("[data-pf2p]").filter(c => c.checked).map(c => c.dataset.pf2p), ...($("#pf2Extra").value || "").split(/\s+/).filter(Boolean)]}
+      : {mode: ($$('input[name="pf2mode"]').find(r => r.checked) || {}).value || "all"};
+    const go = async force => { try { await api(`/api/prefill2/${svc}/run`, {body: {...collect(), force}}); toast(`${d.label}-Prefill gestartet`); setTimeout(() => loadPf2(), 2000); } catch (e){ toast(e.message, true); } };
+    $("#pf2Run").onclick = () => go(false);
+    $("#pf2Force").onclick = () => go(true);
+    $("#pf2Stop").onclick = async () => { try { await api(`/api/prefill2/${svc}/stop`, {method: "POST"}); toast("Abgebrochen"); loadPf2(); } catch (e){ toast(e.message, true); } };
+    $("#pf2SchedSave").onclick = async () => { try { await api(`/api/prefill2/${svc}`, {method: "PUT", body: {...collect(), schedule: $("#pf2Sched").value.trim()}}); toast("Zeitplan gespeichert"); } catch (e){ toast(e.message, true); } };
+  }
+  $("#pf2Status").innerHTML = status;
+  const lg = $("#pf2Log"), atEnd = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 20;
+  lg.textContent = d.log || "(noch keine Ausgabe)";
+  if (atEnd) lg.scrollTop = lg.scrollHeight;
+  $("#pf2Prompt").innerHTML = run && (d.prompt || d.login_url) ? `<div class="pfbanner" style="margin-top:10px">${d.login_url ? `Anmelden: <a href="${esc(d.login_url)}" target="_blank" rel="noopener">${esc(d.login_url.slice(0, 80))}…</a><br>` : ""}
+      <div class="row" style="gap:8px;margin-top:6px"><input id="pf2Input" class="mono" placeholder="Code / Eingabe" style="max-width:360px"><button class="primary small" id="pf2Send">Senden</button></div></div>` : "";
+  if ($("#pf2Send")) $("#pf2Send").onclick = async () => { try { await api(`/api/prefill2/${svc}/send`, {body: {text: $("#pf2Input").value}}); toast("gesendet"); setTimeout(() => loadPf2(), 1500); } catch (e){ toast(e.message, true); } };
+  pf2Timer = setTimeout(() => loadPf2(), run ? 3000 : 15000);
+}
