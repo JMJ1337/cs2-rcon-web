@@ -900,7 +900,7 @@ def _server_nr(s: dict, hostname: str | None) -> int:
     for txt in (hostname or "", s.get("name") or ""):
         if m := re.search(r"#\s*(\d+)", txt):
             return int(m.group(1))
-        if m := re.match(r"^Groh\b.*?\s(\d+)\s*$", txt, re.I):     # alter Name „Groh Wettkampf 2“
+        if m := re.match(r"^Groh\s+.+?\s(\d+)(?=\s|$)", txt, re.I):  # „Groh CS 1 Wingman“, alt „Groh Wettkampf 2“
             return int(m.group(1))
     if m := re.search(r"(\d+)\s*$", s.get("container") or ""):
         return int(m.group(1))
@@ -1914,6 +1914,37 @@ async def cache_log(lines: int = 40):
         return {"container": cache_stats.state["container"], "log": await cache_stats.tail(lines)}
     except docker_api.DockerError as e:
         raise HTTPException(502, str(e))
+
+
+# Je Dienst eine typische Download-Domain: zeigt der Lancache-DNS sie auf den Cache, wird der Dienst gecacht
+CACHE_SERVICE_HOSTS = {"steam": "lancache.steamcontent.com", "epicgames": "epicgames-download1.akamaized.net",
+                       "origin": "origin-a.akamaihd.net", "blizzard": "level3.blizzard.com", "riot": "l3cdn.riotgames.com",
+                       "wsus": "download.windowsupdate.com", "uplay": "uplaypc-s-ubisoft.cdn.ubi.com",
+                       "xboxlive": "assets1.xboxlive.com", "nintendo": "ccs.cdn.wup.shop.nintendo.net",
+                       "sony": "gs2.ww.prod.dl.playstation.net", "wargaming": "dl-wot-ak.wargaming.net"}
+
+
+@app.get("/api/cache/dns-services", dependencies=auth)
+async def cache_dns_services():
+    """Welche Dienste leitet der Lancache-DNS auf den Cache um?"""
+    _need_docker()
+    dns = await lancache_dns()
+    if not dns:
+        raise HTTPException(400, "Kein Lancache-DNS gefunden")
+    dns = dns[0] if isinstance(dns, list) else dns
+    awk = "awk '/^Address/ && !/(#|:)53$/ {print $NF}'"
+    script = " ; ".join(f'echo "{k} $(nslookup {h} {dns} 2>/dev/null | {awk} | tail -1)"' for k, h in CACHE_SERVICE_HOSTS.items())
+    try:
+        out = await docker_api.run_helper([], ["sh", "-c", script], timeout=60)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    res = {}
+    for line in out.splitlines():
+        k, _, ip = line.strip().partition(" ")
+        if k in CACHE_SERVICE_HOSTS:
+            res[k] = {"host": CACHE_SERVICE_HOSTS[k], "resolves": ip or None,
+                      "cached": bool(ip) and ipaddress.ip_address(ip).is_private if ip and re.fullmatch(r"[\d.]+", ip) else False}
+    return {"dns": dns, "services": res}
 
 
 @app.get("/api/cache/dns-check", dependencies=auth)

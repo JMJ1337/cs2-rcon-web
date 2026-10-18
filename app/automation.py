@@ -36,8 +36,8 @@ DEFAULT_SETTINGS = {
     "scan_subnets": "",         # zusätzliche Netze, z. B. "192.168.200.0/24"
     "games_base": "/mnt/grohlan",   # Basisordner für neue Spielserver (NAS-Mount auf dem Docker-Host)
     "cache_container": "",      # Lancache-Container (leer = automatisch erkennen)
-    "hostname_pattern": "CS #{nr} {mode}",       # CS2-Servername nach Modus (leer = aus)
-    "names_pattern": "{game} #{nr} {mode}",      # alle anderen Spiele, z. B. „TF2 #1 Payload“, „Valheim #1“ (leer = aus)
+    "hostname_pattern": "Groh CS {nr} {mode}",       # CS2-Servername nach Modus (leer = aus)
+    "names_pattern": "Groh {game} {nr} {mode}",      # alle anderen Spiele, z. B. „TF2 #1 Payload“, „Valheim #1“ (leer = aus)
     "container_dns": "",        # DNS für neue Spielserver-Container (leer = Lancache-DNS automatisch)
     "auto_bots": True,          # CS2: allein auf dem Server -> Bots (nicht in Competitive/Wingman)
     "auto_matchzy": True,       # CS2: MatchZy nur in Competitive/Wingman geladen
@@ -48,9 +48,9 @@ def get_settings() -> dict:
     s = store.load(SETTINGS_FILE, {})
     out = {**DEFAULT_SETTINGS, **s}
     # alte Standard-Muster auf das einheitliche Schema „CS #1 Modus“ umstellen
-    if out.get("hostname_pattern") in ("CS#{nr} {mode}", "Groh {mode} {nr}"):
+    if out.get("hostname_pattern") in ("CS#{nr} {mode}", "Groh {mode} {nr}", "CS #{nr} {mode}"):
         out["hostname_pattern"] = DEFAULT_SETTINGS["hostname_pattern"]
-    if out.get("names_pattern") in ("{game}#{nr} {mode}", "Groh {mode} {nr}"):
+    if out.get("names_pattern") in ("{game}#{nr} {mode}", "Groh {mode} {nr}", "{game} #{nr} {mode}"):
         out["names_pattern"] = DEFAULT_SETTINGS["names_pattern"]
     if not out.get("modes"):
         out["modes"] = DEFAULT_MODES
@@ -98,7 +98,8 @@ def target_players(map_name, game_type, game_mode, settings=None):
 def parse_cvars(raw: str, names: list[str]) -> dict:
     values = {n: None for n in names}
     for n in names:
-        m = re.search(rf"(?m)^\s*\"?{re.escape(n)}\"?\s*=\s*(\"([^\"]*)\"|(\S+))", raw)
+        # nach „=“ nur Leerzeichen/Tabs – sonst greift ein leerer Wert die nächste Zeile ab (z. B. sv_password -> „bot_quota“)
+        m = re.search(rf"(?m)^[ \t]*\"?{re.escape(n)}\"?[ \t]*=[ \t]*(\"([^\"\n]*)\"|([^\s]+))", raw)
         if m:
             values[n] = m.group(2) if m.group(2) is not None else m.group(3)
     return values

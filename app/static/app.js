@@ -1497,8 +1497,8 @@ function renderAuto(){
   $("#setScanSubnets").value = settings.scan_subnets || "";
   $("#setGamesBase").value = settings.games_base || "/mnt/grohlan";
   $("#setCacheContainer").value = settings.cache_container || "";
-  $("#setHostnamePattern").value = settings.hostname_pattern ?? "CS #{nr} {mode}";
-  $("#setNamesPattern").value = settings.names_pattern ?? "{game} #{nr} {mode}";
+  $("#setHostnamePattern").value = settings.hostname_pattern ?? "Groh CS {nr} {mode}";
+  $("#setNamesPattern").value = settings.names_pattern ?? "Groh {game} {nr} {mode}";
   $("#setInternetHost").value = settings.internet_host || "";
   $("#setAutoBots").checked = settings.auto_bots !== false; $("#setAutoMz").checked = settings.auto_matchzy !== false;
   $("#setContainerDns").value = settings.container_dns || "";
