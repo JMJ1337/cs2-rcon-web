@@ -2332,7 +2332,7 @@ function pfCacheBadge(id){
   const c = pfCache[String(id)];
   if (!c) return "";
   if (c.pct == null) return c.stored ? ` <span class="pill" title="Größe noch unbekannt">${fmtBytes(c.stored)} im Cache</span>` : ` <span class="pill" title="Seit dem letzten Zurücksetzen nichts davon geladen">nicht im Cache</span>`;
-  if (c.pct >= 95) return ` <span class="pill ok" title="${fmtBytes(c.stored)} von ${fmtBytes(c.size)}">im Cache</span>`;
+  if (c.pct >= 85) return ` <span class="pill ok" title="${fmtBytes(c.stored)} von ${fmtBytes(c.size)}">im Cache</span>`;
   return ` <span class="pill ${c.pct > 0 ? "warn" : ""}" title="${fmtBytes(c.stored)} von ${fmtBytes(c.size)}">${c.pct > 0 ? Math.round(c.pct) + " % im Cache" : "nicht im Cache"}</span>`;
 }
 async function loadPrefill(){

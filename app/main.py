@@ -4067,7 +4067,7 @@ async def _prefill_sync_server_games() -> None:
 
 
 FULL_CHECK_DAYS = 7
-CACHED_PCT = 95
+CACHED_PCT = 85      # Spielgröße enthält auch Depots, die nie geladen werden (Sprachen, andere OS)
 
 
 def _apps_cache_status(appids) -> dict:
