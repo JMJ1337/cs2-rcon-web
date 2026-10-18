@@ -55,10 +55,27 @@ async def _fetch_wreckfest(venue: str) -> str:
     return ""
 
 
+async def _fetch_wiki(val: str) -> str:
+    """Bild einer Wiki-Seite (MediaWiki pageimages): val = "host|Seitentitel"."""
+    host, title = val.split("|", 1)
+    async with httpx.AsyncClient(timeout=10, headers={"User-Agent": "Spielservermanager"}) as cl:
+        r = await cl.get(f"https://{host}/api.php", params={"action": "query", "titles": title, "prop": "pageimages",
+                                                          "format": "json", "pithumbsize": 800, "redirects": 1})
+    for p in ((r.json().get("query") or {}).get("pages") or {}).values():
+        src = (p.get("thumbnail") or {}).get("source")
+        if src:
+            return src
+    return ""
+
+
+# Spiele ohne Map-Bild: passendes Wiki-Bild statt Logo
+WIKI_IMAGES = {"minecraft": "minecraft.wiki|Overworld"}
+
+
 async def _resolve(key: str) -> None:
     try:
         kind, val = key.split(":", 1)
-        url = await (_fetch_workshop(val) if kind == "ws" else _fetch_wreckfest(val))
+        url = await (_fetch_workshop(val) if kind == "ws" else _fetch_wiki(val) if kind == "mw" else _fetch_wreckfest(val))
     except (httpx.HTTPError, ValueError, KeyError, IndexError):
         url = ""
     c = _load()
@@ -112,4 +129,6 @@ def image_for(game: str, map_name: str | None, ws: dict | None = None, track_lab
         return _get(f"ws:{wid}") if wid else None
     if game == "wreckfest" and track_label:
         return _get(f"wf:{_venue(track_label)}")
+    if game in WIKI_IMAGES:
+        return _get(f"mw:{WIKI_IMAGES[game]}")
     return None

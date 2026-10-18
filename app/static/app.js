@@ -106,8 +106,11 @@ function mapThumb(o, g){
       title = o.map;
     }
   }
-  const fallback = steamImg(g, "header.jpg");
-  if (!src) src = fallback;
+  if (g === "teamspeak" && !src)    // kein Spielbild: eigenes Motiv mit dem TeamSpeak-Logo
+    return `<div class="mthumb tsart" title="TeamSpeak"><img src="/api/logo/teamspeak" alt="" onerror="this.remove()"><span>Voice-Chat</span></div>`;
+  // ohne Map: großes Steam-Titelbild (Landschaft), sonst Kopfbild
+  const hero = steamImg(g, "library_hero.jpg"), fallback = steamImg(g, "header.jpg");
+  if (!src) src = hero || fallback;
   if (!src) return "";
   return `<div class="mthumb" title="${esc(title || GAMES[g]?.label || "")}"><img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer"
     onerror="if(this.dataset.fb!=='1'&&'${fallback}'){this.dataset.fb='1';this.src='${fallback}'}else{(this.closest('.pubthumb')||this.parentNode).remove()}"></div>`;
@@ -204,9 +207,9 @@ function renderPublic(){
     const g = GAMES[x.game] || r.games[x.game] || {label: x.game, color: "#888"};
     const j = x.join || {};
     const meta = [x.mode ? esc(x.mode) : "", x.version ? "v" + esc(x.version) : ""].filter(Boolean).join(" · ");
-    const thumb = MAP_GAMES.has(x.game) && x.online ? mapThumb({map: x.map, workshop: x.workshop, map_image: x.map_image, map_title: x.map_label}, x.game) : "";
+    const thumb = mapThumb({map: MAP_GAMES.has(x.game) && x.online ? x.map : "", workshop: x.workshop, map_image: x.map_image, map_title: x.map_label}, x.game);
     return `<div class="pubcard${x.online || x.sleeping || x.install ? "" : " off"}" style="--gc:${g.color}" data-pub="${esc(x.id)}" tabindex="0" title="Details: Spieler, Rotation">
-      ${thumb ? `<div class="pubthumb">${thumb}<span class="pubmap">${esc(x.map_label || x.map || "")}</span></div>` : ""}
+      ${thumb ? `<div class="pubthumb">${thumb}<span class="pubmap">${MAP_GAMES.has(x.game) && x.online ? esc(x.map_label || x.map || "") : ""}</span></div>` : ""}
       <div class="pubtop">${gameTile(x.game, 18)}<div class="pubname"><b title="${esc(x.name)}">${esc(x.name)}</b><span class="hint">${esc(g.label)}</span></div>
         <span class="pill ${x.online ? "ok" : ""}">${x.online ? `● ${x.players ?? 0}${x.max_players ? "/" + x.max_players : ""} Spieler` : x.sleeping ? "💤 schläft" : x.install ? "⬇ wird installiert" : "offline"}</span></div>
       ${x.install ? `<div class="pubinst"><div class="bar"><i style="width:${Math.min(100, x.install.pct)}%"></i></div><span>${esc(x.install.label)} · ${Math.round(x.install.pct)} %${x.install.eta ? ` · fertig ca. ${etaClock(x.install.eta)} Uhr` : ""}</span></div>` : ""}
@@ -249,7 +252,7 @@ async function renderPubDetail(){
   let d = null;
   try { d = await (await fetch(`/api/public/${encodeURIComponent(x.id)}`, {cache: "no-store"})).json(); } catch {}
   const g = GAMES[x.game] || {label: x.game, color: "#888"}, j = x.join || {};
-  const thumb = MAP_GAMES.has(x.game) && x.online ? mapThumb({map: x.map, workshop: x.workshop, map_image: x.map_image, map_title: x.map_label}, x.game) : "";
+  const thumb = mapThumb({map: MAP_GAMES.has(x.game) && x.online ? x.map : "", workshop: x.workshop, map_image: x.map_image, map_title: x.map_label}, x.game);
   const players = (d && d.players) || [];
   const rot = (d && d.rotation) || [];
   const cur = (d && d.map) || x.map_label || x.map;
