@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import mapimages, gslt, matchlog
+from . import mapimages, gslt, matchlog, steamlist
 from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
@@ -313,6 +313,8 @@ def _public_match(m: dict) -> dict:
 async def public_servers(request: Request):
     """Alle Server mit Status und Beitrittsdaten – ohne Anmeldung (keine RCON-/Admin-Daten)."""
     out = []
+    wan = await wan_host()
+    steam = await steamlist.listed(wan)
     for s in load_servers():
         st = _state.get(s["id"], {})
         g = game_of(s)
@@ -323,6 +325,7 @@ async def public_servers(request: Request):
         out.append({"id": s["id"], "game": g, "name": st.get("hostname") or s.get("name") or g,
                     "online": bool(st.get("online")), "sleeping": (_asleep.get(s["id"]) or {}).get("mode"),
                     "install": _public_install(s),
+                    "reach": steamlist.reach(g, s, st, steam, wan),
                     "tv": (st.get("tv") or {}).get("enabled") and bool((st.get("join") or {}).get("tv_url")), "players": st.get("humans"),
                     "max_players": st.get("max_players"), "map": st.get("map"),
                     "map_label": wfd.track_name(st.get("map")) if g == "wreckfest" else (mapimages.workshop_title(st.get("map")) or st.get("map")),
@@ -660,7 +663,7 @@ def parse_status(text: str) -> dict:
 
 
 STATE_CVARS = ["game_type", "game_mode", "sv_visiblemaxplayers", "mp_maxrounds", "sv_password", "bot_quota", "sv_hibernate_when_empty",
-               "tv_enable", "tv_port"]
+               "tv_enable", "tv_port", "sv_lan"]
 
 
 async def _matchzy_info(s: dict) -> dict:
@@ -1063,6 +1066,7 @@ async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = 
         "auto": {"enabled": auto_on, "target": target, "reason": reason, "capped": capped, "applied": applied, "bots": bots_auto},
         "join": _with_tv(join_info(s, cv["sv_password"] or None), s, cv),
         "workshop": ws,
+        "sv_lan": cv.get("sv_lan"),
         "tv": {"enabled": str(cv.get("tv_enable") or "").strip() in ("1", "true", "1.000000"),
                "port": int(float(cv["tv_port"])) if str(cv.get("tv_port") or "").replace(".", "").isdigit() else None},
         "updated": time.time(),
@@ -1216,6 +1220,8 @@ async def status(sid: str, request: Request):
 @app.get("/api/overview", dependencies=auth)
 async def overview(request: Request):
     out = []
+    wan = await wan_host()
+    steam = await steamlist.listed(wan)
     for s in load_servers():
         if not visible(request, s):
             continue
@@ -1225,6 +1231,7 @@ async def overview(request: Request):
             item["join"] = await localize_join(request, s, item["join"])
         item["sleeping"] = (_asleep.get(s["id"]) or {}).get("mode")
         item["map_image"] = _map_image(game_of(s), st)
+        item["reach"] = steamlist.reach(game_of(s), s, st, steam, wan)
         if game_of(s) == "cs2" and not item.get("workshop") and mapimages.workshop_title(st.get("map")):
             item["map_title"] = mapimages.workshop_title(st.get("map"))
         item["sleep_mode"] = s.get("sleep_mode") or "off"

@@ -454,3 +454,8 @@ a.btn.tvbtn{background:var(--panel2);color:var(--text);border:1px solid var(--li
 .mstate.warm{background:var(--accent);color:var(--accent-ink)}
 .mteams{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px}
 @media (max-width:600px){.mteams{grid-template-columns:1fr}}
+
+.pill.reach{font-size:11px;padding:1px 7px;margin-left:6px;vertical-align:middle;white-space:nowrap}
+.pill.reach.online{color:var(--ok);border-color:#2b5a43}
+.pill.reach.lan{color:var(--warn,#d9b44a);border-color:#6a5a1e}
+.pill.reach.direct{color:var(--muted,#9aa)}
