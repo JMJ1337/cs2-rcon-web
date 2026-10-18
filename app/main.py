@@ -4065,6 +4065,91 @@ async def wf_hostnet(sid: str):
 
 
 # ---------------------------------------------------------------- Speicher / iSCSI (nur Planung + lesende Prüfung)
+# ---------------------------------------------------------------- Ordner im Spieleverzeichnis (Platz schaffen)
+_folders: dict = {"items": [], "t": 0.0, "busy": False, "error": None, "base": None}
+FOLDERS_SH = r"""cd /base || exit 1
+for d in */ */*/; do [ -d "$d" ] || continue; echo "D	${d%/}"; done
+nice -n 19 du -sk -- */ 2>/dev/null | sed 's|/$||;s/^/S	/'
+nice -n 19 du -sk -- */*/ 2>/dev/null | sed 's|/$||;s/^/S	/'
+"""
+
+
+async def _scan_folders():
+    if _folders["busy"]:
+        return
+    _folders["busy"] = True
+    base = os.path.normpath(automation.get_settings().get("games_base") or "/mnt/grohlan")
+    try:
+        out = await docker_api.run_helper([f"{base}:/base:ro"], ["sh", "-c", FOLDERS_SH], timeout=1800)
+        sizes, dirs = {}, []
+        for line in out.splitlines():
+            kind, _, rest = line.partition("\t")
+            if kind == "D":
+                dirs.append(rest)
+            elif kind == "S" and "\t" in rest:
+                kb, _, rel = rest.partition("\t")
+                if kb.isdigit():
+                    sizes[rel] = int(kb) * 1024
+        _folders.update(items=[{"rel": d, "path": f"{base}/{d}", "bytes": sizes.get(d)} for d in dirs], base=base, error=None)
+    except docker_api.DockerError as e:
+        _folders["error"] = str(e)
+    finally:
+        _folders["busy"] = False
+        _folders["t"] = time.time()
+
+
+@app.get("/api/storage/folders", dependencies=auth)
+async def storage_folders(refresh: bool = False):
+    """Unterordner (2 Ebenen) des Spieleverzeichnisses mit Größe und welcher Container sie nutzt."""
+    _need_docker()
+    if refresh or (not _folders["busy"] and time.time() - _folders["t"] > 1800):
+        asyncio.create_task(_scan_folders())
+    mounts = await docker_api.all_mounts()
+    src = [(n, os.path.normpath(m["source"])) for n, ms in mounts.items() for m in ms if m["type"] == "bind" and m["source"]]
+    names = {x.get("container"): x["name"] for x in load_servers()}
+    items = []
+    for f in _folders["items"]:
+        p = os.path.normpath(f["path"])
+        users = sorted({names.get(n, n) for n, s_ in src if s_ == p or s_.startswith(p + "/") or p.startswith(s_ + "/")})
+        items.append({**f, "used_by": users, "depth": f["rel"].count("/") + 1})
+    return {"items": items, "busy": _folders["busy"], "error": _folders["error"], "base": _folders["base"],
+            "updated": _folders["t"] or None}
+
+
+class FolderDel(BaseModel):
+    path: str = Field(max_length=400)
+
+
+@app.post("/api/storage/folders/delete", dependencies=auth)
+async def storage_folder_delete(data: FolderDel):
+    """Ungenutzten Ordner im Spieleverzeichnis samt Inhalt löschen (im Hintergrund)."""
+    _need_docker()
+    base = os.path.normpath(automation.get_settings().get("games_base") or "/mnt/grohlan")
+    p = os.path.normpath(data.path)
+    if not p.startswith(base + "/") or ".." in data.path:
+        raise HTTPException(400, "Nur Ordner im Spieleverzeichnis")
+    if not any(os.path.normpath(f["path"]) == p for f in _folders["items"]):
+        raise HTTPException(400, "Ordner nicht in der Liste – bitte neu einlesen")
+    mounts = await docker_api.all_mounts()
+    src = [os.path.normpath(m["source"]) for ms in mounts.values() for m in ms if m["type"] == "bind" and m["source"]]
+    if any(s_ == p or s_.startswith(p + "/") or p.startswith(s_ + "/") for s_ in src):
+        raise HTTPException(409, "Ordner wird noch von einem Container genutzt (auch gestoppte zählen) – erst den Server löschen")
+    parent, leaf = os.path.dirname(p), os.path.basename(p)
+
+    async def go():
+        try:
+            await docker_api.run_helper([f"{parent}:/parent"], ["rm", "-rf", "--", f"/parent/{leaf}"], timeout=3600)
+            log.info("Ordner gelöscht: %s", p)
+        except docker_api.DockerError as e:
+            log.warning("Löschen %s: %s", p, e)
+            _folders["error"] = f"Löschen von {p}: {e}"
+        _folders["items"] = [f for f in _folders["items"] if not (os.path.normpath(f["path"]) == p or f["path"].startswith(p + "/"))]
+        asyncio.create_task(_scan_folders())
+    _folders["items"] = [{**f, "deleting": True} if os.path.normpath(f["path"]) == p else f for f in _folders["items"]]
+    asyncio.create_task(go())
+    return {"ok": True}
+
+
 @app.get("/api/storage", dependencies=auth)
 async def storage_get():
     st = hoststorage.settings()

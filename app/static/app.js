@@ -329,7 +329,7 @@ function showView(v){
   if (v === "auto"){ renderAuto(); loadGslt(); }
   if (v === "cache"){ loadCacheLive(); loadCacheHistory(); loadDnsCheck(); }
   if (v === "prefill"){ pfLoaded = false; loadPrefill(); }
-  if (v === "storage") loadStorage(true);
+  if (v === "storage"){ loadStorage(true); loadFolders(); }
 }
 
 /* ================= Serverliste ================= */
@@ -2756,3 +2756,34 @@ $("#btnGsltAssign").onclick = async () => {
   try { const r = await api(`/api/servers/${current.id}/gslt`, {method: "POST"}); toast(`Token${r.memo ? " „" + r.memo + "“" : ""} eingesetzt – Server startet neu`); }
   catch (e){ toast(e.message, true); }
 };
+
+/* ================= Ordner im Spieleverzeichnis ================= */
+let fld = null, fldTimer = null;
+async function loadFolders(refresh){
+  clearTimeout(fldTimer);
+  try { fld = await api("/api/storage/folders" + (refresh ? "?refresh=1" : "")); } catch (e){ $("#fldRows").innerHTML = `<div class="hint">${esc(e.message)}</div>`; return; }
+  renderFolders();
+  if ((fld.busy || fld.items.some(f => f.deleting)) && view === "storage") fldTimer = setTimeout(loadFolders, 5000);
+}
+function renderFolders(){
+  if (!fld) return;
+  const q = ($("#fldFilter").value || "").trim().toLowerCase();
+  $("#fldSub").textContent = `${fld.base || ""}${fld.busy ? " · liest ein (du, niedrige Priorität) …" : fld.updated ? " · Stand " + new Date(fld.updated * 1000).toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit"}) : ""}${fld.error ? " · " + fld.error : ""}`;
+  const items = fld.items.filter(f => !q || f.rel.toLowerCase().includes(q));
+  const max = Math.max(1, ...items.map(f => f.bytes || 0));
+  $("#fldRows").innerHTML = items.length ? items.map(f => `<div class="fldrow${f.depth > 1 ? " sub" : ""}">
+      <span class="mono" title="${esc(f.path)}">${esc(f.rel)}</span>
+      <div class="bar"><i style="width:${f.bytes ? Math.max(1, f.bytes / max * 100) : 0}%"></i></div>
+      <b>${f.bytes != null ? fmtBytes(f.bytes) : "–"}</b>
+      ${f.used_by.length ? `<span class="pill ok" title="${esc(f.used_by.join(", "))}">genutzt: ${esc(f.used_by.slice(0, 2).join(", "))}${f.used_by.length > 2 ? " …" : ""}</span>`
+        : f.deleting ? `<span class="pill warn">wird gelöscht …</span>` : `<span class="pill warn">frei</span><button class="small danger" data-flddel="${esc(f.path)}">Löschen</button>`}
+    </div>`).join("") : `<div class="hint">${fld.busy ? "wird eingelesen …" : "keine Ordner" + (q ? " passend zu „" + esc(q) + "“" : "")}</div>`;
+  $$("[data-flddel]").forEach(b => b.onclick = async () => {
+    const f = fld.items.find(x => x.path === b.dataset.flddel);
+    if (!confirm(`Ordner ${f.path} (${f.bytes != null ? fmtBytes(f.bytes) : "Größe unbekannt"}) mit ALLEN Dateien endgültig löschen?\nDas lässt sich nicht rückgängig machen.`)) return;
+    try { await api("/api/storage/folders/delete", {body: {path: f.path}}); toast("Löschen läuft im Hintergrund"); loadFolders(); }
+    catch (e){ toast(e.message, true); }
+  });
+}
+$("#btnFldRefresh").onclick = () => loadFolders(true);
+$("#fldFilter").addEventListener("input", renderFolders);

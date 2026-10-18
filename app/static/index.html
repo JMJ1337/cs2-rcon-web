@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=79">
+<link rel="stylesheet" href="/static/app.css?v=80">
 </head>
 <body>
 
@@ -99,6 +99,12 @@
     <section id="view-storage" class="hidden">
       <div class="topbar"><div><div class="title">Speicher (iSCSI)</div><div class="sub">LUN vom NAS als lokalen Datenträger einbinden – z. B. für den Lancache-Cache</div></div></div>
       <div class="content" style="max-width:1200px">
+        <div class="panel" id="fldPanel">
+          <h2>Ordner im Spieleverzeichnis <span class="hint" id="fldSub"></span> <button class="small" id="btnFldRefresh" style="float:right">neu einlesen</button></h2>
+          <div class="hint" style="margin-bottom:8px">Alle Unterordner (2 Ebenen) mit Größe. „frei“ = kein Container (auch kein gestoppter) nutzt ihn – solche Ordner lassen sich hier samt Inhalt löschen.</div>
+          <input id="fldFilter" placeholder="Filtern, z. B. aim" style="max-width:260px;margin-bottom:8px">
+          <div id="fldRows"></div>
+        </div>
         <div class="cards" id="stoCards"></div>
         <div class="grid2">
           <div class="panel">
@@ -741,6 +747,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=79"></script>
+<script src="/static/app.js?v=80"></script>
 </body>
 </html>
