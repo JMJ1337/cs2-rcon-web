@@ -9,7 +9,7 @@ TEMPLATES = {
         "fields": [
             ["name", "Container-Name", "text", "cs2-dedicated-CS{n}", ""],
             ["server_name", "Servername", "text", "CS #{n} Wettkampf", ""],
-            ["port", "Spielport (TCP+UDP, auch RCON)", "number", "{port}", "Server 1 = 27015, 2 = 27016 …"],
+            ["port", "Spielport (TCP+UDP, auch RCON)", "number", "{port}", "CS #1 = 27031, #2 = 27032 … (27015/27016 sind für Wreckfest frei)"],
             ["tv_port", "CSTV-Port (UDP)", "number", "{tvport}", ""],
             ["token", "Steam-Token (GSLT)", "password", "", "leer = automatisch aus der Token-Liste (Einstellungen → Steam-Tokens)"],
             ["rcon_pw", "RCON-Passwort", "password", "", ""],
@@ -63,8 +63,8 @@ TEMPLATES = {
             ["max_players", "Max. Spieler", "number", "24", ""],
             ["admin_steam_ids", "Admin-SteamIDs (SteamID64, kommagetrennt, optional)", "text", "", "werden automatisch Admin"],
             ["port", "Spielport (UDP)", "number", "33540", ""],
-            ["query_port", "Query-Port (UDP)", "number", "26900", "LAN-Suche findet Wreckfest nur auf 26900–26905 (27015–27020 belegt CS2)"],
-            ["steam_port", "Steam-Port (UDP)", "number", "27115", ""],
+            ["query_port", "Query-Port (UDP)", "number", "27016", "Original 27016 – die LAN-Suche schaut auf 26900–26905 und 27015–27020"],
+            ["steam_port", "Steam-Port (UDP)", "number", "27015", "Original 27015"],
             ["web_port", "Webkonsole (TCP)", "number", "9028", "Server-Konsole im Browser"],
         ],
     },
@@ -120,14 +120,14 @@ for _k, _c in _catalog.CATALOG.items():
 
 # Port-Vergabe: (Feld, Startport, Schrittweite, belegte Ports pro Server)
 PORT_PLAN = {
-    "cs2": [("port", 27015, 1, 1), ("tv_port", 27020, 1, 1)],
+    "cs2": [("port", 27031, 1, 1), ("tv_port", 27021, 1, 1)],   # CS #n: 2703n / CSTV 2702n (27015/27016 bleiben für Wreckfest)
     "factorio": [("port", 34197, 1, 1), ("rcon_port", 27100, 1, 1)],
     "satisfactory": [("port", 7777, 1, 1), ("msg_port", 8888, 1, 1)],
     "valheim": [("port", 2456, 2, 2)],                       # Spielport + Query-Port (+1)
     "tf2": [("port", 27045, 1, 1), ("tv_port", 27055, 1, 1)],
     "minecraft": [("port", 25565, 1, 1)],
     "teamspeak": [("port", 9987, 1, 1), ("query_port", 10011, 1, 1), ("file_port", 30033, 1, 1)],
-    "wreckfest": [("port", 33540, 1, 1), ("query_port", 26900, 1, 1), ("steam_port", 27115, 1, 1), ("web_port", 9028, 1, 1)],
+    "wreckfest": [("port", 33540, 1, 1), ("steam_port", 27015, 1, 1), ("query_port", 27016, 1, 1), ("web_port", 9028, 1, 1)],   # Originalports
 }
 
 

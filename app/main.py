@@ -237,6 +237,26 @@ def _wf_layout(track: str | None) -> str | None:
     return mapimages.wf_layouts([k for k, _, _ in wfd.TRACKS]).get(track or "") if track else None
 
 
+def _pending_installs(known: set) -> list[dict]:
+    """Server, die gerade angelegt werden (Kopieren/Image laden …) und noch keinen Eintrag haben – für die Übersicht."""
+    out = []
+    for j in list(_jobs.values()):
+        if j.get("done") or j.get("error"):
+            continue
+        if j.get("plans"):      # Stapel: noch nicht begonnene Server als „wartet“
+            for pl in j["plans"][len(j.get("batch") or []):]:
+                out.append({"id": f"job-{j['id']}-{pl['values'].get('name')}", "game": j["game"], "name": pl["values"].get("name") or j["game"],
+                            "online": False, "pending": True, "install": {"label": "wartet (wird nacheinander angelegt)", "pct": 0, "eta": None}})
+            continue
+        if j.get("req") is None or (j.get("server_id") and j["server_id"] in known):
+            continue
+        pg = j.get("progress") or {}
+        label = pg.get("label") or ("Spieldateien kopieren" if j.get("stage") == "copy" else (j.get("step") or "wird angelegt")[:60])
+        out.append({"id": f"job-{j['id']}", "game": j["game"], "name": j.get("title") or j["game"], "online": False, "pending": True,
+                    "install": {"label": label, "pct": round(pg.get("pct") or 0, 1), "eta": pg.get("eta")}})
+    return out
+
+
 def _public_install(s: dict) -> dict | None:
     p = ((install_watch.state.get(s.get("container") or "") or {}).get("progress")) if s.get("container") else None
     if not p:
@@ -340,6 +360,7 @@ async def public_servers(request: Request):
                     "workshop": {k: (st.get("workshop") or {}).get(k) for k in ("preview", "title")} if st.get("workshop") else None,
                     "mode": (st.get("mode") or {}).get("label") if isinstance(st.get("mode"), dict) else None,
                     "version": st.get("version"), "join": await localize_join(request, s, join), "join_password": await _join_password(s)})
+    out += _pending_installs({x["id"] for x in out})
     out.sort(key=lambda x: (not x["online"], GAMES.get(x["game"], {}).get("label", x["game"]), x["name"].lower()))
     games = {k: {kk: v.get(kk) for kk in ("label", "short", "color")} for k, v in GAMES.items()}
     lan = client_is_lan(request)
@@ -4012,6 +4033,77 @@ async def wf_lanrelay(sid: str, data: RelayIn):
         raise HTTPException(502, str(e))
     log.info("%s: LAN-Weiterleiter %s:%s -> %s:%s", name, "0.0.0.0", rp, ip, q)
     return {"ok": True, "relay": await _relay_state(name)}
+
+
+class PortsIn(BaseModel):
+    port: int | None = Field(None, ge=1024, le=65535)          # CS2: Spielport · Wreckfest: Spielport (game_port)
+    tv_port: int | None = Field(None, ge=1024, le=65535)       # CS2
+    query_port: int | None = Field(None, ge=1024, le=65535)    # Wreckfest
+    steam_port: int | None = Field(None, ge=1024, le=65535)    # Wreckfest
+
+
+@app.post("/api/servers/{sid}/ports", dependencies=auth)
+async def change_ports(sid: str, data: PortsIn):
+    """Ports eines vom Tool angelegten CS2- oder Wreckfest-Containers ändern (Container wird neu erstellt)."""
+    s = get_server(sid)
+    g, name = game_of(s), s.get("container")
+    if g not in ("cs2", "wreckfest") or not name:
+        raise HTTPException(400, "Nur für CS2- und Wreckfest-Server mit Container")
+    try:
+        info = await docker_api.inspect(name)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    if ((info.get("Config") or {}).get("Labels") or {}).get("gsm.managed") != "1":
+        raise HTTPException(400, "Container stammt nicht aus diesem Tool (z. B. Portainer-Stack) – Ports dort ändern")
+    used = await docker_api.used_host_ports()
+    own = {int(b["HostPort"]) for lst in ((info.get("HostConfig") or {}).get("PortBindings") or {}).values()
+           for b in (lst or []) if str(b.get("HostPort", "")).isdigit()}
+    env = (info.get("Config") or {}).get("Env") or []
+    envd = dict(e.split("=", 1) for e in env if "=" in e)
+    if g == "cs2":
+        port = data.port or int(envd.get("CS2_PORT") or s.get("port") or 27015)
+        tv = data.tv_port or int(envd.get("TV_PORT") or 27020)
+        want = {port, tv}
+        binds = {f"{port}/tcp": port, f"{port}/udp": port, f"{tv}/udp": tv}
+    else:
+        vals = _wf_values(await _wf_read(name) or "")
+        port = data.port or int(vals.get("game_port") or s.get("game_port") or 33540)
+        q = data.query_port or int(vals.get("query_port") or s.get("port") or 27016)
+        sp = data.steam_port or int(vals.get("steam_port") or 27015)
+        want = {port, q, sp}
+        binds = {f"{port}/udp": port, f"{q}/udp": q, f"{sp}/udp": sp}
+    if len(want) != (2 if g == "cs2" else 3):
+        raise HTTPException(400, "Ports müssen verschieden sein")
+    clash = sorted(p for p in want if p in used and p not in own)
+    if clash:
+        raise HTTPException(409, f"Port {clash[0]} ist schon belegt ({used.get(clash[0])})")
+    if g == "wreckfest":
+        await _wf_write(name, {"game_port": port, "query_port": q, "steam_port": sp})
+
+    def mutate(cfg, hc):
+        keep = {k: v for k, v in (hc.get("PortBindings") or {}).items() if k.endswith("/tcp") and g == "wreckfest"}  # Weboberfläche
+        hc["PortBindings"] = {**keep, **{k: [{"HostPort": str(v)}] for k, v in binds.items()}}
+        cfg["ExposedPorts"] = {k: {} for k in hc["PortBindings"]}
+        if g == "cs2":
+            cfg["Env"] = [e for e in (cfg.get("Env") or []) if not e.startswith(("CS2_PORT=", "TV_PORT="))] + [f"CS2_PORT={port}", f"TV_PORT={tv}"]
+    try:
+        await docker_api.recreate(name, mutate)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    if g == "cs2":
+        await _set_server_fields(sid, port=port)
+        res = {"port": port, "tv_port": tv}
+    else:
+        await _set_server_fields(sid, port=q, game_port=port)
+        res = {"game_port": port, "query_port": q, "steam_port": sp}
+        if await _relay_state(name):            # LAN-Weiterleiter auf den neuen Query-Port umstellen
+            try:
+                await wf_lanrelay(sid, RelayIn(on=True))
+            except HTTPException:
+                pass
+    _rot_cache.pop(sid, None)
+    log.info("%s: Ports geändert %s", name, res)
+    return {"ok": True, **res}
 
 
 @app.post("/api/servers/{sid}/wreckfest/bridgenet", dependencies=auth)

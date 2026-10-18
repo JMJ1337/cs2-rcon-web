@@ -225,7 +225,7 @@ function renderPublic(){
     const j = x.join || {};
     const meta = [x.mode ? esc(x.mode) : "", x.version ? "v" + esc(x.version) : ""].filter(Boolean).join(" · ");
     const thumb = mapThumb({map: MAP_GAMES.has(x.game) && x.online ? x.map : "", workshop: x.workshop, map_image: x.map_image, map_title: x.map_label, map_layout: x.online ? x.map_layout : null}, x.game);
-    return `<div class="pubcard${x.online || x.sleeping || x.install ? "" : " off"}" style="--gc:${g.color}" data-pub="${esc(x.id)}" tabindex="0" title="Details: Spieler, Rotation">
+    return `<div class="pubcard${x.online || x.sleeping || x.install ? "" : " off"}" style="--gc:${g.color}" ${x.pending ? `title="wird gerade angelegt"` : `data-pub="${esc(x.id)}" tabindex="0" title="Details: Spieler, Rotation"`}>
       ${thumb ? `<div class="pubthumb">${thumb}<span class="pubmap">${MAP_GAMES.has(x.game) && x.online ? esc(x.map_label || x.map || "") : ""}</span></div>` : ""}
       <div class="pubtop">${gameTile(x.game, 18)}<div class="pubname"><b title="${esc(x.name)}">${esc(x.name)}</b><span class="hint">${esc(g.label)} ${x.online ? reachPill(x.reach) : ""}</span></div>
         <span class="pill ${x.online ? "ok" : ""}">${x.online ? `● ${x.players ?? 0}${x.max_players ? "/" + x.max_players : ""} Spieler` : x.sleeping ? "💤 schläft" : x.install ? "⬇ wird installiert" : "offline"}</span></div>
@@ -1937,7 +1937,7 @@ async function initCreate(){
   try { sug = await api(`/api/templates/${createGame}/suggest`); } catch {}
   const n = sug.n; createN = n;
   if (createCountFor !== createGame){ $("#createCount").value = 1; createCountFor = createGame; }   // Anzahl nur beim Spielwechsel zurücksetzen
-  const fill = (v, k) => sug.values[k] != null ? String(sug.values[k]) : String(v).replace("{n}", n).replace("{port}", 27014 + n).replace("{tvport}", 27020 + n);
+  const fill = (v, k) => sug.values[k] != null ? String(sug.values[k]) : String(v).replace("{n}", n).replace("{port}", 27030 + n).replace("{tvport}", 27020 + n);
   $("#createFields").innerHTML = t.fields.map(([k, label, type, def, hint]) => `<div class="field"><label>${esc(label)}</label>${
     type === "select" ? `<select data-cf="${k}">${hint.split(",").map(o => `<option ${o===def?"selected":""}>${o}</option>`).join("")}</select>`
     : `<input data-cf="${k}" type="${type==="password"?"password":"text"}" value="${esc(fill(def, k))}" ${type==="number"?'inputmode="numeric"':""} autocomplete="off">`
@@ -2539,6 +2539,7 @@ async function loadCtEnv(){
   $("#btnSteamFix").classList.add("hidden"); $("#ctParamsRow").classList.add("hidden");
   $("#btnGsltAssign").classList.toggle("hidden", !(GAMES[gameOf(current)] || {}).gslt);
   ["#btnTvOn","#btnTvOff"].forEach(b => $(b).classList.toggle("hidden", gameOf(current) !== "cs2"));
+  $("#btnPorts").classList.toggle("hidden", !["cs2", "wreckfest"].includes(gameOf(current)));
   if (permOf(current) < 3) return;
   try {
     const r = await api(`/api/servers/${current.id}/container/env`);
@@ -2777,6 +2778,17 @@ async function setTv(on){
   try { const r = await api(`/api/servers/${current.id}/cstv`, {method: "POST", body: {on, delay: 30}}); toast(r.how); }
   catch (e){ toast(e.message, true); }
 }
+$("#btnPorts").onclick = async () => {
+  const wf = gameOf(current) === "wreckfest";
+  const ask = wf ? "Spielport, Steam-Port, Query-Port (Original: 33540, 27015, 27016)" : "Spielport, CSTV-Port (Schema: CS #n = 2703n, 2702n)";
+  const def = wf ? `${current.game_port || 33540}, 27015, 27016` : `${current.port}, `;
+  const v = prompt(ask, def); if (!v) return;
+  const n = v.split(/[ ,;]+/).map(x => parseInt(x, 10)).filter(x => x > 0);
+  const body = wf ? {port: n[0], steam_port: n[1], query_port: n[2]} : {port: n[0], tv_port: n[1]};
+  if (!confirm(`Ports setzen: ${n.join(", ")}? Der Container wird neu erstellt. Portweiterleitungen am Router ggf. anpassen.`)) return;
+  try { const r = await api(`/api/servers/${current.id}/ports`, {body}); toast("Ports geändert: " + Object.entries(r).filter(([k]) => k !== "ok").map(([k, x]) => `${k} ${x}`).join(", ")); await loadServers(); }
+  catch (e){ toast(e.message, true); }
+};
 $("#btnTvOn").onclick = () => setTv(true);
 $("#btnTvOff").onclick = () => setTv(false);
 
