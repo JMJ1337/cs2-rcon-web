@@ -36,8 +36,8 @@ DEFAULT_SETTINGS = {
     "scan_subnets": "",         # zusätzliche Netze, z. B. "192.168.200.0/24"
     "games_base": "/mnt/grohlan",   # Basisordner für neue Spielserver (NAS-Mount auf dem Docker-Host)
     "cache_container": "",      # Lancache-Container (leer = automatisch erkennen)
-    "hostname_pattern": "Groh CS {nr} {mode}",       # CS2-Servername nach Modus (leer = aus)
-    "names_pattern": "Groh {game} {nr} {mode}",      # alle anderen Spiele, z. B. „TF2 #1 Payload“, „Valheim #1“ (leer = aus)
+    "hostname_pattern": "Groh CS #{nr} {mode}",       # CS2-Servername nach Modus (leer = aus)
+    "names_pattern": "Groh {game} #{nr} {mode}",      # alle anderen Spiele, z. B. „TF2 #1 Payload“, „Valheim #1“ (leer = aus)
     "container_dns": "",        # DNS für neue Spielserver-Container (leer = Lancache-DNS automatisch)
     "auto_bots": True,          # CS2: allein auf dem Server -> Bots (nicht in Competitive/Wingman)
     "auto_matchzy": True,       # CS2: MatchZy nur in Competitive/Wingman geladen
@@ -48,9 +48,9 @@ def get_settings() -> dict:
     s = store.load(SETTINGS_FILE, {})
     out = {**DEFAULT_SETTINGS, **s}
     # alte Standard-Muster auf das einheitliche Schema „CS #1 Modus“ umstellen
-    if out.get("hostname_pattern") in ("CS#{nr} {mode}", "Groh {mode} {nr}", "CS #{nr} {mode}"):
+    if out.get("hostname_pattern") in ("CS#{nr} {mode}", "Groh {mode} {nr}", "CS #{nr} {mode}", "Groh CS {nr} {mode}"):
         out["hostname_pattern"] = DEFAULT_SETTINGS["hostname_pattern"]
-    if out.get("names_pattern") in ("{game}#{nr} {mode}", "Groh {mode} {nr}", "{game} #{nr} {mode}"):
+    if out.get("names_pattern") in ("{game}#{nr} {mode}", "Groh {mode} {nr}", "{game} #{nr} {mode}", "Groh {game} {nr} {mode}"):
         out["names_pattern"] = DEFAULT_SETTINGS["names_pattern"]
     if not out.get("modes"):
         out["modes"] = DEFAULT_MODES

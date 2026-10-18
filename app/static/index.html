@@ -312,8 +312,8 @@
             <div class="field"><label>Zusätzliche Netze für den Scan</label><input id="setScanSubnets" placeholder="z. B. 192.168.200.0/24" class="mono"></div>
             <div class="field"><label>Basisordner für neue Spielserver (auf dem Docker-Host)</label><input id="setGamesBase" placeholder="/mnt/grohlan" class="mono"></div>
             <div class="field"><label>Lancache-Container (leer = automatisch)</label><input id="setCacheContainer" placeholder="z. B. lancache-monolithic-1" class="mono"></div>
-            <div class="field"><label>CS2-Servername nach Modus (<span class="mono">{nr}</span> = Servernummer, <span class="mono">{mode}</span> = Modus; leer = aus)</label><input id="setHostnamePattern" placeholder="Groh CS {nr} {mode}" class="mono" maxlength="60"></div>
-            <div class="field"><label>Name der übrigen Spielserver (<span class="mono">{game}</span> = Spiel, <span class="mono">{nr}</span> = Nummer, <span class="mono">{mode}</span> = Modus; leer = aus) – live bei TF2/Satisfactory, Wreckfest beim Speichern der Rotation</label><input id="setNamesPattern" placeholder="Groh {game} {nr} {mode}" class="mono" maxlength="60"></div>
+            <div class="field"><label>CS2-Servername nach Modus (<span class="mono">{nr}</span> = Servernummer, <span class="mono">{mode}</span> = Modus; leer = aus)</label><input id="setHostnamePattern" placeholder="Groh CS #{nr} {mode}" class="mono" maxlength="60"></div>
+            <div class="field"><label>Name der übrigen Spielserver (<span class="mono">{game}</span> = Spiel, <span class="mono">{nr}</span> = Nummer, <span class="mono">{mode}</span> = Modus; leer = aus) – live bei TF2/Satisfactory, Wreckfest beim Speichern der Rotation</label><input id="setNamesPattern" placeholder="Groh {game} #{nr} {mode}" class="mono" maxlength="60"></div>
             <div class="field"><label>Alle Server jetzt nach Schema benennen</label><button id="btnNamesApply" title="Liste/Übersicht sofort; im Spiel live bei CS2/TF2/Satisfactory, Wreckfest nach Neustart sobald leer">Alle umbenennen</button></div>
             <div class="field"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="setAutoBots" style="width:auto"> CS2: allein auf dem Server → mit Bots auffüllen (nicht in Competitive/Wingman)</label>
               <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="setAutoMz" style="width:auto"> CS2: MatchZy nur in Competitive/Wingman laden (sonst entladen)</label></div>
@@ -801,6 +801,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=91"></script>
+<script src="/static/app.js?v=92"></script>
 </body>
 </html>

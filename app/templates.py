@@ -8,7 +8,7 @@ TEMPLATES = {
         "data_default": "{base}/cs/server{n}",
         "fields": [
             ["name", "Container-Name", "text", "cs2-dedicated-CS{n}", ""],
-            ["server_name", "Servername", "text", "Groh CS {n} Wettkampf", ""],
+            ["server_name", "Servername", "text", "Groh CS #{n} Wettkampf", ""],
             ["port", "Spielport (TCP+UDP, auch RCON)", "number", "{port}", "CS #1 = 27031, #2 = 27032 … (27015/27016 sind für Wreckfest frei)"],
             ["tv_port", "CSTV-Port (UDP)", "number", "{tvport}", ""],
             ["token", "Steam-Token (GSLT)", "password", "", "leer = automatisch aus der Token-Liste (Einstellungen → Steam-Tokens)"],
@@ -38,7 +38,7 @@ TEMPLATES = {
             ["port", "Spiel-/API-Port (TCP+UDP)", "number", "7777", ""],
             ["msg_port", "Messaging-Port (TCP)", "number", "8888", ""],
             ["max_players", "Max. Spieler", "number", "8", ""],
-            ["server_name", "Servername (beim Beanspruchen)", "text", "Groh Satisfactory {n}", ""],
+            ["server_name", "Servername (beim Beanspruchen)", "text", "Groh Satisfactory #{n}", ""],
             ["admin_pw", "Admin-Passwort (beim Beanspruchen)", "password", "", "wird nach dem Start automatisch gesetzt"],
         ],
     },
@@ -47,7 +47,7 @@ TEMPLATES = {
         "data_default": "{base}/valheim/{name}",
         "fields": [
             ["name", "Container-Name", "text", "valheim-{n}", ""],
-            ["server_name", "Servername", "text", "Groh Valheim {n}", ""],
+            ["server_name", "Servername", "text", "Groh Valheim #{n}", ""],
             ["world", "Weltname", "text", "Dedicated", ""],
             ["password", "Server-Passwort (min. 5 Zeichen)", "password", "", ""],
             ["port", "Spielport (UDP, +1 = Query)", "number", "2456", ""],
@@ -58,7 +58,7 @@ TEMPLATES = {
         "data_default": "{base}/wreckfest/{name}",
         "fields": [
             ["name", "Container-Name", "text", "wreckfest-{n}", ""],
-            ["server_name", "Servername", "text", "Groh Wreckfest {n}", "so erscheint er im Server-Browser"],
+            ["server_name", "Servername", "text", "Groh Wreckfest #{n}", "so erscheint er im Server-Browser"],
             ["password", "Server-Passwort (optional)", "text", "", ""],
             ["max_players", "Max. Spieler", "number", "24", ""],
             ["admin_steam_ids", "Admin-SteamIDs (SteamID64, kommagetrennt, optional)", "text", "", "werden automatisch Admin"],
@@ -73,7 +73,7 @@ TEMPLATES = {
         "data_default": "{base}/tf2/{name}",
         "fields": [
             ["name", "Container-Name", "text", "tf2-{n}", ""],
-            ["server_name", "Servername", "text", "Groh TF2 {n}", ""],
+            ["server_name", "Servername", "text", "Groh TF2 #{n}", ""],
             ["port", "Spielport (TCP+UDP, auch RCON)", "number", "27045", "nicht 27015–27019 (CS2)"],
             ["tv_port", "SourceTV-Port (UDP)", "number", "27055", ""],
             ["token", "Steam-Token (GSLT, App 440)", "password", "", "leer = automatisch aus der Token-Liste – für LAN optional"],
@@ -88,7 +88,7 @@ TEMPLATES = {
         "data_default": "{base}/minecraft/{name}",
         "fields": [
             ["name", "Container-Name", "text", "minecraft-{n}", ""],
-            ["motd", "Servername (MOTD)", "text", "Groh Minecraft {n}", ""],
+            ["motd", "Servername (MOTD)", "text", "Groh Minecraft #{n}", ""],
             ["port", "Spielport (TCP)", "number", "25565", ""],
             ["type", "Server-Typ", "select", "PAPER", "PAPER,VANILLA,FABRIC,FORGE,NEOFORGE,PURPUR"],
             ["version", "Version", "text", "LATEST", "z. B. LATEST oder 1.21.4"],
