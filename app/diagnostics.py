@@ -9,10 +9,10 @@ from . import docker_api
 RULES = [
     (("cs2", "tf2"), r"(token is already in use|already in use by another|GSLT.*in use|sv_setsteamaccount.*in use)",
      "Steam-Token wird schon benutzt",
-     "Jeder Server braucht einen eigenen Token (GSLT). Unter steamcommunity.com/dev/managegameservers einen neuen anlegen und im Stack bzw. beim Server eintragen."),
+     "Jeder Server braucht einen eigenen Token (GSLT). Im Container-Tab „Steam-Token tauschen“ klicken (nimmt einen freien aus Einstellungen → Steam-Tokens oder erstellt einen) – bei Portainer-Stacks dort TOKEN ändern."),
     (("cs2", "tf2"), r"(Invalid token|token.*(expired|invalid|banned)|Login Failure: Invalid|STEAM_LOGON_.*(INVALID|BANNED))",
      "Steam-Token ungültig oder abgelaufen",
-     "Token unter steamcommunity.com/dev/managegameservers prüfen bzw. neu erzeugen (App-ID 730 für CS2, 440 für TF2) und neu eintragen."),
+     "Unter Einstellungen → Steam-Tokens „Erneuern“ bzw. im Container-Tab „Steam-Token tauschen“ – oder auf steamcommunity.com/dev/managegameservers neu erzeugen (App 730 CS2, 440 TF2)."),
     (None, r"(No space left on device|disk write failure|state is 0x202|state is 0x212)",
      "Speicherplatz voll",
      "Auf dem NAS/Datenträger Platz schaffen (alte Server, Lancache-Limit verkleinern) und den Container neu starten."),

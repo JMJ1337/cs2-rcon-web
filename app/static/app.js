@@ -303,7 +303,7 @@ function showView(v){
   renderServerList();
   if (v === "dash"){ refreshDash(); refreshCache(); }
   if (v === "players") loadPlayers();
-  if (v === "auto") renderAuto();
+  if (v === "auto"){ renderAuto(); loadGslt(); }
   if (v === "cache"){ loadCacheLive(); loadCacheHistory(); loadDnsCheck(); }
   if (v === "prefill"){ pfLoaded = false; loadPrefill(); }
   if (v === "storage") loadStorage(true);
@@ -2473,6 +2473,7 @@ async function loadCtEnv(){
   if (!current || !current.container || ctEnvFor === current.id) return;
   ctEnvFor = current.id;
   $("#btnSteamFix").classList.add("hidden"); $("#ctParamsRow").classList.add("hidden");
+  $("#btnGsltAssign").classList.toggle("hidden", !["cs2", "tf2"].includes(gameOf(current)));
   if (permOf(current) < 3) return;
   try {
     const r = await api(`/api/servers/${current.id}/container/env`);
@@ -2676,5 +2677,36 @@ async function refreshDisks(){
 $("#btnCacheReset").onclick = async () => {
   if (!confirm("Gesamten Lancache-Verlauf, Trefferquote und „Welche Spiele wurden geladen“ zurücksetzen?\nDer Cache selbst bleibt unverändert.")) return;
   try { await api("/api/cache/reset", {method: "POST"}); toast("Statistik zurückgesetzt"); if (typeof loadCacheHistory === "function") loadCacheHistory(); refreshCache(); }
+  catch (e){ toast(e.message, true); }
+};
+
+/* ================= Steam-Tokens (GSLT) ================= */
+async function loadGslt(){
+  let r; try { r = await api("/api/gslt"); } catch (e) { $("#gsltRows").innerHTML = `<tr><td colspan="6" class="hint">${esc(e.message)}</td></tr>`; return; }
+  $("#gsltKey").placeholder = r.has_key ? "•••• gespeichert (neu eintragen zum Ändern)" : "leer lassen = Tokens nur von Hand";
+  $("#btnGsltSync").disabled = !r.has_key;
+  const free = r.tokens.filter(t => !t.used_by && !t.assigned && !t.expired && !t.deleted).length;
+  $("#gsltRows").innerHTML = r.tokens.length ? r.tokens.map(t => `<tr>
+    <td>${esc(t.app)}</td><td>${esc(t.memo || "")}</td><td class="mono">${esc(t.token_short)}</td>
+    <td>${t.used_by ? esc(t.used_by) : t.assigned ? `<span class="hint">reserviert: ${esc(t.assigned)}</span>` : `<span class="pill ok">frei</span>`}</td>
+    <td>${t.deleted ? '<span class="pill">gelöscht</span>' : t.expired ? '<span class="pill warn">abgelaufen</span>' : '<span class="pill ok">gültig</span>'}</td>
+    <td style="white-space:nowrap">${t.expired && t.steamid && r.has_key ? `<button class="small" data-grenew="${esc(t.steamid)}">Erneuern</button>` : ""}<button class="small danger" data-gdel="${esc(t.id)}">✕</button></td></tr>`).join("")
+    : `<tr><td colspan="6" class="hint">Noch keine Tokens gespeichert.</td></tr>`;
+  $("#gsltHint").textContent = `${free} frei` + (r.unknown_in_use.length ? ` · nicht in der Liste, aber in Benutzung: ${r.unknown_in_use.join(", ")} – „Von Servern übernehmen“ klicken` : "")
+    + (r.has_key ? " · Fehlt beim Anlegen ein freier Token, erstellt das Tool automatisch einen neuen." : "");
+  $$("[data-grenew]").forEach(b => b.onclick = async () => { try { await api(`/api/gslt/renew/${b.dataset.grenew}`, {method: "POST"}); toast("Token erneuert"); loadGslt(); } catch (e){ toast(e.message, true); } });
+  $$("[data-gdel]").forEach(b => b.onclick = async () => { if (!confirm("Token aus der Liste entfernen? (bei Steam bleibt er bestehen)")) return; try { await api(`/api/gslt/${encodeURIComponent(b.dataset.gdel)}`, {method: "DELETE"}); loadGslt(); } catch (e){ toast(e.message, true); } });
+}
+$("#btnGsltKey").onclick = async () => { try { const r = await api("/api/gslt/key", {method: "PUT", body: {key: $("#gsltKey").value.trim()}}); $("#gsltKey").value = ""; toast(r.synced != null ? `Gespeichert – ${r.synced} Tokens von Steam geholt` : "Gespeichert"); loadGslt(); } catch (e){ toast(e.message, true); } };
+$("#btnGsltSync").onclick = async () => { try { const r = await api("/api/gslt/sync", {method: "POST"}); toast(`${r.synced} Tokens von Steam geholt`); loadGslt(); } catch (e){ toast(e.message, true); } };
+$("#btnGsltImport").onclick = async () => { try { const r = await api("/api/gslt/import", {method: "POST"}); toast(`${r.imported} Tokens übernommen`); loadGslt(); } catch (e){ toast(e.message, true); } };
+$("#btnGsltAdd").onclick = async () => {
+  try { await api("/api/gslt/create", {body: {game: $("#gsltGame").value, memo: $("#gsltMemo").value.trim(), token: $("#gsltToken").value.trim()}}); $("#gsltToken").value = ""; $("#gsltMemo").value = ""; toast("Token hinzugefügt"); loadGslt(); }
+  catch (e){ toast(e.message, true); }
+};
+
+$("#btnGsltAssign").onclick = async () => {
+  if (!confirm("Freien Steam-Token einsetzen (oder bei Steam neu erstellen)? Der Container wird dafür neu erstellt.")) return;
+  try { const r = await api(`/api/servers/${current.id}/gslt`, {method: "POST"}); toast(`Token${r.memo ? " „" + r.memo + "“" : ""} eingesetzt – Server startet neu`); }
   catch (e){ toast(e.message, true); }
 };

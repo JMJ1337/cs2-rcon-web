@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import mapimages
+from . import mapimages, gslt
 from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
@@ -97,10 +97,10 @@ def token_user(token: str | None) -> dict | None:
     return u
 
 
-ADMIN_PATHS = ("/api/users", "/api/settings", "/api/prefill", "/api/storage", "/api/scan", "/api/cache/measure", "/api/cache/reset", "/api/docker/image-check", "/api/docker/helperlogs")
+ADMIN_PATHS = ("/api/users", "/api/gslt", "/api/settings", "/api/prefill", "/api/storage", "/api/scan", "/api/cache/measure", "/api/cache/reset", "/api/docker/image-check", "/api/docker/helperlogs")
 
 # Benötigte Rechtestufe für Server-Unterseiten (users.LEVELS): 1 sehen, 2 bedienen, 3 verwalten, 4 anlegen/löschen
-_MANAGE_RX = re.compile(r"(config(/file)?|files(/.*)?|saves/load|container(/(env|diag|use-lancache|steamfix))?|wreckfest/.*|sleep/config|"
+_MANAGE_RX = re.compile(r"(config(/file)?|files(/.*)?|saves/load|container(/(env|diag|use-lancache|steamfix))?|wreckfest/.*|sleep/config|gslt|"
                         r"satisfactory/options|claim)")
 _MANAGE_GET_RX = re.compile(r"(config(/file)?|files(/.*)?|container/env|wreckfest/config|satisfactory/options)")
 
@@ -3217,6 +3217,148 @@ async def _used_ports() -> dict[int, str]:
     return used
 
 
+# ---------------------------------------------------------------- Steam-Gameserver-Tokens (GSLT)
+async def _token_usage() -> dict[str, str]:
+    """Token -> Servername, aus der Umgebung der CS2-/TF2-Container."""
+    out = {}
+    for s_ in load_servers():
+        if game_of(s_) not in gslt.APPS or not s_.get("container"):
+            continue
+        try:
+            env = ((await docker_api.inspect(s_["container"])).get("Config") or {}).get("Env") or []
+        except docker_api.DockerError:
+            continue
+        for e in env:
+            if e.startswith("SRCDS_TOKEN=") and len(e) > 20:
+                out[e.split("=", 1)[1]] = s_["name"]
+    return out
+
+
+@app.get("/api/gslt", dependencies=auth)
+async def gslt_list():
+    use = await _token_usage()
+    lst = gslt.public_list()
+    for t, full in zip(lst, gslt.tokens()):      # gleiche Reihenfolge
+        t["used_by"] = use.get(full.get("token") or "")
+    unknown = [n for tok, n in use.items() if tok not in {x.get("token") for x in gslt.tokens()}]
+    return {"has_key": gslt.has_key(), "tokens": lst, "unknown_in_use": unknown}
+
+
+class GsltKeyIn(BaseModel):
+    key: str = Field("", max_length=64)
+
+
+@app.put("/api/gslt/key", dependencies=auth)
+async def gslt_key(data: GsltKeyIn):
+    gslt.set_key(data.key)
+    if data.key:
+        try:
+            n = await gslt.sync()
+        except gslt.GsltError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True, "synced": n}
+    return {"ok": True}
+
+
+@app.post("/api/gslt/sync", dependencies=auth)
+async def gslt_sync():
+    try:
+        return {"ok": True, "synced": await gslt.sync()}
+    except gslt.GsltError as e:
+        raise HTTPException(400, str(e))
+
+
+class GsltNewIn(BaseModel):
+    game: str = "cs2"
+    memo: str = Field("", max_length=32)
+    token: str = Field("", max_length=64)
+
+
+@app.post("/api/gslt/create", dependencies=auth)
+async def gslt_create(data: GsltNewIn):
+    if data.game not in gslt.APPS:
+        raise HTTPException(400, "Nur CS2 oder TF2")
+    try:
+        if data.token:
+            gslt.add_manual(data.token, gslt.APPS[data.game], data.memo)
+            return {"ok": True}
+        t = await gslt.create(gslt.APPS[data.game], data.memo or f"GROH LAN {data.game.upper()}")
+        return {"ok": True, "memo": t["memo"]}
+    except gslt.GsltError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/gslt/import", dependencies=auth)
+async def gslt_import():
+    """Tokens, die laufende CS2/TF2-Server schon benutzen, in die Liste übernehmen (z. B. aus Portainer-Stacks)."""
+    known = {t.get("token") for t in gslt.tokens()}
+    n = 0
+    for s_ in load_servers():
+        g = game_of(s_)
+        if g not in gslt.APPS or not s_.get("container"):
+            continue
+        try:
+            env = ((await docker_api.inspect(s_["container"])).get("Config") or {}).get("Env") or []
+        except docker_api.DockerError:
+            continue
+        tok = next((e.split("=", 1)[1] for e in env if e.startswith("SRCDS_TOKEN=")), "")
+        if len(tok) >= 20:
+            if tok not in known:
+                try:
+                    gslt.add_manual(tok, gslt.APPS[g], s_["name"][:32])
+                    n += 1
+                except gslt.GsltError:
+                    continue
+            gslt.assign(tok, s_["container"])
+    return {"ok": True, "imported": n}
+
+
+@app.post("/api/gslt/renew/{steamid}", dependencies=auth)
+async def gslt_renew(steamid: str):
+    try:
+        await gslt.renew(steamid)
+    except gslt.GsltError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.delete("/api/gslt/{tid}", dependencies=auth)
+async def gslt_delete(tid: str):
+    gslt.remove(tid)
+    return {"ok": True}
+
+
+@app.post("/api/servers/{sid}/gslt", dependencies=auth)
+async def gslt_assign(sid: str):
+    """Freien (oder neu erstellten) Token in den Container eintragen – nur für vom Tool angelegte Container."""
+    s = get_server(sid)
+    g = game_of(s)
+    if g not in gslt.APPS:
+        raise HTTPException(400, "Nur für CS2/TF2")
+    name = _container_of(sid)
+    info = await docker_api.inspect(name)
+    if ((info.get("Config") or {}).get("Labels") or {}).get("gsm.managed") != "1":
+        raise HTTPException(400, "Container stammt aus einem Portainer-Stack – Token dort als TOKEN eintragen")
+    use = await _token_usage()
+    old = next((e.split("=", 1)[1] for e in (info.get("Config") or {}).get("Env") or [] if e.startswith("SRCDS_TOKEN=")), "")
+    try:
+        t = await gslt.get_or_create(gslt.APPS[g], name, set(use) | {old})
+    except gslt.GsltError as e:
+        raise HTTPException(400, str(e))
+    if not t:
+        raise HTTPException(400, "Kein freier Token – unter Einstellungen → Steam-Tokens einen anlegen oder den API-Schlüssel hinterlegen")
+
+    def mutate(cfg, hc):
+        cfg["Env"] = [e for e in (cfg.get("Env") or []) if not e.startswith("SRCDS_TOKEN=")] + [f"SRCDS_TOKEN={t['token']}"]
+    try:
+        await docker_api.recreate(name, mutate)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    gslt.assign(t["token"], name)
+    drop_client(sid)
+    return {"ok": True, "memo": t.get("memo")}
+
+
 @app.get("/api/templates/{game}/suggest", dependencies=auth)
 async def suggest(game: str):
     if game not in templates.TEMPLATES:
@@ -4128,6 +4270,15 @@ async def create_server(data: CreateIn, request: Request):
     if data.game not in templates.TEMPLATES:
         raise HTTPException(400, "Unbekanntes Spiel")
     need_game(request, data.game, 4)
+    if data.game in gslt.APPS and not (data.values.get("token") or "").strip():
+        try:   # Steam-Token automatisch: freien gespeicherten nehmen oder (mit API-Schlüssel) neu anlegen
+            t = await gslt.get_or_create(gslt.APPS[data.game], (data.values.get("name") or data.game)[:32], set(await _token_usage()))
+        except gslt.GsltError as e:
+            t = None
+            log.warning("GSLT: %s", e)
+        if t:
+            data.values["token"] = t["token"]
+            gslt.assign(t["token"], data.values.get("name") or "")
     try:
         b = templates.build(data.game, data.values, data.data_dir)  # früh validieren
     except ValueError as e:

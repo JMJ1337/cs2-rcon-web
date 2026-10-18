@@ -11,7 +11,7 @@ TEMPLATES = {
             ["server_name", "Servername", "text", "CS #{n} Wettkampf", ""],
             ["port", "Spielport (TCP+UDP, auch RCON)", "number", "{port}", "Server 1 = 27015, 2 = 27016 …"],
             ["tv_port", "CSTV-Port (UDP)", "number", "{tvport}", ""],
-            ["token", "Steam-Token (GSLT)", "password", "", "steamcommunity.com/dev/managegameservers"],
+            ["token", "Steam-Token (GSLT)", "password", "", "leer = automatisch aus der Token-Liste (Einstellungen → Steam-Tokens)"],
             ["rcon_pw", "RCON-Passwort", "password", "", ""],
             ["server_pw", "Server-Passwort (optional)", "text", "", ""],
             ["mode", "Modus", "select", "wingman", "competitive,wingman,casual,deathmatch"],
@@ -76,7 +76,7 @@ TEMPLATES = {
             ["server_name", "Servername", "text", "TF2 #{n}", ""],
             ["port", "Spielport (TCP+UDP, auch RCON)", "number", "27045", "nicht 27015–27019 (CS2)"],
             ["tv_port", "SourceTV-Port (UDP)", "number", "27055", ""],
-            ["token", "Steam-Token (GSLT, App 440)", "password", "", "steamcommunity.com/dev/managegameservers – für LAN optional"],
+            ["token", "Steam-Token (GSLT, App 440)", "password", "", "leer = automatisch aus der Token-Liste – für LAN optional"],
             ["rcon_pw", "RCON-Passwort", "password", "", ""],
             ["server_pw", "Server-Passwort (optional)", "text", "", ""],
             ["map", "Startmap", "text", "ctf_2fort", "z. B. ctf_2fort, cp_dustbowl, pl_badwater, koth_harvest_final"],
@@ -188,9 +188,10 @@ def build(game: str, v: dict, data_dir: str) -> dict:
     if game == "cs2":
         port, tv = _port(v.get("port"), "Spielport"), _port(v.get("tv_port"), "CSTV-Port")
         if not v.get("token") or not v.get("rcon_pw"):
-            raise ValueError("Steam-Token und RCON-Passwort sind Pflicht")
+            raise ValueError("RCON-Passwort fehlt" if v.get("token") else
+                             "Kein Steam-Token frei – unter Automatik & Einstellungen → Steam-Tokens einen eintragen oder den Steam-API-Schlüssel hinterlegen")
         gt, gm = MODES.get(v.get("mode") or "wingman", (0, 2))
-        env = [f"SRCDS_TOKEN={v['token']}", f"CS2_SERVERNAME={v.get('server_name') or name}",
+        env = [f"SRCDS_TOKEN={v.get('token') or ''}", f"CS2_SERVERNAME={v.get('server_name') or name}",
                f"CS2_GAMEALIAS={v.get('mode') or 'wingman'}", f"CS2_STARTMAP={v.get('map') or 'de_inferno'}",
                f"CS2_MAXPLAYERS={int(v.get('slots') or 20)}", f"CS2_PORT={port}", f"TV_PORT={tv}",
                f"CS2_RCONPW={v['rcon_pw']}", f"CS2_PW={v.get('server_pw') or ''}", "CS2_MAPGROUP=mg_active",

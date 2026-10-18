@@ -227,6 +227,24 @@
           <div style="overflow:auto"><table class="tbl"><thead><tr><th>Muster (z. B. aim_*)</th><th>Bezeichnung</th><th>Spieler</th><th></th></tr></thead><tbody id="ruleRows"></tbody></table></div>
           <button class="small" id="btnRuleAdd" style="margin-top:8px">+ Regel</button>
         </div>
+        <div class="panel" id="gsltPanel">
+          <h2>Steam-Tokens (GSLT) <span class="hint">für CS2 und TF2 – werden beim Anlegen automatisch eingesetzt</span></h2>
+          <div class="row" style="flex-wrap:wrap;gap:8px;align-items:end;margin-bottom:10px">
+            <div style="flex:1;min-width:260px"><label>Steam-Web-API-Schlüssel (steamcommunity.com/dev/apikey) – damit holt und erstellt das Tool Tokens selbst</label>
+              <input id="gsltKey" type="password" placeholder="leer lassen = Tokens nur von Hand" autocomplete="off" class="mono"></div>
+            <button id="btnGsltKey">Schlüssel speichern</button>
+            <button id="btnGsltSync">Von Steam abrufen</button>
+            <button id="btnGsltImport" title="Tokens der laufenden CS2/TF2-Server in die Liste übernehmen">Von Servern übernehmen</button>
+          </div>
+          <div class="row" style="flex-wrap:wrap;gap:8px;align-items:end;margin-bottom:10px">
+            <div><label>Spiel</label><select id="gsltGame"><option value="cs2">CS2</option><option value="tf2">TF2</option></select></div>
+            <div><label>Notiz</label><input id="gsltMemo" placeholder="z. B. CS #5" maxlength="32"></div>
+            <div style="flex:1;min-width:220px"><label>Token (leer = bei Steam neu erstellen)</label><input id="gsltToken" class="mono" autocomplete="off"></div>
+            <button class="primary" id="btnGsltAdd">Hinzufügen</button>
+          </div>
+          <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Spiel</th><th>Notiz</th><th>Token</th><th>Benutzt von</th><th>Status</th><th></th></tr></thead><tbody id="gsltRows"></tbody></table></div>
+          <div class="hint" id="gsltHint" style="margin-top:6px"></div>
+        </div>
         <div class="panel">
           <h2>Sonstiges</h2>
           <div class="settings-grid">
@@ -561,6 +579,7 @@
             <button class="primary opsonly" data-ct="start">Starten</button>
             <button class="opsonly" data-ct="restart">Neu starten</button>
             <button class="danger opsonly" data-ct="stop">Stoppen</button>
+            <button class="mgronly hidden" id="btnGsltAssign" title="Freien Steam-Token aus der Liste einsetzen (z. B. bei „Token wird schon benutzt“)">Steam-Token tauschen</button>
             <button class="mgronly hidden" id="btnSteamFix" title="SteamCMD-Workaround: einmal als Windows, dann als Linux laden (z. B. bei „Invalid platform“)">Steam-Installation reparieren</button>
           </div>
           <div class="sleepbox" id="ctSleep">
@@ -719,6 +738,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=70"></script>
+<script src="/static/app.js?v=71"></script>
 </body>
 </html>
