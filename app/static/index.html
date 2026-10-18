@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=81">
+<link rel="stylesheet" href="/static/app.css?v=84">
 </head>
 <body>
 
@@ -96,6 +96,25 @@
     </section>
 
     <!-- Speicher / iSCSI -->
+    <section id="view-game" class="hidden">
+      <div class="topbar"><div><div class="title" id="gvTitle">Spiel</div><div class="sub" id="gvSub"></div></div></div>
+      <div class="content">
+        <div class="panel">
+          <div class="row gvbar" style="flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px">
+            <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="gvAll" style="width:auto"> alle</label>
+            <span class="hint" id="gvSel">0 ausgewählt</span>
+            <button class="small opsonly" data-gva="start">▶ Starten</button>
+            <button class="small opsonly" data-gva="stop">■ Stoppen</button>
+            <button class="small opsonly" data-gva="restart">↻ Neustarten</button>
+            <button class="small opsonly" data-gva="pause">⏸ Pausieren</button>
+            <button class="small opsonly" data-gva="unpause">⏵ Fortfahren</button>
+            <button class="small danger mgronly" data-gva="delete">✕ Löschen …</button>
+          </div>
+          <div style="overflow:auto"><table class="cachetable gvtable"><thead><tr><th></th><th></th><th>Server</th><th>Adresse</th><th>Map</th><th>Spieler</th><th>Container</th><th>Erreichbar</th></tr></thead><tbody id="gvRows"></tbody></table></div>
+          <div class="hint" id="gvLog" style="margin-top:8px;white-space:pre-line"></div>
+        </div>
+      </div>
+    </section>
     <section id="view-storage" class="hidden">
       <div class="topbar"><div><div class="title">Speicher (iSCSI)</div><div class="sub">LUN vom NAS als lokalen Datenträger einbinden – z. B. für den Lancache-Cache</div></div></div>
       <div class="content" style="max-width:1200px">
@@ -749,6 +768,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=83"></script>
+<script src="/static/app.js?v=84"></script>
 </body>
 </html>

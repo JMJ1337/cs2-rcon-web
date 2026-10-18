@@ -331,10 +331,12 @@ function showView(v){
   if (v === "cache"){ loadCacheLive(); loadCacheHistory(); loadDnsCheck(); }
   if (v === "prefill"){ pfLoaded = false; loadPrefill(); }
   if (v === "storage"){ loadStorage(true); loadFolders(); }
+  if (v === "game") renderGameView();
 }
 
 /* ================= Serverliste ================= */
 let overview = [];
+let gvGame = null, gvSel = new Set();   // Spiel-Übersicht
 async function loadServers(){
   servers = await api("/api/servers");
   if (current) current = servers.find(s => s.id === current.id) || null;
@@ -351,12 +353,12 @@ function renderServerList(){
     const players = list.reduce((a, s) => a + (stateOf(s.id).online ? (stateOf(s.id).humans || 0) : 0), 0);
     const open = !collapsed[g] || (current && gameOf(current) === g);
     return `<div class="sgroup ${open ? "open" : ""}">
-      <button class="sghead" data-group="${g}" title="${esc(GAMES[g]?.label || g)} ein-/ausklappen">
-        ${gameTile(g, 18)}
+      <div class="sghead${view === "game" && gvGame === g ? " active" : ""}" data-group="${g}">
+        <button class="sgopen" data-gview="${g}" title="Alle ${esc(GAMES[g]?.label || g)}-Server anzeigen und gemeinsam steuern">${gameTile(g, 18)}
         <span class="sgname">${esc(GAMES[g]?.short || g)}</span>
-        <span class="sgcount">${on}/${list.length}${players ? ` · ${players} ☺` : ""}</span>
-        <span class="chev">▾</span>
-      </button>
+        <span class="sgcount">${on}/${list.length}${players ? ` · ${players} ☺` : ""}</span></button>
+        <button class="chev" data-gtoggle="${g}" title="ein-/ausklappen">▾</button>
+      </div>
       <div class="sgbody">${list.map(s => {
         const st = stateOf(s.id);
         const lim = st.visible_players > 0 ? st.visible_players : st.max_players;
@@ -368,12 +370,14 @@ function renderServerList(){
       }).join("")}</div></div>`;
   }).join("");
   $$(".srv").forEach(el => el.onclick = () => selectServer(servers.find(s => s.id === el.dataset.id)));
-  $$(".sghead").forEach(b => b.onclick = () => {
-    const g = b.dataset.group;
-    collapsed[g] = b.parentElement.classList.contains("open");
+  $$("[data-gtoggle]").forEach(b => b.onclick = () => {
+    const g = b.dataset.gtoggle, grp = b.closest(".sgroup");
+    collapsed[g] = grp.classList.contains("open");
     try { localStorage.setItem("gsmCollapsed", JSON.stringify(collapsed)); } catch {}
-    b.parentElement.classList.toggle("open");
+    grp.classList.toggle("open");
   });
+  $$("[data-gview]").forEach(b => b.onclick = () => { gvGame = b.dataset.gview; gvSel = new Set(); showView("game"); });
+  if (view === "game") renderGameView();
 }
 
 /* ================= Status-LED ================= */
@@ -900,7 +904,7 @@ async function refreshDash(){
 }
 
 /* ================= Server-Ansicht ================= */
-const VIEWS = ["dash","players","auto","server","scan","create","users","cache","prefill","storage"];
+const VIEWS = ["dash","players","auto","server","scan","create","users","cache","prefill","storage","game"];
 function applyGameClasses(s){
   const g = gameOf(s), meta = GAMES[g] || {};
   document.body.classList.toggle("g-other", g !== "cs2");
@@ -2828,3 +2832,53 @@ function renderFolders(){
 }
 $("#btnFldRefresh").onclick = () => loadFolders(true);
 $("#fldFilter").addEventListener("input", renderFolders);
+
+/* ================= Spiel-Übersicht: alle Server eines Spiels, Sammelaktionen ================= */
+function renderGameView(){
+  if (view !== "game" || !gvGame) return;
+  const g = GAMES[gvGame] || {label: gvGame}, list = servers.filter(s => gameOf(s) === gvGame);
+  gvSel = new Set([...gvSel].filter(id => list.some(s => s.id === id)));
+  $("#gvTitle").innerHTML = `${gameTile(gvGame, 22)} ${esc(g.label)}`;
+  const on = list.filter(s => stateOf(s.id).online).length;
+  $("#gvSub").textContent = `${list.length} Server · ${on} online · ${list.reduce((a, s) => a + (stateOf(s.id).online ? (stateOf(s.id).humans || 0) : 0), 0)} Spieler`;
+  $("#gvRows").innerHTML = list.map(s => {
+    const o = stateOf(s.id), c = o.load && !o.load.error ? o.load.state : null;
+    const lim = o.visible_players > 0 ? o.visible_players : o.max_players;
+    return `<tr data-gvid="${esc(s.id)}"><td><input type="checkbox" data-gvc="${esc(s.id)}" ${gvSel.has(s.id) ? "checked" : ""} style="width:auto"></td>
+      <td>${led(o)}</td><td><a href="#" data-gvopen="${esc(s.id)}"><b>${esc(s.name)}</b></a></td>
+      <td class="mono">${esc(s.host)}:${esc(s.port)}</td><td>${esc(o.online ? (gvGame === "wreckfest" ? (o.track_name || o.map || "") : (o.map_title || o.map || "")) : "")}</td>
+      <td>${o.online ? `${o.humans ?? 0}${lim ? "/" + lim : ""}` : "–"}</td>
+      <td>${s.container ? `<span class="hint">${esc(CSTATE[c] || c || "?")}</span>` : `<span class="hint">kein Container</span>`}</td>
+      <td>${o.online ? reachPill(o.reach) : ""}</td></tr>`;
+  }).join("") || `<tr><td colspan="8" class="hint">Keine Server</td></tr>`;
+  $("#gvAll").checked = list.length > 0 && gvSel.size === list.length;
+  $("#gvSel").textContent = `${gvSel.size} ausgewählt`;
+  $$("[data-gvc]").forEach(cb => cb.onchange = () => { cb.checked ? gvSel.add(cb.dataset.gvc) : gvSel.delete(cb.dataset.gvc); renderGameView(); });
+  $$("[data-gvopen]").forEach(a => a.onclick = e => { e.preventDefault(); selectServer(servers.find(s => s.id === a.dataset.gvopen)); });
+}
+$("#gvAll").onchange = () => { const list = servers.filter(s => gameOf(s) === gvGame); gvSel = $("#gvAll").checked ? new Set(list.map(s => s.id)) : new Set(); renderGameView(); };
+const GV_LABEL = {start: "starten", stop: "stoppen", restart: "neu starten", pause: "pausieren", unpause: "fortfahren lassen", delete: "löschen"};
+$$("[data-gva]").forEach(b => b.onclick = async () => {
+  const act = b.dataset.gva, sel = servers.filter(s => gvSel.has(s.id));
+  if (!sel.length) return toast("Erst Server auswählen", true);
+  let delData = false;
+  if (act === "delete"){
+    if (!confirm(`${sel.length} Server löschen?\n${sel.map(s => "• " + s.name).join("\n")}\n\nContainer werden entfernt.`)) return;
+    delData = confirm("Auch die Spieldaten (Ordner) löschen?\nOK = Daten endgültig löschen · Abbrechen = Daten behalten");
+    if (delData && prompt(`Zur Bestätigung LÖSCHEN eintippen – ${sel.length} Server samt Daten werden endgültig gelöscht`) !== "LÖSCHEN") return toast("Abgebrochen");
+  } else if (!confirm(`${sel.length} Server ${GV_LABEL[act]}?\n${sel.map(s => "• " + s.name).join("\n")}`)) return;
+  const log = [];
+  $("#gvLog").textContent = "läuft …";
+  await Promise.all(sel.map(async s => {
+    try {
+      if (act === "delete") await api(`/api/servers/${s.id}/delete`, {body: {remove_container: !!s.container, delete_data: delData && !!s.container, confirm: s.name}});
+      else if (!s.container) throw new Error("kein Container");
+      else await api(`/api/servers/${s.id}/container/${act}`, {method: "POST"});
+      log.push(`✓ ${s.name}`);
+    } catch (e){ log.push(`✕ ${s.name}: ${e.message}`); }
+  }));
+  $("#gvLog").textContent = log.join("\n");
+  toast(`${GV_LABEL[act]}: ${log.filter(x => x.startsWith("✓")).length}/${sel.length} ok`, log.some(x => x.startsWith("✕")));
+  if (act === "delete") gvSel = new Set();
+  setTimeout(async () => { await loadServers(); refreshDash(); renderGameView(); }, act === "delete" ? 3000 : 1500);
+});

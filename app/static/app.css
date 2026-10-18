@@ -481,3 +481,9 @@ a.btn.tvbtn{background:var(--panel2);color:var(--text);border:1px solid var(--li
 .wfpitem{display:flex;flex-direction:column;gap:4px;align-items:stretch;text-align:left;padding:6px;font-size:12px}
 .wfpitem .wfth{width:100%;height:68px}
 .wfpitem.active{outline:2px solid var(--accent)}
+
+.sghead{display:flex;align-items:center;gap:0}
+.sghead .sgopen{flex:1;display:flex;align-items:center;gap:10px;background:none;border:0;padding:0;color:inherit;text-align:left;cursor:pointer;min-width:0}
+.sghead .chev{background:none;border:0;color:inherit;cursor:pointer;padding:4px 8px}
+.sghead.active .sgname{color:var(--accent)}
+.gvtable td{vertical-align:middle}
