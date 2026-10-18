@@ -1630,6 +1630,7 @@ async function openDelete(s){
   $("#delCtName").textContent = plan.container || "";
   const items = [...plan.paths.map(p => ({label: p.path, blocked: p.blocked})), ...plan.volumes.map(v => ({label: "Volume " + v.name, blocked: v.blocked}))];
   $("#delDataRow").classList.toggle("hidden", !hasCt || !items.length);
+  if (hasCt){ $("#delCt").checked = true; $("#delData").checked = items.some(i => !i.blocked); updDel(); }   // Standard: alles weg
   $("#delPaths").innerHTML = !hasCt ? `<span class="hint">${plan.container_error ? "Container nicht gefunden – " : ""}Kein Container verknüpft: Es wird nur der Eintrag in der Liste entfernt.</span>` :
     items.map(i => `<div>${i.blocked ? "🔒" : "🗑"} <span class="mono">${esc(i.label)}</span>${i.blocked ? ` <span class="hint">– bleibt erhalten: ${esc(i.blocked)}</span>` : ""}</div>`).join("") || `<span class="hint">Keine Datenordner gefunden.</span>`;
 }
@@ -2329,7 +2330,8 @@ async function refreshActivity(){
     }
     parts.push(`<div class="act" data-act-sid="${esc(it.server_id)}" title="${esc(it.container)}">
       <div class="t">${gicon(it.game, 14)}<span class="n">${esc(it.name)}</span></div>
-      <div class="bar"><i style="width:${Math.min(100, p.pct)}%"></i></div><div class="s">${esc(progressText(p))}</div></div>`);
+      <div class="bar"><i style="width:${Math.min(100, p.pct)}%"></i></div><div class="s">${esc(progressText(p))}</div>
+      <button class="small danger mgronly" data-act-abort="${esc(it.server_id)}" title="Installation abbrechen: Server, Container und alle Spieldaten löschen">✕ Abbrechen</button></div>`);
   });
   $("#activity").innerHTML = parts.join("");
   $("#activity").classList.toggle("hidden", !parts.length);
@@ -2344,6 +2346,13 @@ async function refreshActivity(){
     refreshActivity();
   });
   $$("[data-act-job]").forEach(el => el.onclick = () => showView("create"));
+  $$("[data-act-abort]").forEach(b => b.onclick = async e => {
+    e.stopPropagation();
+    const s = servers.find(x => x.id === b.dataset.actAbort); if (!s) return;
+    if (!confirm(`Installation von „${s.name}“ abbrechen?\nServer, Container und alle Spieldaten werden gelöscht.`)) return;
+    try { await api(`/api/servers/${s.id}/delete`, {body: {remove_container: true, delete_data: true, confirm: s.name}}); toast(`${s.name} wird gelöscht`); setTimeout(async () => { await loadServers(); refreshActivity(); }, 2500); }
+    catch (err){ toast(err.message, true); }
+  });
   $$("[data-act-cancel]").forEach(b => b.onclick = e => { e.stopPropagation(); cancelJob(b.dataset.actCancel); });
   $$("[data-act-prefill]").forEach(el => el.onclick = () => { pfSvc = el.dataset.actPrefill || "steam"; showView("prefill"); });
 }
@@ -2983,8 +2992,8 @@ $$("[data-gva]").forEach(b => b.onclick = async () => {
   if (!sel.length) return toast("Erst Server auswählen", true);
   let delData = false;
   if (act === "delete"){
-    if (!confirm(`${sel.length} Server löschen?\n${sel.map(s => "• " + s.name).join("\n")}\n\nContainer werden entfernt.`)) return;
-    delData = confirm("Auch die Spieldaten (Ordner) löschen?\nOK = Daten endgültig löschen · Abbrechen = Daten behalten");
+    if (!confirm(`${sel.length} Server löschen?\n${sel.map(s => "• " + s.name).join("\n")}\n\nContainer und alle Spieldaten werden entfernt.`)) return;
+    delData = true;
     if (delData && prompt(`Zur Bestätigung LÖSCHEN eintippen – ${sel.length} Server samt Daten werden endgültig gelöscht`) !== "LÖSCHEN") return toast("Abgebrochen");
   } else if (!confirm(`${sel.length} Server ${GV_LABEL[act]}?\n${sel.map(s => "• " + s.name).join("\n")}`)) return;
   const log = [];

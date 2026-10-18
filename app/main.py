@@ -1384,6 +1384,7 @@ async def live_loop():
                 if cache_stats.state.get("container"):
                     names.add(cache_stats.state["container"])
                 names.add(prefill.NAME)
+                names |= {sv["name"] for sv in prefill_more.SERVICES.values()}
                 livestats.ensure(names)
         except Exception:  # noqa: BLE001
             log.exception("Live-Messung")
@@ -4406,7 +4407,18 @@ def fmt_gb(b: int) -> str:
     return f"{b / 1e9:.1f} GB" if b >= 1e9 else f"{b / 1e6:.0f} MB"
 
 
+_create_lock = asyncio.Lock()          # Server werden nacheinander angelegt, nie parallel
+
+
 async def _create_job(job: dict, data: CreateIn, host: str):
+    if _create_lock.locked():
+        job["step"] = "wartet – vorheriger Server wird noch angelegt"
+        _job_log(job, job["step"])
+    async with _create_lock:
+        await _create_job_inner(job, data, host)
+
+
+async def _create_job_inner(job: dict, data: CreateIn, host: str):
     try:
         b = templates.build(data.game, data.values, data.data_dir)
         _job_log(job, f"Ordner vorbereiten: {', '.join(b['dirs'])}")
@@ -5716,7 +5728,7 @@ async def _cleanup_job(job: dict) -> list[str]:
             save_servers([x for x in load_servers() if x["id"] != job["server_id"]])
         _state.pop(job["server_id"], None)
         done.append("Servereintrag entfernt")
-    if job.get("data_new") and req.get("data_dir"):
+    if req.get("data_dir"):
         try:
             others = await docker_api.all_mounts()
             other_src = [m["source"] for ms in others.values() for m in ms if m["type"] == "bind" and m["source"]]
