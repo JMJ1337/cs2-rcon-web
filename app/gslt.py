@@ -189,6 +189,21 @@ def assign(token: str, target: str | None) -> None:
     _save(d)
 
 
+def reconcile(in_use: dict[str, str], alive: set[str]) -> int:
+    """Zuordnungen aufräumen: genutzte Tokens dem Server zuordnen, Zuordnungen zu gelöschten Containern/Servern lösen."""
+    d, n = _load(), 0
+    for t in d["tokens"]:
+        tok = t.get("token") or ""
+        if tok in in_use:
+            if t.get("assigned") != in_use[tok]:
+                t["assigned"] = in_use[tok]; n += 1
+        elif t.get("assigned") and t["assigned"] not in alive:
+            t["assigned"] = None; n += 1
+    if n:
+        _save(d)
+    return n
+
+
 def free_token(appid: int, used: set[str]) -> dict | None:
     for t in tokens():
         if t.get("appid") == appid and not t.get("expired") and not t.get("deleted") and t.get("token") \

@@ -3449,9 +3449,25 @@ async def _token_usage() -> dict[str, str]:
     return out
 
 
+async def _gslt_reconcile() -> dict[str, str]:
+    use = await _token_usage()
+    alive = {x["name"] for x in load_servers()} | {x.get("container") for x in load_servers() if x.get("container")}
+    for j in _jobs.values():                 # Server, die gerade angelegt werden
+        if not j.get("done"):
+            alive |= {((j.get("req") or {}).get("values") or {}).get("name") or ""}
+            alive |= {(pl.get("values") or {}).get("name") or "" for pl in j.get("plans") or []}
+    if docker_api.available():
+        try:
+            alive |= {c["name"] for c in await docker_api.list_containers()}
+        except docker_api.DockerError:
+            return use
+    gslt.reconcile(use, alive)
+    return use
+
+
 @app.get("/api/gslt", dependencies=auth)
 async def gslt_list():
-    use = await _token_usage()
+    use = await _gslt_reconcile()
     lst = gslt.public_list()
     for t, full in zip(lst, gslt.tokens()):      # gleiche Reihenfolge
         t["used_by"] = use.get(full.get("token") or "")
@@ -4315,36 +4331,56 @@ async def wf_hostnet(sid: str):
 
 # ---------------------------------------------------------------- Speicher / iSCSI (nur Planung + lesende Prüfung)
 # ---------------------------------------------------------------- Ordner im Spieleverzeichnis (Platz schaffen)
-_folders: dict = {"items": [], "t": 0.0, "busy": False, "error": None, "base": None}
-FOLDERS_SH = r"""cd /base || exit 1
+_folders: dict = store.load("folders.json", {}) or {}
+_folders.update(busy=False)
+for _k, _v in {"items": [], "t": 0.0, "error": None, "base": None}.items():
+    _folders.setdefault(_k, _v)
+LIST_SH = r"""cd /base || exit 1
 for d in */ */*/; do [ -d "$d" ] || continue; echo "D	${d%/}"; done
-nice -n 19 du -sk -- */ 2>/dev/null | sed 's|/$||;s/^/S	/'
-nice -n 19 du -sk -- */*/ 2>/dev/null | sed 's|/$||;s/^/S	/'
 """
 
 
 async def _scan_folders():
+    """Erst schnell alle Ordner auflisten, dann Größen einzeln messen (Ergebnis bleibt über Neustarts erhalten)."""
     if _folders["busy"]:
         return
     _folders["busy"] = True
     base = os.path.normpath(automation.get_settings().get("games_base") or "/mnt/grohlan")
     try:
-        out = await docker_api.run_helper([f"{base}:/base:ro"], ["sh", "-c", FOLDERS_SH], timeout=1800)
-        sizes, dirs = {}, []
-        for line in out.splitlines():
-            kind, _, rest = line.partition("\t")
-            if kind == "D":
-                dirs.append(rest)
-            elif kind == "S" and "\t" in rest:
-                kb, _, rel = rest.partition("\t")
-                if kb.isdigit():
-                    sizes[rel] = int(kb) * 1024
-        _folders.update(items=[{"rel": d, "path": f"{base}/{d}", "bytes": sizes.get(d)} for d in dirs], base=base, error=None)
+        out = await docker_api.run_helper([f"{base}:/base:ro"], ["sh", "-c", LIST_SH], timeout=120)
+        old = {f["rel"]: f.get("bytes") for f in _folders["items"]} if _folders.get("base") == base else {}
+        dirs = [ln.split("\t", 1)[1] for ln in out.splitlines() if ln.startswith("D\t")]
+        _folders.update(items=[{"rel": d, "path": f"{base}/{d}", "bytes": old.get(d)} for d in dirs], base=base, error=None)
+        tops = [d for d in dirs if "/" not in d]
+        for top in tops:                       # je Spielordner: Unterordner + Summe
+            try:
+                res = await docker_api.run_helper([f"{base}/{top}:/t:ro"], ["sh", "-c",
+                                                  "cd /t && nice -n 19 du -sk -- */ 2>/dev/null | sed 's|/$||'; echo \"TOTAL $(nice -n 19 du -sk . 2>/dev/null | cut -f1)\""],
+                                                  timeout=1800)
+            except docker_api.DockerError as e:
+                _folders["error"] = f"{top}: {e}"
+                continue
+            sizes = {}
+            for ln in res.splitlines():
+                if ln.startswith("TOTAL "):
+                    v = ln.split()[1] if len(ln.split()) > 1 else ""
+                    if v.isdigit():
+                        sizes[top] = int(v) * 1024
+                elif "\t" in ln:
+                    kb, _, rel = ln.partition("\t")
+                    if kb.isdigit():
+                        sizes[f"{top}/{rel}"] = int(kb) * 1024
+            for f in _folders["items"]:
+                if f["rel"] in sizes:
+                    f["bytes"] = sizes[f["rel"]]
+            _folders["t"] = time.time()
+            store.save("folders.json", {k: v for k, v in _folders.items() if k != "busy"})
     except docker_api.DockerError as e:
         _folders["error"] = str(e)
     finally:
         _folders["busy"] = False
         _folders["t"] = time.time()
+        store.save("folders.json", {k: v for k, v in _folders.items() if k != "busy"})
 
 
 @app.get("/api/storage/folders", dependencies=auth)
@@ -4725,7 +4761,7 @@ async def create_server(data: CreateIn, request: Request):
     need_game(request, data.game, 4)
     if data.game in gslt.APPS and not (data.values.get("token") or "").strip():
         try:   # Steam-Token automatisch: freien gespeicherten nehmen oder (mit API-Schlüssel) neu anlegen
-            t = await gslt.get_or_create(gslt.APPS[data.game], (data.values.get("name") or data.game)[:32], set(await _token_usage()))
+            t = await gslt.get_or_create(gslt.APPS[data.game], (data.values.get("name") or data.game)[:32], set(await _gslt_reconcile()))
         except gslt.GsltError as e:
             t = None
             log.warning("GSLT: %s", e)
@@ -4806,7 +4842,7 @@ async def _run_batch(job: dict) -> None:
             # Token wie beim Einzelanlegen automatisch
             if sub.game in gslt.APPS and not (sub.values.get("token") or "").strip():
                 try:
-                    t = await gslt.get_or_create(gslt.APPS[sub.game], (sub.values.get("name") or sub.game)[:32], set(await _token_usage()))
+                    t = await gslt.get_or_create(gslt.APPS[sub.game], (sub.values.get("name") or sub.game)[:32], set(await _gslt_reconcile()))
                 except gslt.GsltError as e:
                     t = None
                     _job_log(job, f"Steam-Token: {e}")

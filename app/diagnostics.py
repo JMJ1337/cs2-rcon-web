@@ -38,7 +38,7 @@ RULES = [
      "Minecraft-EULA nicht akzeptiert", "Umgebungsvariable EULA=TRUE setzen und Container neu starten."),
     (("minecraft",), r"(UnsupportedClassVersionError|requires running the server with Java|has been compiled by a more recent version of the Java)",
      "Falsche Java-Version", "Passendes Image-Tag wählen (z. B. itzg/minecraft-server:java21 bzw. :java17 für alte Versionen/Mods)."),
-    (("minecraft",), r"(Failed to start the minecraft server|Encountered an unexpected exception|Mod .* requires|Missing mods?)",
+    (("minecraft",), r"(Failed to start the minecraft server|Encountered an unexpected exception|Mod .* requires|Missing mods?(?![.\w]))",
      "Minecraft startet nicht (Mods/Welt)", "Log im Container-Tab prüfen: fehlende oder unpassende Mods entfernen bzw. Version/Loader angleichen."),
     (("teamspeak",), r"(license.*(not accepted|accept)|TS3SERVER_LICENSE)",
      "TeamSpeak-Lizenz nicht akzeptiert", "Umgebungsvariable TS3SERVER_LICENSE=accept setzen."),
