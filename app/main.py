@@ -4554,6 +4554,9 @@ async def wf_lanrelay(sid: str, data: RelayIn):
     return {"ok": True, "relay": await _relay_state(name)}
 
 
+WF_EXTRA_UDP = 27017
+
+
 class PortsIn(BaseModel):
     port: int | None = Field(None, ge=1024, le=65535)          # CS2: Spielport · Wreckfest: Spielport (game_port)
     tv_port: int | None = Field(None, ge=1024, le=65535)       # CS2
@@ -4591,9 +4594,11 @@ async def change_ports(sid: str, data: PortsIn):
         sp = data.steam_port or int(vals.get("steam_port") or 27015)
         want = {port, q, sp}
         binds = {f"{port}/udp": port, f"{q}/udp": q, f"{sp}/udp": sp}
+        if WF_EXTRA_UDP not in want:      # Wreckfest (Wine) öffnet seinen Steam-Socket fest auf 27017
+            binds[f"{WF_EXTRA_UDP}/udp"] = WF_EXTRA_UDP
     if len(want) != (2 if g == "cs2" else 3):
         raise HTTPException(400, "Ports müssen verschieden sein")
-    clash = sorted(p for p in want if p in used and p not in own)
+    clash = sorted(p for p in set(binds.values()) if p in used and p not in own)
     if clash:
         raise HTTPException(409, f"Port {clash[0]} ist schon belegt ({used.get(clash[0])})")
     if g == "wreckfest":

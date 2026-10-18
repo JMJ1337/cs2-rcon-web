@@ -312,6 +312,8 @@ def build(game: str, v: dict, data_dir: str) -> dict:
         env = ["GAME_ID=361580", "VALIDATE=", "UID=99", "GID=100", "GAME_PARAMS="]
         # Ports innen = außen, damit die Werte in server_config.cfg stimmen (werden nach der Installation eingetragen)
         pub(port, "udp"); pub(qport, "udp"); pub(sport, "udp")
+        if 27017 not in (port, qport, sport):
+            pub(27017, "udp")          # Wreckfest unter Wine öffnet den Steam-Socket fest auf 27017
         exposed["8080/tcp"] = {}
         host["PortBindings"]["8080/tcp"] = [{"HostPort": str(wport)}]
         host["Binds"] += [f"{data_dir}/steamcmd:/serverdata/steamcmd", f"{data_dir}/serverfiles:/serverdata/serverfiles"]
