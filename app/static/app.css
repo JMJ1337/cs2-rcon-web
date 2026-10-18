@@ -487,3 +487,9 @@ a.btn.tvbtn{background:var(--panel2);color:var(--text);border:1px solid var(--li
 .sghead .chev{background:none;border:0;color:inherit;cursor:pointer;padding:4px 8px}
 .sghead.active .sgname{color:var(--accent)}
 .gvtable td{vertical-align:middle}
+
+.pubbtn{background:#e8892b !important;color:#1a1206 !important;border-color:#e8892b !important;font-weight:700;flex:none}
+.pubbtn:hover{filter:brightness(1.1)}
+aside .head{gap:8px}
+aside .head .logo{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pubcache.net .cdot{background:#4f9dde;box-shadow:0 0 6px #4f9dde}

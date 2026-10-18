@@ -196,6 +196,10 @@ function reachPill(r){
   const ic = r.kind === "online" ? "🌐" : r.kind === "direct" ? "🔗" : "🏠";
   return `<span class="pill reach ${esc(r.kind)}" title="${esc(r.detail || "")}">${ic} ${esc(r.label)}</span>`;
 }
+function pubNetHtml(n){
+  if (!n || n.down_bps == null) return "";
+  return `<span class="pubcache net" title="Was die Server gerade aus dem Internet laden (Spielserver-Downloads + Lancache)"><i class="cdot"></i>Internet ↓ ${fmtRate(n.down_bps)}</span>`;
+}
 function pubCacheHtml(c){
   if (!c || !c.found) return "";
   if (!c.running) return `<span class="pubcache off" title="Lancache-Container läuft nicht – Downloads gehen direkt ins Internet"><i class="cdot"></i>Lancache aus</span>`;
@@ -218,7 +222,7 @@ function renderPublic(){
   const on = r.servers.filter(x => x.online), pl = on.reduce((a, x) => a + (x.players || 0), 0);
   $("#pubStat").innerHTML = `<b>${on.length}</b> von ${r.servers.length} Servern online · <b>${pl}</b> Spieler · ` +
     (r.net === "internet" ? `<span class="pill" title="Du kommst aus dem Internet – Adressen zeigen die öffentliche IP">🌐 Internet${r.address ? " · " + esc(r.address) : ""}</span>`
-                          : `<span class="pill ok" title="Du bist im LAN – Adressen zeigen die LAN-IP">LAN</span>`) + pubCacheHtml(r.cache);
+                          : `<span class="pill ok" title="Du bist im LAN – Adressen zeigen die LAN-IP">LAN</span>`) + pubNetHtml(r.internet) + pubCacheHtml(r.cache);
   if (!r.servers.length){ $("#pubGrid").innerHTML = `<div class="hint">Noch keine Server eingerichtet.</div>`; return; }
   $("#pubGrid").innerHTML = r.servers.map((x, i) => {
     const g = GAMES[x.game] || r.games[x.game] || {label: x.game, color: "#888"};
@@ -229,7 +233,7 @@ function renderPublic(){
       ${thumb ? `<div class="pubthumb">${thumb}<span class="pubmap">${MAP_GAMES.has(x.game) && x.online ? esc(x.map_label || x.map || "") : ""}</span></div>` : ""}
       <div class="pubtop">${gameTile(x.game, 18)}<div class="pubname"><b title="${esc(x.name)}">${esc(x.name)}</b><span class="hint">${esc(g.label)} ${x.online ? reachPill(x.reach) : ""}</span></div>
         <span class="pill ${x.online ? "ok" : ""}">${x.online ? `● ${x.players ?? 0}${x.max_players ? "/" + x.max_players : ""} Spieler` : x.sleeping ? "💤 schläft" : x.install ? "⬇ wird installiert" : "offline"}</span></div>
-      ${x.install ? `<div class="pubinst"><div class="bar"><i style="width:${Math.min(100, x.install.pct)}%"></i></div><span>${esc(x.install.label)} · ${Math.round(x.install.pct)} %${x.install.eta ? ` · fertig ca. ${etaClock(x.install.eta)} Uhr` : ""}</span></div>` : ""}
+      ${x.install ? `<div class="pubinst"><div class="bar"><i style="width:${Math.min(100, x.install.pct)}%"></i></div><span>${esc(x.install.label)} · ${Math.round(x.install.pct)} %${x.install.rate_bps ? ` · ${x.install.rate_kind === "Kopieren" ? "⇄" : "↓"} ${fmtRate(x.install.rate_bps)}` : ""}${x.install.eta ? ` · fertig ca. ${etaClock(x.install.eta)} Uhr` : ""}</span></div>` : ""}
       ${x.sleeping ? `<div class="pubjoin"><button class="small primary" data-pwake="${esc(x.id)}">Aufwecken</button><span class="hint">Server ruht, weil niemand drauf war – startet in ${x.sleeping === "pause" ? "1–2 Sekunden" : "ca. 1–3 Minuten"}.</span></div>` : ""}
       ${x.map && x.map !== "–" && x.online ? `<div class="pubmapline">${esc(x.map_label || x.map)}</div>` : ""}
       ${meta ? `<div class="hint pubmeta">${meta}</div>` : ""}

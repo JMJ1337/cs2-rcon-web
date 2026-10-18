@@ -253,7 +253,8 @@ def _pending_installs(known: set) -> list[dict]:
         pg = j.get("progress") or {}
         label = pg.get("label") or ("Spieldateien kopieren" if j.get("stage") == "copy" else (j.get("step") or "wird angelegt")[:60])
         out.append({"id": f"job-{j['id']}", "game": j["game"], "name": j.get("title") or j["game"], "online": False, "pending": True,
-                    "install": {"label": label, "pct": round(pg.get("pct") or 0, 1), "eta": pg.get("eta")}})
+                    "install": {"label": label, "pct": round(pg.get("pct") or 0, 1), "eta": pg.get("eta"),
+                                "rate_bps": pg.get("rate_bps"), "rate_kind": "Kopieren"}})
     return out
 
 
@@ -261,8 +262,10 @@ def _public_install(s: dict) -> dict | None:
     p = ((install_watch.state.get(s.get("container") or "") or {}).get("progress")) if s.get("container") else None
     if not p:
         return None
+    ld = livestats.data.get(s.get("container") or "") or {}
+    rate = ld.get("rx_bps") if ld and time.time() - ld.get("t", 0) < 10 else None
     return {"label": p.get("label") or "Installation", "pct": round(p.get("pct") or 0, 1), "eta": p.get("eta"),
-            "phase": p.get("phase"), "total": p.get("total")}
+            "phase": p.get("phase"), "total": p.get("total"), "rate_bps": round(rate) if rate else None, "rate_kind": "Download"}
 
 
 _rot_cache: dict[str, tuple[float, list]] = {}
@@ -371,9 +374,15 @@ async def public_servers(request: Request):
         hr = (cache_stats.summary().get("last_hour") or {}).get("hit_ratio")
     except Exception:  # noqa: BLE001
         hr = None
+    now = time.time()
+    skip = {prefill.NAME, "spielservermanager"}
+    rx = [d.get("rx_bps") for n_, d in livestats.data.items()
+          if n_ not in skip and d.get("running") and d.get("rx_bps") is not None and now - d.get("t", 0) < 10]
+    internet = {"down_bps": round(sum(rx)) if rx else None}  # Bytes/s
     cache = {"found": bool(lc), "running": bool(fresh and ld.get("running", True)) if lc else False,
              "tx_bps": ld.get("tx_bps") if fresh else None, "rx_bps": ld.get("rx_bps") if fresh else None, "hit_ratio": hr}
     return {"servers": out, "games": games, "updated": time.time(), "net": "lan" if lan else "internet", "cache": cache,
+            "internet": internet,
             "matches": [_public_match(m) for m in matchlog.recent(None, 6)],
             "address": None if lan else await wan_host()}
 
@@ -3599,7 +3608,8 @@ async def _copy_game_files(job: dict, b: dict, src_id: str) -> None:
             pct = min(99.9, done / whole * 100) if whole else 0.0
             eta = round((whole - done) / rate) if whole and rate > 0 else None
             job["progress"] = {"label": "Kopiere Spieldateien", "pct": round(pct, 1), "done_files": n, "total_files": total,
-                               "total_bytes": total_kb * 1024, "done_bytes": kbs[-1] * 1024 if kbs else None, "eta": eta}
+                               "total_bytes": total_kb * 1024, "done_bytes": kbs[-1] * 1024 if kbs else None, "eta": eta,
+                               "rate_bps": round(rate * 1024) if kbs and total_kb else None}
             job["step"] = f"Kopiere Spieldateien von {src['name']}: {pct:.0f} %" + (f" · noch ca. {max(1, eta // 60)} min" if eta else "")
             _save_jobs()
             if not (i2.get("State") or {}).get("Running"):
