@@ -5263,8 +5263,30 @@ def _apps_cache_status(appids) -> dict:
 
 
 async def _prefill_queue_tick() -> None:
-    """Nächsten Prefill aus der Warteschlange starten, sobald keiner mehr läuft."""
-    if await prefill_more.any_running():
+    """Nur ein Prefill gleichzeitig: weitere laufende anhalten und hinten anstellen; sonst den nächsten aus der Warteschlange starten."""
+    running = []
+    st = await prefill.container_state()
+    if st and st.get("running"):
+        running.append(("steam", st.get("started") or ""))
+    for svc in prefill_more.SERVICES:
+        s2 = await prefill_more.state(svc)
+        if s2 and s2.get("running"):
+            running.append((svc, s2.get("started") or ""))
+    if len(running) > 1:
+        running.sort(key=lambda x: x[1])
+        for svc, _ in running[1:]:
+            try:
+                if svc == "steam":
+                    await docker_api._req("POST", f"/containers/{prefill.NAME}/stop", params={"t": "5"}, timeout=30)
+                    prefill_more.enqueue({"svc": "steam", "mode": "prefill"})
+                else:
+                    await prefill_more.stop(svc)
+                    prefill_more.enqueue({"svc": svc, "opts": prefill_more.settings().get(svc) or {}})
+                log.info("Prefill %s angehalten – läuft nach %s weiter", svc, running[0][0])
+            except docker_api.DockerError:
+                pass
+        return
+    if running:
         return
     item = prefill_more.pop_queue()
     if not item:
