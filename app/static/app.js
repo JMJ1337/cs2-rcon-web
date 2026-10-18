@@ -2015,6 +2015,12 @@ $("#btnCreate").onclick = async () => {
     pollJob(job.id);
   } catch(err){ toast(err.message, true); }
 };
+async function cancelJob(id){
+  if (!confirm("Anlegen abbrechen?\nLaufende Schritte werden gestoppt, der Container und der neu angelegte Datenordner gelöscht.")) return;
+  try { const r = await api(`/api/jobs/${id}/cancel`, {method: "POST"}); toast("Abgebrochen" + (r.log.length ? ": " + r.log.join(" · ") : "")); }
+  catch (e){ toast(e.message, true); }
+  refreshActivity(); loadServers();
+}
 function pollJob(id){
   clearTimeout(jobTimer);
   api(`/api/jobs/${id}`).then(async j => {
@@ -2028,6 +2034,8 @@ function pollJob(id){
       $("#createProg .s").textContent = `${pg.label} · ${pg.pct.toFixed(1)} %` + (pg.done_bytes != null ? ` · ${fmtBytes(pg.done_bytes)} / ${fmtBytes(pg.total_bytes)}` : pg.total_files ? ` · ${pg.done_files} / ${pg.total_files} Dateien` : "") + (pg.eta ? ` · noch ${fmtEta(pg.eta)} (fertig ca. ${etaClock(pg.eta)} Uhr)` : "");
     }
     if (j.server_id){ await loadServers(); $("#btnCreateOpen").classList.remove("hidden"); $("#btnCreateOpen").onclick = () => selectServer(servers.find(s => s.id === j.server_id)); }
+    $("#btnCreateCancel").classList.toggle("hidden", !!j.done);
+    $("#btnCreateCancel").onclick = () => cancelJob(id);
     if (!j.done) jobTimer = setTimeout(() => pollJob(id), 2000);
   }).catch(err => { $("#createStep").textContent = err.message; });
 }
@@ -2249,7 +2257,7 @@ async function refreshActivity(){
   (a.jobs || []).forEach(j => {
     parts.push(`<div class="act ${j.error ? "err" : ""}" data-act-job="${esc(j.id)}">
       <div class="t">${gicon(j.game, 14)}<span class="n">${esc(j.title || `Neuer ${GAMES[j.game]?.short || j.game}-Server`)}</span></div>
-      ${j.error ? `<div class="e">${esc(j.error)}</div>` : `<div class="bar indet"><i></i></div><div class="s">${esc(j.step || "…")}</div>`}</div>`);
+      ${j.error ? `<div class="e">${esc(j.error)}</div>` : `<div class="bar indet"><i></i></div><div class="s">${esc(j.step || "…")}</div><button class="small danger mgronly" data-act-cancel="${esc(j.id)}" title="Anlegen abbrechen und aufräumen">✕ Abbrechen</button>`}</div>`);
   });
   (a.items || []).forEach(it => {
     const p = it.progress;
@@ -2278,6 +2286,7 @@ async function refreshActivity(){
     refreshActivity();
   });
   $$("[data-act-job]").forEach(el => el.onclick = () => showView("create"));
+  $$("[data-act-cancel]").forEach(b => b.onclick = e => { e.stopPropagation(); cancelJob(b.dataset.actCancel); });
   $$("[data-act-prefill]").forEach(el => el.onclick = () => showView("prefill"));
 }
 
@@ -2381,6 +2390,12 @@ async function loadCacheLive(){
     <h2 style="margin-bottom:8px">Live <span class="hint">(aktualisiert alle 5 s · Netzwerk des Lancache-Containers)</span>
       <span style="float:right" class="mono"><span style="color:${C_UP}">↑ ${fmtRate((c.net || {}).tx_bps || 0)}</span> an Clients · <span style="color:${C_DOWN}">↓ ${fmtRate((c.net || {}).rx_bps || 0)}</span> aus dem Internet</span></h2>
     ${(() => { const m = cacheLiveMetrics; return m && m.samples ? `<div class="mlab"><span>letzte ${rangeLabel(m.minutes)} · ${netLegend()}</span><b></b></div>${spark2(m.rx, m.tx, C_DOWN, C_UP, {min: 100000, fmt: AX.rate, h: 70})}` : ""; })()}
+    ${(c.live_downloads || []).length ? `<h3 class="pdsec">Wird gerade geladen <span class="hint">(letzte 60 s, nach Client und Spiel)</span></h3>
+      <div class="livedl">${c.live_downloads.map(d => `<div class="ldrow">
+        ${d.icon ? `<img src="${esc(d.icon)}" alt="" onerror="this.remove()">` : svcIcon(d.service, 16)}
+        <span class="ldname"><b>${esc(d.name || cacheName(d.service))}</b><span class="hint">${esc(d.client)}${d.client !== d.ip ? ` · ${esc(d.ip)}` : ""}</span></span>
+        <span class="mono">${fmtRate(d.bps)}</span>
+        <span class="ldhit" title="Anteil aus dem Cache"><i style="width:${d.hit_pct ?? 0}%"></i><em>${d.hit_pct != null ? d.hit_pct + " % Cache" : ""}</em></span></div>`).join("")}</div>` : ""}
     <div class="hint" style="margin:6px 0 8px">Laut Log: ${fmtRate(c.rate_bps || 0)} (davon ${fmtRate(c.hit_rate_bps || 0)} aus dem Cache) – das Log schreibt einen Download erst, wenn er fertig ist.</div>
     ${rows ? `<div style="overflow:auto;max-height:320px"><table class="cachetable"><thead><tr><th>Zeit</th><th>Dienst</th><th>Client</th><th>Größe</th><th></th><th>Server</th></tr></thead><tbody>${rows}</tbody></table></div>`
       : `<div class="hint">Gerade keine Downloads im access.log.</div>`}</div>`;

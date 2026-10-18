@@ -77,7 +77,7 @@ def ingest(text: str) -> int:
         if hit or cache in ("MISS", "EXPIRED", "STALE", "UPDATING", "REVALIDATED", "BYPASS"):
             cache_history.live(svc, ip, ts, size, hit, depot_of(line, svc))
         if ts > time.time() - 120:
-            _recent.append((ts, size, hit, ip))
+            _recent.append((ts, size, hit, ip, svc, depot_of(line, svc)))
         b = _bucket(int(ts // 60))
         if cache == "HIT":
             b["hit_b"] += size; b["hit"] += 1; b["svc"][svc][0] += size
@@ -185,10 +185,26 @@ def summary() -> dict:
     for x in win:
         per_ip[x[3]] = per_ip.get(x[3], 0) + x[1]
     live_clients = sorted(({"ip": k, "bps": round(v / 60)} for k, v in per_ip.items()), key=lambda c: -c["bps"])[:5]
+    # Was wird gerade geladen? (Client + Spiel, letzte 60 s) – aus den ohnehin gelesenen Log-Zeilen, kein Mehraufwand
+    from . import depots
+    grp: dict = {}
+    for x in win:
+        dep = x[5] if len(x) > 5 else None
+        e = depots.lookup(dep) if dep else None
+        key = (x[3], x[4] if len(x) > 4 else "?", e["app"] if e else (f"d{dep}" if dep else ""))
+        g = grp.setdefault(key, {"ip": x[3], "service": key[1], "app": e["app"] if e else None,
+                                 "name": (e or {}).get("name") or (f"Depot {dep}" if dep else None), "bytes": 0, "hit": 0})
+        g["bytes"] += x[1]
+        if x[2]:
+            g["hit"] += x[1]
+        if dep and not e:
+            depots.want([dep])
+    live_downloads = sorted(({**g, "bps": round(g["bytes"] / 60), "hit_pct": round(g["hit"] / g["bytes"] * 100) if g["bytes"] else None}
+                             for g in grp.values()), key=lambda g: -g["bytes"])[:12]
     rate = sum(x[1] for x in win) / 60
     hit_rate = sum(x[1] for x in win if x[2]) / 60
     return {"container": state["container"], "error": state["error"], "updated": state["updated"],
-            "disk": state["disk"], "storage": {k: v for k, v in storage.items() if k != "running"} | {"busy": storage["running"]}, "rate_bps": round(rate), "hit_rate_bps": round(hit_rate), "live_clients": live_clients,
+            "disk": state["disk"], "storage": {k: v for k, v in storage.items() if k != "running"} | {"busy": storage["running"]}, "rate_bps": round(rate), "hit_rate_bps": round(hit_rate), "live_clients": live_clients, "live_downloads": live_downloads,
             "last_hour": agg(60), "last_day": agg(KEEP_MIN)}
 
 

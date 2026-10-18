@@ -1558,7 +1558,7 @@ async def activity():
         pass
     jobs = [{"id": j["id"], "game": j["game"], "step": j["step"], "error": j["error"], "done": j["done"],
              "server_id": j["server_id"], "title": j.get("title"), "progress": j.get("progress")}
-            for j in _jobs.values() if not j["done"] or j["error"]]
+            for j in _jobs.values() if (not j["done"] or j["error"]) and not j.get("cancelled")]
     return {"items": items, "jobs": jobs[-5:]}
 
 
@@ -1877,6 +1877,13 @@ async def cache_metrics():
     hosts = {x["host"] for x in load_servers()}
     if out.get("live_clients"):
         out["live_clients"] = await netnames.annotate(out["live_clients"], hosts)
+    if out.get("live_downloads"):
+        by_ip = {p.get("lan_ip"): playerdb.display(p) for p in playerdb.all_players() if p.get("lan_ip")}
+        ann = await netnames.annotate([{"ip": d["ip"]} for d in out["live_downloads"]], hosts)
+        for d, a in zip(out["live_downloads"], ann):
+            d["client"] = by_ip.get(d["ip"]) or a.get("name") or d["ip"]
+            if d.get("app"):
+                d["icon"] = f"/api/appicon/{d['app']}"
     for k in ("last_hour", "last_day"):
         if out.get(k, {}).get("clients"):
             out[k]["clients"] = await netnames.annotate(out[k]["clients"], hosts)
@@ -3397,11 +3404,11 @@ def _resume_jobs() -> None:
         _jobs[j["id"]] = j
         if not j.get("done") and j.get("plans"):
             _job_log(j, "Tool wurde neu gestartet – Stapel wird fortgesetzt")
-            asyncio.create_task(_run_batch(j))
+            _job_tasks[j["id"]] = asyncio.create_task(_run_batch(j))
         elif not j.get("done") and j.get("req"):
             _job_log(j, "Tool wurde neu gestartet – Anlegen wird fortgesetzt")
             r = j["req"]
-            asyncio.create_task(_create_job(j, CreateIn(**{k: r[k] for k in ("game", "values", "data_dir", "host")}), r["host"]))
+            _job_tasks[j["id"]] = asyncio.create_task(_create_job(j, CreateIn(**{k: r[k] for k in ("game", "values", "data_dir", "host")}), r["host"]))
 
 
 @app.get("/api/templates", dependencies=auth)
@@ -3734,6 +3741,8 @@ async def _create_job(job: dict, data: CreateIn, host: str):
         b = templates.build(data.game, data.values, data.data_dir)
         _job_log(job, f"Ordner vorbereiten: {', '.join(b['dirs'])}")
         resumed = job.get("stage") not in (None, "start")
+        if "data_new" not in job:              # gab es den Datenordner schon? (nur dann beim Abbrechen nicht löschen)
+            job["data_new"] = await _dir_is_new(data.data_dir)
         own = f" && chown -R {b['uid']}:{b['gid']} /target" if b["uid"] and not resumed else ""
         for d in b["dirs"]:
             await docker_api.run_helper([f"{d}:/target"], ["sh", "-c", f"mkdir -p /target{own} && echo ok"])
@@ -3773,6 +3782,8 @@ async def _create_job(job: dict, data: CreateIn, host: str):
                 pass
         else:
             _job_log(job, f"Container {b['name']} anlegen und starten")
+            job["created_container"] = b["name"]
+            _save_jobs(True)
             await docker_api.create_container(b["name"], b["spec"])
         job["stage"] = "created"
         _save_jobs(True)
@@ -3843,7 +3854,8 @@ async def _create_job(job: dict, data: CreateIn, host: str):
         _job_log(job, "Fertig")
         _save_jobs(True)
     except asyncio.CancelledError:
-        _save_jobs(True)                 # Tool beendet sich – Job bleibt offen und wird nach dem Neustart fortgesetzt
+        if not job.get("cancelled"):
+            _save_jobs(True)             # Tool beendet sich – Job bleibt offen und wird nach dem Neustart fortgesetzt
         raise
     except (ValueError, docker_api.DockerError) as e:
         job["error"] = str(e)
@@ -4756,7 +4768,7 @@ async def create_server(data: CreateIn, request: Request):
            "req": {"game": data.game, "values": data.values, "data_dir": data.data_dir, "host": host}, "stage": "start"}
     _jobs[jid] = job
     _save_jobs(True)
-    asyncio.create_task(_create_job(job, data, host))
+    _job_tasks[jid] = asyncio.create_task(_create_job(job, data, host))
     return job
 
 
@@ -4876,8 +4888,101 @@ async def create_batch(data: BatchIn, request: Request):
            "plans": plans, "host": host}
     _jobs[bid] = job
     _save_jobs(True)
-    asyncio.create_task(_run_batch(job))
+    _job_tasks[bid] = asyncio.create_task(_run_batch(job))
     return {"id": bid, "names": [p["values"].get("name") for p in plans]}
+
+
+_job_tasks: dict[str, asyncio.Task] = {}
+
+
+async def _dir_is_new(path: str) -> bool:
+    """True, wenn der Ordner (unter dem Spieleverzeichnis) noch nicht existiert."""
+    base = os.path.normpath(automation.get_settings().get("games_base") or "/mnt/grohlan")
+    p = os.path.normpath(path or "")
+    if not p.startswith(base + "/"):
+        return False
+    try:
+        out = await docker_api.run_helper([f"{base}:/base:ro"], ["sh", "-c", f'[ -e "/base/{os.path.relpath(p, base)}" ] && echo OLD || echo NEW'])
+    except docker_api.DockerError:
+        return False
+    return "NEW" in out
+
+
+async def _cleanup_job(job: dict) -> list[str]:
+    """Nach dem Abbrechen: Kopier-Helfer, Container, Servereintrag, Datenordner (nur wenn neu) und Token-Zuordnung entfernen."""
+    done = []
+    req = job.get("req") or {}
+    vals = req.get("values") or {}
+    name = (vals.get("name") or "").strip()
+    try:
+        name = templates.build(req["game"], vals, req["data_dir"])["name"]
+    except Exception:  # noqa: BLE001 – Name reicht zum Aufräumen
+        pass
+    if name and docker_api.available():
+        try:
+            for c in await docker_api.list_containers():
+                if c["name"].startswith(f"gsm-copy-{name}-"):
+                    await docker_api.remove_container(c["name"]); done.append(f"Kopiervorgang {c['name']} beendet")
+        except docker_api.DockerError:
+            pass
+        if job.get("created_container") == name:
+            try:
+                info = await docker_api.inspect(name)
+                if ((info.get("Config") or {}).get("Labels") or {}).get("gsm.managed") == "1":
+                    await docker_api.remove_container(name); done.append(f"Container {name} gelöscht")
+            except docker_api.DockerError:
+                pass
+    if job.get("server_id"):
+        async with _store_lock:
+            save_servers([x for x in load_servers() if x["id"] != job["server_id"]])
+        _state.pop(job["server_id"], None)
+        done.append("Servereintrag entfernt")
+    if job.get("data_new") and req.get("data_dir"):
+        try:
+            others = await docker_api.all_mounts()
+            other_src = [m["source"] for ms in others.values() for m in ms if m["type"] == "bind" and m["source"]]
+            p = os.path.normpath(req["data_dir"])
+            why = _path_check(p, other_src)
+            if why is None:
+                await docker_api.run_helper([f"{os.path.dirname(p)}:/p"], ["rm", "-rf", "--", f"/p/{os.path.basename(p)}"], timeout=3600)
+                done.append(f"Daten {p} gelöscht")
+            else:
+                done.append(f"Daten {p} behalten ({why})")
+        except docker_api.DockerError as e:
+            done.append(f"Daten löschen fehlgeschlagen: {e}")
+    if vals.get("token"):
+        gslt.assign(vals["token"], None)
+    return done
+
+
+@app.post("/api/jobs/{jid}/cancel", dependencies=auth)
+async def cancel_job(jid: str):
+    """Anlegen abbrechen – laufende Schritte stoppen, Container und neu angelegte Daten löschen."""
+    j = _jobs.get(jid)
+    if not j:
+        raise HTTPException(404, "Job nicht gefunden")
+    if j.get("done") and not j.get("plans"):
+        raise HTTPException(409, "Anlegen ist schon fertig – Server stattdessen löschen")
+    subs = [_jobs[x] for x in (j.get("batch") or []) if x in _jobs] if j.get("plans") else []
+    targets = [j] + [s for s in subs if not s.get("done")]
+    for x in targets:
+        x["cancelled"] = True
+        tk = _job_tasks.pop(x["id"], None)
+        if tk and not tk.done():
+            tk.cancel()
+            try:
+                await asyncio.wait_for(asyncio.shield(tk), 5)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):  # noqa: BLE001
+                pass
+    log_lines = []
+    for x in ([s for s in subs if s.get("cancelled")] if j.get("plans") else [j]):
+        log_lines += await _cleanup_job(x)
+        x.update(done=True, error="abgebrochen", t_done=time.time())
+    j.update(done=True, error="abgebrochen", t_done=time.time())
+    for line in log_lines or ["nichts aufzuräumen"]:
+        _job_log(j, line)
+    _save_jobs(True)
+    return {"ok": True, "log": log_lines}
 
 
 @app.get("/api/jobs/{jid}", dependencies=auth)
