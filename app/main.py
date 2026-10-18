@@ -2897,10 +2897,20 @@ async def _collect_players_once() -> None:
                 if pl.get("uid"):
                     playerdb.link_ts(pl["uid"], pl.get("name") or "", pl.get("ip") or "")
                 continue
-            p = playerdb.seen(name=pl.get("name") or "", ip=pl.get("address") or "", sid=s["id"], server=name, game=g)
-            if p is None:
+            if pl.get("name") in ("SourceTV", "GOTV", "CSTV"):
                 continue
+            stid = playerdb.addr_steamid(pl.get("address")) if g == "cs2" else ""
+            playerdb.seen(steamid=stid, name=pl.get("name") or "", ip=pl.get("address") or "", sid=s["id"], server=name, game=g)
+    # Steam-Profil (Name, Avatar) für Spieler mit SteamID nachladen
+    for p in playerdb.needs_profile():
+        try:
+            r = await steam.resolve_player(p["steamid"])
+            playerdb.set_profile(p["steamid"], r.get("name") or "", r.get("avatar") or "")
+        except steam.SteamError:
+            playerdb.set_profile(p["steamid"], "", "")
     playerdb.save()
+    if time.time() - _admin_sync["t"] > 600:
+        await _sync_admins()
 
 
 async def player_loop():
@@ -2913,6 +2923,183 @@ async def player_loop():
         await asyncio.sleep(60)
 
 
+# ---------------------------------------------------------------- Admin-Listen der Server aus der Spielerliste
+CS2_GAME_DIR = "/home/steam/cs2-dedicated/game/csgo"
+_admin_sync: dict = {"t": 0.0, "last": store.load("admin_sync.json", {}), "log": []}
+
+
+def _user_admin_games(username: str) -> set[str]:
+    u = users.find(username)
+    if not u:
+        return set()
+    if u.get("role") == "admin":
+        return {"*"}
+    games = {game_of(s) for s in load_servers()}
+    return {g for g in games if users.level(u, g) >= 3}
+
+
+def _admins_for(game: str) -> dict[str, str]:
+    """SteamID -> Anzeigename aller Spieler, die für dieses Spiel Admin sind."""
+    out = {}
+    for p in playerdb.all_players():
+        if not p.get("steamid"):
+            continue
+        ag = playerdb.admin_games(p, _user_admin_games)
+        if "*" in ag or game in ag:
+            out[p["steamid"]] = playerdb.display(p)
+    return out
+
+
+async def _exec_read(c: str, path: str) -> str | None:
+    out = await docker_api.exec_cmd(c, ["sh", "-c", f'[ -f "{path}" ] && cat "{path}" || echo "#MISSING#"'], timeout=15)
+    return None if out.strip() == "#MISSING#" else out
+
+
+async def _exec_write(c: str, path: str, text: str) -> None:
+    import base64
+    b64 = base64.b64encode(text.encode()).decode()
+    out = await docker_api.exec_cmd(c, ["sh", "-c", f'echo {b64} | base64 -d > "{path}.gsm" && mv "{path}.gsm" "{path}" && echo OK'], timeout=15)
+    if "OK" not in out:
+        raise docker_api.DockerError(f"{path}: {out.strip()[:150]}")
+
+
+async def _sync_admins_server(s: dict) -> str | None:
+    g, c = game_of(s), s.get("container")
+    if not c or g not in ("cs2", "wreckfest", "valheim"):
+        return None
+    want = _admins_for(g)
+    last = set(_admin_sync["last"].get(s["id"]) or [])
+    ids = set(want)
+    if g == "cs2":
+        changed = []
+        css = f"{CS2_GAME_DIR}/addons/counterstrikesharp/configs/admins.json"
+        raw = await _exec_read(c, css)
+        if raw is not None:
+            try:
+                cur = json.loads(raw or "{}")
+            except ValueError:
+                cur = None
+            if isinstance(cur, dict):
+                new = {k: v for k, v in cur.items() if not k.startswith("gsm_")}
+                for sid_, nm in want.items():
+                    new[f"gsm_{sid_}"] = {"identity": sid_, "flags": ["@css/root"], "immunity": 100}
+                if new != cur:
+                    await _exec_write(c, css, json.dumps(new, indent=2, ensure_ascii=False))
+                    changed.append("CounterStrikeSharp")
+        mz = f"{CS2_GAME_DIR}/cfg/MatchZy/admins.json"
+        raw = await _exec_read(c, mz)
+        if raw is not None:
+            try:
+                cur = json.loads(raw or "{}")
+            except ValueError:
+                cur = None
+            if isinstance(cur, dict):
+                new = {k: v for k, v in cur.items() if k not in last or k in ids}
+                for sid_ in ids:
+                    new.setdefault(sid_, "")
+                if new != cur:
+                    await _exec_write(c, mz, json.dumps(new, indent=2))
+                    changed.append("MatchZy")
+        if changed:
+            try:
+                await run(s, "css_reloadadmins")
+            except Exception:  # noqa: BLE001
+                pass
+        res = ", ".join(changed) if changed else None
+    elif g == "wreckfest":
+        text = await _wf_read(c)
+        if text is None:
+            return None
+        cur = [x for x in re.split(r"[,\s]+", _wf_values(text).get("admin_steam_ids") or "") if x]
+        new = [x for x in cur if x not in last or x in ids] + [x for x in sorted(ids) if x not in cur]
+        res = None
+        if new != cur:
+            await _wf_write(c, {"admin_steam_ids": ",".join(new)})
+            res = "server_config.cfg (gilt ab dem nächsten Neustart)"
+    else:   # valheim
+        path = "/config/adminlist.txt"
+        raw = await _exec_read(c, path)
+        cur = [ln.strip() for ln in (raw or "").splitlines()]
+        keep = [ln for ln in cur if not ln or ln.startswith("//") or ln not in last or ln in ids]
+        new = keep + [x for x in sorted(ids) if x not in cur]
+        res = None
+        if [x for x in new if x] != [x for x in cur if x]:
+            await _exec_write(c, path, "\n".join(new).strip() + "\n")
+            res = "adminlist.txt"
+    _admin_sync["last"][s["id"]] = sorted(ids)
+    return res
+
+
+async def _sync_admins() -> list[str]:
+    _admin_sync["t"] = time.time()
+    done = []
+    for s in load_servers():
+        try:
+            r = await _sync_admins_server(s)
+            if r:
+                done.append(f"{s.get('name')}: {r}")
+        except (docker_api.DockerError, HTTPException, RconError) as e:
+            done.append(f"{s.get('name')}: Fehler {str(e)[:100]}")
+    store.save("admin_sync.json", _admin_sync["last"])
+    if done:
+        _admin_sync["log"] = (_admin_sync["log"] + [f"{time.strftime('%d.%m. %H:%M')} {x}" for x in done])[-30:]
+        log.info("Admin-Listen: %s", "; ".join(done))
+    return done
+
+
+@app.post("/api/players/sync-admins", dependencies=auth)
+async def players_sync_admins():
+    return {"done": await _sync_admins(), "log": _admin_sync["log"]}
+
+
+class PlayerEdit(BaseModel):
+    nick: str | None = Field(None, max_length=64)
+    steamid: str | None = Field(None, max_length=200)
+    notes: str | None = Field(None, max_length=500)
+    admin: list[str] | None = None
+    user: str | None = Field(None, max_length=64)
+
+
+@app.patch("/api/players/{pid}", dependencies=auth)
+async def edit_player(pid: str, data: PlayerEdit, request: Request):
+    """Spieler bearbeiten: Nickname, SteamID (jedes Format), Notiz, Admin für Spiele, verknüpftes Tool-Konto."""
+    f = data.model_dump(exclude_none=True)
+    if f.get("steamid"):
+        try:
+            r = await steam.resolve_player(f["steamid"])
+        except steam.SteamError as e:
+            raise HTTPException(400, str(e))
+        f["steamid"] = r["steamid"]
+    if f.get("user") and not users.find(f["user"]):
+        raise HTTPException(400, "Benutzer gibt es nicht")
+    try:
+        p = playerdb.update(pid, f)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    asyncio.create_task(_sync_admins())
+    return _players_out(request)
+
+
+class PlayerNew(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    steamid: str | None = Field(None, max_length=200)
+
+
+@app.post("/api/players/new", dependencies=auth)
+async def new_player(data: PlayerNew, request: Request):
+    """Spieler von Hand anlegen – auch ohne SteamID."""
+    sid = ""
+    if data.steamid:
+        try:
+            sid = (await steam.resolve_player(data.steamid))["steamid"]
+        except steam.SteamError as e:
+            raise HTTPException(400, str(e))
+    p = playerdb.add_manual(sid, data.name.strip(), "") if sid else playerdb.seen(name=data.name.strip(), game="manuell")
+    if p is not None and not sid:
+        playerdb.update(p["id"], {"nick": data.name.strip()})
+    return _players_out(request)
+
+
 def _players_out(request: Request | None = None) -> list[dict]:
     on = playerdb.online_index(load_servers(), _state, game_of)
     admin = request is None or (getattr(request.state, "user", None) or {}).get("role") == "admin"
@@ -2920,7 +3107,8 @@ def _players_out(request: Request | None = None) -> list[dict]:
     for p in playerdb.all_players():
         if not p.get("steamid") and not p.get("names") and not p.get("ts_name") and not p.get("nick"):
             continue
-        r = {**p, "steamid": p.get("steamid") or "", "name": playerdb.display(p), "online": on.get(p["id"], [])}
+        r = {**p, "steamid": p.get("steamid") or "", "name": playerdb.display(p), "online": on.get(p["id"], []),
+             "admin_eff": sorted(playerdb.admin_games(p, _user_admin_games))}
         if not admin:                       # IP-Adressen nur für Administratoren
             r.pop("lan_ip", None); r.pop("wan_ip", None)
         out.append(r)

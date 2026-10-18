@@ -80,7 +80,7 @@ def _ip_only(addr: str | None) -> str:
 
 
 def display(p: dict) -> str:
-    return p.get("nick") or p.get("ts_name") or (p.get("names") or [None])[-1] or p.get("steamid") or p.get("id")
+    return p.get("nick") or p.get("ts_name") or (p.get("names") or [None])[-1] or p.get("steam_name") or p.get("steamid") or p.get("id")
 
 
 def _refresh_name(p: dict) -> None:
@@ -152,6 +152,15 @@ def seen(*, steamid: str = "", name: str = "", ip: str = "", sid: str = "", serv
     if steamid and not p.get("steamid"):
         p["steamid"] = steamid
         p["id"] = steamid
+    if steamid and name and game:                 # Doppelten Nur-Namen-Eintrag (aus dem Status) übernehmen
+        dup = next((x for x in _load() if x is not p and not x.get("steamid") and not x.get("ts_uid") and not x.get("nick")
+                    and name in (x.get("names") or []) and game in (x.get("games") or [])), None)
+        if dup:
+            for k in ("lan_ip", "wan_ip"):
+                p.setdefault(k, dup.get(k))
+            p["servers"] = {**(dup.get("servers") or {}), **(p.get("servers") or {})}
+            p["first_seen"] = min(p.get("first_seen") or t, dup.get("first_seen") or t)
+            _load().remove(dup)
     if ts_uid:
         p["ts_uid"] = ts_uid
         if ts_name:
@@ -253,6 +262,14 @@ def add_manual(steamid: str, name: str, avatar: str) -> dict:
 # ---------------------------------------------------------------- Log-Auswertung
 RE_SRC_CONNECT = re.compile(r'"(.{1,64}?)<\d+><(\[U:1:\d+\]|STEAM_[0-5]:[01]:\d+|7656119\d{10})><[^>]*>" connected, address "([^"]*)"')
 RE_SRC_ENTERED = re.compile(r'"(.{1,64}?)<\d+><(\[U:1:\d+\]|STEAM_[0-5]:[01]:\d+)><[^>]*>" (?:entered the game|STEAM USERID validated)')
+RE_CS2_NET = re.compile(r"Accepting Steam Net connection #\d+ UDP steamid:(7656119\d{10})@\[?([0-9a-fA-F.:]+?)\]?:(\d+)")
+_addr_sid: dict[str, str] = {}               # "IP:Port" -> SteamID (CS2 nennt beim Verbinden keinen Namen)
+
+
+def addr_steamid(addr: str | None) -> str:
+    return _addr_sid.get((addr or "").strip(), "")
+
+
 RE_MC_LOGIN = re.compile(r"\]: ([A-Za-z0-9_]{2,16})\[/([0-9a-fA-F.:]+):\d+\] logged in")
 RE_VH_STEAM = re.compile(r"Got connection SteamID (7656119\d{10})")
 RE_VH_CHAR = re.compile(r"Got character ZDOID from (.{1,40}?) : ")
@@ -289,6 +306,17 @@ def parse_log(text: str, game: str, sid: str, server: str) -> int:
             if m and last_vh:
                 seen(steamid=last_vh, name=m.group(1), sid=sid, server=server, game=game)
             continue
+        m = RE_CS2_NET.search(line)
+        if m:
+            _addr_sid[f"{m.group(2)}:{m.group(3)}"] = m.group(1)
+            if len(_addr_sid) > 4000:
+                for k in list(_addr_sid)[:1000]:
+                    _addr_sid.pop(k, None)
+            seen(steamid=m.group(1), ip=m.group(2), sid=sid, server=server, game=game)
+            n += 1
+            continue
+        if "SourceTV" in line:
+            continue
         m = RE_SRC_CONNECT.search(line)
         if m:
             st = _sid64(m.group(2))
@@ -323,3 +351,60 @@ def online_index(servers: list[dict], states: dict, game_of) -> dict[str, list[d
             if p:
                 out.setdefault(p["id"], []).append({"sid": s["id"], "server": st.get("hostname") or s.get("name"), "game": g})
     return out
+
+
+# ---------------------------------------------------------------- Bearbeiten, Admin-Rechte, Steam-Profil
+def get(pid: str) -> dict | None:
+    return next((x for x in _load() if x["id"] == pid or x.get("steamid") == pid), None)
+
+
+def update(pid: str, fields: dict) -> dict:
+    p = get(pid)
+    if not p:
+        raise ValueError("Spieler nicht gefunden")
+    if "steamid" in fields:
+        sid = (fields["steamid"] or "").strip()
+        if sid and sid != p.get("steamid"):
+            other = next((x for x in _load() if x is not p and x.get("steamid") == sid), None)
+            if other:
+                raise ValueError(f"Diese SteamID hat schon „{display(other)}“ – Einträge stattdessen zusammenführen (⇄)")
+        p["steamid"] = sid
+        if sid:
+            p["id"] = sid
+        p.pop("steam_checked", None)
+    for k in ("nick", "notes", "user"):
+        if k in fields and fields[k] is not None:
+            p[k] = str(fields[k]).strip()[:200]
+    if "admin" in fields and fields["admin"] is not None:
+        p["admin"] = sorted({str(g) for g in fields["admin"] if g})
+    _refresh_name(p)
+    _mark()
+    save(True)
+    return p
+
+
+def admin_games(p: dict, user_level=None) -> set[str]:
+    """Spiele, für die der Spieler Admin ist: von Hand gesetzt (* = alle) oder über das verknüpfte Tool-Konto."""
+    out = set(p.get("admin") or [])
+    if user_level and p.get("user"):
+        out |= user_level(p["user"])
+    return out
+
+
+def needs_profile() -> list[dict]:
+    now = time.time()
+    return [p for p in _load() if p.get("steamid") and now - (p.get("steam_checked") or 0) > 86400
+            and (not p.get("avatar") or not p.get("steam_name"))][:10]
+
+
+def set_profile(steamid: str, name: str, avatar: str) -> None:
+    p = get(steamid)
+    if not p:
+        return
+    p["steam_checked"] = time.time()
+    if name:
+        p["steam_name"] = name[:64]
+    if avatar:
+        p["avatar"] = avatar
+    _refresh_name(p)
+    _mark()

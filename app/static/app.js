@@ -1438,10 +1438,12 @@ function renderPlayerRows(){
     <td>${(p.online || []).map(o => `<span class="pill ok">${gameTile(o.game, 12)} ${esc(o.server)}</span>`).join(" ") || `<span class="hint">${esc(Object.values(p.servers || {}).sort((a, b) => b.last - a.last).slice(0, 1).map(x => x.name).join("") || "")}</span>`}</td>
     <td class="mono">${p.steamid ? `<a href="https://steamcommunity.com/profiles/${esc(p.steamid)}" target="_blank" rel="noopener" style="color:inherit">${esc(p.steamid)}</a>` : "–"}</td>
     <td class="mono">${esc(p.lan_ip || "–")}</td><td class="mono">${esc(p.wan_ip || "–")}</td>
+    <td>${(p.admin_eff || []).length ? `<span class="pill warn" title="${esc((p.admin_eff || []).map(g => g === "*" ? "alle Spiele" : (GAMES[g]?.label || g)).join(", "))}${p.user ? " · Konto " + esc(p.user) : ""}">★ ${(p.admin_eff || []).includes("*") ? "alle" : (p.admin_eff || []).map(g => GAMES[g]?.short || g).join(", ")}</span>` : ""}</td>
     <td class="hint" title="${p.last_seen ? new Date(p.last_seen * 1000).toLocaleString("de-DE") : ""}">${agoTxt(p.last_seen)}</td>
-    <td style="white-space:nowrap"><button class="small" data-plmerge="${esc(p.id)}" title="${plMerge ? (plMerge === p.id ? "Zusammenführen abbrechen" : "in den markierten Eintrag übernehmen") : "mit anderem Eintrag zusammenführen"}">⇄</button><button class="small danger" data-pldel="${esc(p.id)}">✕</button></td></tr>`).join("")
-    : `<tr><td colspan="9" class="muted">${players.length ? "Keine Treffer." : "Noch keine Spieler – sie erscheinen automatisch, sobald jemand auf einen Server kommt."}</td></tr>`;
+    <td style="white-space:nowrap"><button class="small" data-pledit="${esc(p.id)}" title="bearbeiten">✎</button><button class="small" data-plmerge="${esc(p.id)}" title="${plMerge ? (plMerge === p.id ? "Zusammenführen abbrechen" : "in den markierten Eintrag übernehmen") : "mit anderem Eintrag zusammenführen"}">⇄</button><button class="small danger" data-pldel="${esc(p.id)}">✕</button></td></tr>`).join("")
+    : `<tr><td colspan="10" class="muted">${players.length ? "Keine Treffer." : "Noch keine Spieler – sie erscheinen automatisch, sobald jemand auf einen Server kommt."}</td></tr>`;
   $$("[data-rename]").forEach(i => i.onchange = async () => { players = await api(`/api/players/${encodeURIComponent(i.dataset.rename)}`, {method: "PUT", body: {name: i.value.trim()}}); toast("Nickname gespeichert"); renderPlayerRows(); });
+  $$("[data-pledit]").forEach(b => b.onclick = () => openPlayerEdit(b.dataset.pledit, b.closest("tr")));
   $$("[data-pldel]").forEach(b => b.onclick = async () => { if (!confirm("Spieler löschen?")) return; players = await api(`/api/players/${encodeURIComponent(b.dataset.pldel)}`, {method: "DELETE"}); renderPlayerRows(); });
   $$("[data-plmerge]").forEach(b => b.onclick = async () => {
     const id = b.dataset.plmerge;
@@ -1453,6 +1455,43 @@ function renderPlayerRows(){
   });
 }
 $("#plOnlyOn").addEventListener("change", renderPlayerRows);
+let plUsers = null;
+async function openPlayerEdit(id, tr){
+  const p = players.find(x => x.id === id); if (!p) return;
+  const nx = tr.nextElementSibling;
+  if (nx && nx.classList.contains("pledit")) { nx.remove(); return; }
+  if (plUsers === null){ try { plUsers = ((await api("/api/users")).users || []).map(u => u.username).filter(Boolean); } catch { plUsers = []; } }
+  const games = [...new Set(servers.map(s => gameOf(s)))].filter(g => ["cs2", "wreckfest", "valheim", "tf2"].includes(g) || true);
+  const adm = new Set(p.admin || []);
+  const row = document.createElement("tr"); row.className = "pledit";
+  row.innerHTML = `<td colspan="10"><div class="pleditbox">
+    <div><label>Nickname</label><input data-pe="nick" value="${esc(p.nick || "")}" placeholder="${esc(p.name)}"></div>
+    <div><label>SteamID (SteamID64, STEAM_0:…, [U:1:…] oder Profil-Link)</label><input data-pe="steamid" class="mono" value="${esc(p.steamid || "")}"></div>
+    <div><label>Notiz</label><input data-pe="notes" value="${esc(p.notes || "")}"></div>
+    <div><label>Tool-Konto (dessen Rechte gelten als Admin-Rechte)</label><select data-pe="user"><option value="">–</option>${(plUsers || []).map(u => `<option ${u === p.user ? "selected" : ""}>${esc(u)}</option>`).join("")}</select></div>
+    <div style="grid-column:1/-1"><label>Admin auf den Servern (braucht SteamID)</label><div class="row" style="flex-wrap:wrap;gap:12px">
+      <label class="hint"><input type="checkbox" data-pea="*" ${adm.has("*") ? "checked" : ""} style="width:auto"> alle Spiele</label>
+      ${games.map(g => `<label class="hint"><input type="checkbox" data-pea="${esc(g)}" ${adm.has(g) ? "checked" : ""} style="width:auto"> ${esc(GAMES[g]?.label || g)}</label>`).join("")}</div>
+      <div class="hint">Wird automatisch eingetragen bei CS2 (CounterStrikeSharp + MatchZy), Wreckfest (admin_steam_ids, ab nächstem Neustart) und Valheim (adminlist.txt).</div></div>
+    <div style="grid-column:1/-1" class="row"><button class="primary small" data-pesave>Speichern</button><button class="small" data-pecancel>Abbrechen</button></div></div></td>`;
+  tr.after(row);
+  row.querySelector("[data-pecancel]").onclick = () => row.remove();
+  row.querySelector("[data-pesave]").onclick = async () => {
+    const body = {}; row.querySelectorAll("[data-pe]").forEach(i => body[i.dataset.pe] = i.value.trim());
+    body.admin = [...row.querySelectorAll("[data-pea]")].filter(c => c.checked).map(c => c.dataset.pea);
+    try { players = await api(`/api/players/${encodeURIComponent(id)}`, {method: "PATCH", body}); toast("Spieler gespeichert"); renderPlayerRows(); }
+    catch (e){ toast(e.message, true); }
+  };
+}
+$("#btnPlAddName").onclick = async () => {
+  const name = $("#plName").value.trim() || $("#plInput").value.trim(); if (!name) return toast("Namen eintragen", true);
+  try { players = await api("/api/players/new", {body: {name}}); toast(`${name} angelegt`); $("#plInput").value = ""; $("#plName").value = ""; renderPlayerRows(); }
+  catch (e){ toast(e.message, true); }
+};
+$("#btnPlSyncAdmins").onclick = async () => {
+  try { const r = await api("/api/players/sync-admins", {method: "POST"}); $("#plAdminLog").textContent = r.done.length ? r.done.join(" · ") : "alles aktuell"; }
+  catch (e){ toast(e.message, true); }
+};
 $("#plFilter").addEventListener("input", renderPlayerRows);
 $("#btnPlAdd").onclick = async () => {
   const input = $("#plInput").value.trim(); if (!input) return;

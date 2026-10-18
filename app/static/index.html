@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=89">
+<link rel="stylesheet" href="/static/app.css?v=93">
 </head>
 <body>
 
@@ -222,6 +222,7 @@
             <input id="plInput" placeholder="SteamID64, STEAM_0:1:…, [U:1:…], Profil-Link oder Steam-Kurzname" style="flex:3">
             <input id="plName" placeholder="Anzeigename (optional)" style="flex:1">
             <button class="primary" id="btnPlAdd">Hinzufügen</button>
+            <button id="btnPlAddName" title="Spieler nur mit Namen anlegen (SteamID später ergänzen)">Ohne SteamID</button>
           </div>
           <div class="hint" style="margin-top:6px">Name und Avatar werden automatisch vom Steam-Profil geladen (braucht Internet am Docker-Host).</div>
           <h3>Vom Server übernehmen</h3>
@@ -235,7 +236,8 @@
           <div class="row" style="justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px"><h2 style="margin:0">Spielerliste <span class="hint" id="plCount"></span></h2>
             <span class="row" style="gap:8px;align-items:center"><label class="hint" style="display:flex;gap:4px;align-items:center"><input type="checkbox" id="plOnlyOn" style="width:auto"> nur online</label><input id="plFilter" placeholder="Suchen (Name, SteamID, IP) …" style="max-width:240px"></span></div>
           <div id="plOnline" class="ploverview"></div>
-          <div style="overflow:auto"><table class="pltable"><thead><tr><th></th><th>Nickname</th><th>Erkannt als</th><th>Gerade auf</th><th>SteamID64</th><th>LAN-IP</th><th>Online-IP</th><th>Zuletzt</th><th></th></tr></thead><tbody id="plRows"></tbody></table></div>
+          <div class="row" style="gap:8px;margin-bottom:8px;align-items:center"><button class="small" id="btnPlSyncAdmins" title="Admins (mit SteamID) in die Admin-Listen der Server schreiben: CS2 (CounterStrikeSharp + MatchZy), Wreckfest, Valheim">Admin-Listen jetzt abgleichen</button><span class="hint" id="plAdminLog"></span></div>
+          <div style="overflow:auto"><table class="pltable"><thead><tr><th></th><th>Nickname</th><th>Erkannt als</th><th>Gerade auf</th><th>SteamID64</th><th>LAN-IP</th><th>Online-IP</th><th>Admin</th><th>Zuletzt</th><th></th></tr></thead><tbody id="plRows"></tbody></table></div>
           <div class="hint" style="margin-top:6px">Nickname leer lassen = automatischer Name (TeamSpeak-Name, sonst Spielname). „⇄“ führt zwei Einträge derselben Person zusammen (z. B. TeamSpeak-Eintrag + Steam-Eintrag).</div>
         </div>
       </div>
@@ -801,6 +803,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=92"></script>
+<script src="/static/app.js?v=93"></script>
 </body>
 </html>

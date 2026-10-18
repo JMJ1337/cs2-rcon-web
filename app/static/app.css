@@ -509,3 +509,5 @@ aside .head .logo{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space
 .ldhit i{position:absolute;inset:0 auto 0 0;background:rgba(61,186,120,.35)}
 .ldhit em{position:relative;font-style:normal;font-size:11px;padding-left:6px}
 @media (max-width:600px){.ldrow{grid-template-columns:22px 1fr 80px}.ldhit{display:none}}
+
+.pleditbox{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;padding:10px;background:var(--panel2);border-radius:8px}
