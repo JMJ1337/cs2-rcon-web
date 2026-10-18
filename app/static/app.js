@@ -3078,7 +3078,8 @@ async function loadPf2(full){
   const lg = $("#pf2Log"), atEnd = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 20;
   lg.textContent = d.log || "(noch keine Ausgabe)";
   if (atEnd) lg.scrollTop = lg.scrollHeight;
-  $("#pf2Prompt").innerHTML = run && (d.prompt || d.login_url) ? `<div class="pfbanner" style="margin-top:10px">${d.login_url ? `Anmelden: <a href="${esc(d.login_url)}" target="_blank" rel="noopener">${esc(d.login_url.slice(0, 80))}…</a><br>` : ""}
+  $("#pf2Prompt").innerHTML = run && (d.prompt || d.login_url) ? `<div class="pfbanner" style="margin-top:10px">${d.login_url ? `1. Link öffnen und anmelden: <a href="${esc(d.login_url)}" target="_blank" rel="noopener"><b>${esc(d.login_url)}</b></a><br>
+        2. Auf der Seite danach steht ein Text mit <span class="mono">"authorizationCode":"…"</span> – nur den Code zwischen den Anführungszeichen kopieren und hier einfügen:<br>` : "Der Prefill wartet auf eine Eingabe:<br>"}
       <div class="row" style="gap:8px;margin-top:6px"><input id="pf2Input" class="mono" placeholder="Code / Eingabe" style="max-width:360px"><button class="primary small" id="pf2Send">Senden</button></div></div>` : "";
   if ($("#pf2Send")) $("#pf2Send").onclick = async () => { try { await api(`/api/prefill2/${svc}/send`, {body: {text: $("#pf2Input").value}}); toast("gesendet"); setTimeout(() => loadPf2(), 1500); } catch (e){ toast(e.message, true); } };
   pf2Timer = setTimeout(() => loadPf2(), run ? 3000 : 15000);

@@ -18,12 +18,18 @@ SERVICES = {
              "dir": "epicprefill"},
 }
 # Battle.net-Produktcodes (Auswahl der bekannten Spiele)
-BNET_PRODUCTS = [
-    ("wow", "World of Warcraft"), ("wow_classic", "WoW Classic"), ("wow_classic_era", "WoW Classic Era"),
+BNET_PRODUCTS = [   # Codes aus BattleNetPrefill (TactProduct.cs)
+    ("wow", "World of Warcraft"), ("wow_classic", "WoW Cataclysm Classic"), ("wow_classic_era", "WoW Classic"),
     ("pro", "Overwatch 2"), ("fenris", "Diablo IV"), ("osi", "Diablo II: Resurrected"), ("d3", "Diablo III"),
-    ("hs", "Hearthstone"), ("s2", "StarCraft II"), ("s1", "StarCraft Remastered"), ("hero", "Heroes of the Storm"),
-    ("w3", "Warcraft III: Reforged"), ("anbs", "Diablo Immortal"), ("wlby", "Crash Bandicoot 4"),
+    ("anbs", "Diablo Immortal"), ("drtl", "Diablo"), ("hsb", "Hearthstone"), ("s2", "StarCraft II"), ("s1", "StarCraft Remastered"),
+    ("hero", "Heroes of the Storm"), ("w3", "Warcraft III: Reforged"), ("w1r", "Warcraft I: Remastered"),
+    ("w2r", "Warcraft II: Remastered"), ("gryphon", "Warcraft Rumble"), ("rtro", "Blizzard Arcade Collection"),
+    ("btlr", "CoD: Black Ops 6"), ("auks", "Call of Duty (HQ/Warzone)"), ("pinta", "CoD: Modern Warfare III"),
+    ("nina", "CoD: Modern Warfare II"), ("zeus", "CoD: Black Ops Cold War"), ("odin", "CoD: Modern Warfare 2019"),
+    ("viper", "CoD: Black Ops 4"), ("fore", "CoD: Vanguard"), ("lazr", "CoD: MW2 Remastered"),
+    ("wlby", "Crash Bandicoot 4"), ("scor", "Sea of Thieves"), ("aqua", "Avowed"),
 ]
+VALID_BNET = {k for k, _ in BNET_PRODUCTS}
 SETTINGS = "prefill_more.json"
 _pulled: dict = {}
 _stdin: dict = {}
@@ -71,7 +77,10 @@ async def write_selection(svc: str, products: list[str]) -> None:
     """Battle.net: Auswahl wie bei „select-apps“ speichern (selectedAppsToPrefill.json im Config-Ordner)."""
     import base64
     import json
-    prods = [p for p in products if re.fullmatch(r"[a-z0-9_]{1,24}", p)]
+    prods = [("hsb" if p == "hs" else p) for p in products if re.fullmatch(r"[a-z0-9_]{1,24}", p)]
+    bad = [p for p in prods if p not in VALID_BNET]
+    if bad:
+        raise ValueError("Unbekannte Battle.net-Codes: " + ", ".join(bad))
     b64 = base64.b64encode(json.dumps(prods).encode()).decode()
     await docker_api.run_helper([f"{config_dir(svc)}:/target"],
                                 ["sh", "-c", f"mkdir -p /target && echo {b64} | base64 -d > /target/selectedAppsToPrefill.json && echo ok"], timeout=60)
@@ -142,16 +151,18 @@ async def log(svc: str, tail: int = 300) -> str:
 
 def prompt_of(text: str) -> str | None:
     """Wartet der Container auf eine Eingabe (z. B. Epic-Anmeldecode)?"""
-    tail = "\n".join([ln for ln in text.splitlines() if ln.strip()][-6:])
-    if re.search(r"(authorization code|authorizationCode|enter.*code|paste.*code|Code:)\s*$", tail, re.I | re.M):
-        return "code"
-    if re.search(r"(https://\S*epicgames\.com\S*)", tail) and re.search(r"code", tail, re.I):
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    tail = "\n".join(lines[-8:])
+    if re.search(r"(authorization ?code|enter.*code|paste|login into|please login|log ?in)", tail, re.I) and \
+            not re.search(r"(successfully logged|logged in as|Starting|Downloading)", "\n".join(lines[-3:]), re.I):
         return "code"
     return None
 
 
 def login_url(text: str) -> str | None:
-    m = re.findall(r"(https://\S*(?:epicgames\.com|battle\.net)\S*)", text)
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    tail = " ".join(lines[-8:])
+    m = re.findall(r"(https://[^\s\]\)\"']+)", tail)
     return m[-1].rstrip(".,)") if m else None
 
 
