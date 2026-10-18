@@ -396,13 +396,70 @@ async def version():
             "date": os.getenv("BUILD_DATE") or None}
 
 
+auth = [Depends(require_auth)]
+
+
 @app.get("/api/me")
 async def me(request: Request):
     u = token_user(request.cookies.get(COOKIE))
-    return {"authenticated": bool(u), "user": users.public(u) if u else None}
+    pl = None
+    if u:
+        p = next((x for x in playerdb.all_players() if x.get("user") == u["username"]), None)
+        if p:
+            pl = {"id": p["id"], "name": playerdb.display(p), "nick": p.get("nick") or "", "steamid": p.get("steamid") or "",
+                  "avatar": p.get("avatar") or "", "admin": sorted(playerdb.admin_games(p, _user_admin_games))}
+    return {"authenticated": bool(u), "user": users.public(u) if u else None, "player": pl}
+
+
+class MeProfileIn(BaseModel):
+    nick: str | None = Field(None, max_length=64)
+    steamid: str | None = Field(None, max_length=200)
+
+
+@app.put("/api/me/profile", dependencies=auth)
+async def me_profile(data: MeProfileIn, request: Request):
+    """Eigenes Spielerprofil: Nickname und SteamID (legt den Spieler an, falls es noch keinen gibt)."""
+    u = request.state.user
+    p = next((x for x in playerdb.all_players() if x.get("user") == u["username"]), None)
+    sid = ""
+    if data.steamid:
+        try:
+            sid = (await steam.resolve_player(data.steamid))["steamid"]
+        except steam.SteamError as e:
+            raise HTTPException(400, str(e))
+        other = playerdb.get(sid)
+        if other and other is not p:
+            if other.get("user") and other["user"] != u["username"]:
+                raise HTTPException(409, "Diese SteamID gehört schon zu einem anderen Konto")
+            if p is None:
+                p = other                         # vorhandenen Spieler mit dieser SteamID übernehmen
+            else:
+                playerdb.merge(p["id"], other["id"])
+                p = playerdb.get(p["id"]) or playerdb.get(sid)
+    if p is None:
+        p = playerdb.add_manual(sid, data.nick or u["username"], "") if sid else playerdb.seen(name=data.nick or u["username"], game="manuell")
+    fields = {"user": u["username"]}
+    if data.nick is not None:
+        fields["nick"] = data.nick
+    if sid:
+        fields["steamid"] = sid
+    try:
+        playerdb.update(p["id"], fields)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    return await me(request)
 
 
 auth = [Depends(require_auth)]
+
+
+def _is_admin(request: Request) -> bool:
+    return ((getattr(request.state, "user", None) or {}).get("role")) == "admin"
+
+
+def _need_admin(request: Request) -> None:
+    if not _is_admin(request):
+        raise HTTPException(403, "Nur für Administratoren")
 
 
 class UserIn(BaseModel):
@@ -414,7 +471,8 @@ class UserIn(BaseModel):
 
 @app.get("/api/users", dependencies=auth)
 async def list_users():
-    return {"users": [users.public(u) for u in users.load()], "roles": users.ROLE_LABELS,
+    linked = {p.get("user"): playerdb.display(p) for p in playerdb.all_players() if p.get("user")}
+    return {"users": [{**users.public(u), "player": linked.get(u["username"])} for u in users.load()], "roles": users.ROLE_LABELS,
             "levels": users.LEVELS, "level_hints": users.LEVEL_HINTS}
 
 
@@ -3048,7 +3106,8 @@ async def _sync_admins() -> list[str]:
 
 
 @app.post("/api/players/sync-admins", dependencies=auth)
-async def players_sync_admins():
+async def players_sync_admins(request: Request):
+    _need_admin(request)
     return {"done": await _sync_admins(), "log": _admin_sync["log"]}
 
 
@@ -3064,6 +3123,8 @@ class PlayerEdit(BaseModel):
 async def edit_player(pid: str, data: PlayerEdit, request: Request):
     """Spieler bearbeiten: Nickname, SteamID (jedes Format), Notiz, Admin für Spiele, verknüpftes Tool-Konto."""
     f = data.model_dump(exclude_none=True)
+    if not _is_admin(request) and set(f) - {"nick", "notes"}:
+        raise HTTPException(403, "SteamID, Admin-Rechte und Konto-Verknüpfung dürfen nur Administratoren ändern")
     if f.get("steamid"):
         try:
             r = await steam.resolve_player(f["steamid"])
@@ -3078,6 +3139,33 @@ async def edit_player(pid: str, data: PlayerEdit, request: Request):
         raise HTTPException(409, str(e))
     asyncio.create_task(_sync_admins())
     return _players_out(request)
+
+
+class AccountIn(BaseModel):
+    username: str | None = Field(None, max_length=32)
+    role: str = "viewer"
+
+
+@app.post("/api/players/{pid}/account", dependencies=auth)
+async def player_account(pid: str, data: AccountIn, request: Request):
+    """Neues Tool-Konto für einen Spieler anlegen und verknüpfen – Passwort wird einmalig angezeigt."""
+    _need_admin(request)
+    p = playerdb.get(pid)
+    if not p:
+        raise HTTPException(404, "Spieler nicht gefunden")
+    if p.get("user") and users.find(p["user"]):
+        raise HTTPException(409, f"Schon mit Konto „{p['user']}“ verknüpft")
+    base = re.sub(r"[^a-z0-9._-]", "", (data.username or playerdb.display(p) or "spieler").lower().replace(" ", "."))[:28] or "spieler"
+    name, i = base, 2
+    while users.find(name):
+        name, i = f"{base}{i}", i + 1
+    pw = secrets.token_urlsafe(8)[:10]
+    try:
+        users.upsert(name, pw, data.role if data.role in users.ROLES else "viewer")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    playerdb.update(p["id"], {"user": name})
+    return {"username": name, "password": pw, "players": _players_out(request)}
 
 
 class PlayerNew(BaseModel):
@@ -3151,6 +3239,7 @@ class MergeIn(BaseModel):
 
 @app.post("/api/players/{pid}/merge", dependencies=auth)
 async def merge_player(pid: str, data: MergeIn, request: Request):
+    _need_admin(request)
     """Zwei Einträge derselben Person zusammenführen (z. B. TeamSpeak + Steam)."""
     try:
         playerdb.merge(pid, data.other)
@@ -3161,6 +3250,7 @@ async def merge_player(pid: str, data: MergeIn, request: Request):
 
 @app.delete("/api/players/{pid}", dependencies=auth)
 async def delete_player(pid: str, request: Request):
+    _need_admin(request)
     playerdb.remove(pid)
     return _players_out(request)
 

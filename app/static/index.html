@@ -43,7 +43,7 @@
       <div class="logo">Spielserver<span>manager</span></div>
       <button class="small" id="btnLogout" title="Abmelden">Logout</button>
     </div>
-    <div class="hint" style="padding:8px 16px 0;display:flex;justify-content:space-between;align-items:center"><span id="meName"></span><span style="display:flex;gap:6px;flex:none"><button class="small" id="btnMyPw">Passwort</button></span></div>
+    <div class="hint" style="padding:8px 16px 0;display:flex;justify-content:space-between;align-items:center"><span id="meName"></span><span style="display:flex;gap:6px;flex:none"><button class="small" id="btnMyPw" title="Konto: Profil, SteamID, Passwort">Konto</button></span></div>
     <div class="hostload" id="hostLoad" title="Gesamtlast des Docker-Hosts">
       <div class="hl-head">Gesamtlast <span id="hlHost"></span></div>
       <div class="hl-row"><span>CPU</span><div class="bar"><i id="hlCpuBar"></i></div><b id="hlCpu">–</b></div>
@@ -795,8 +795,16 @@
 </dialog>
 
 <dialog id="dlgPw">
+  <div class="accbox">
+    <h2>Mein Konto</h2>
+    <div class="hint" id="accInfo" style="margin-bottom:10px"></div>
+    <h3 class="pdsec">Spielerprofil</h3>
+    <label class="hint">Nickname (so erscheinst du in der Spielerliste)</label><input id="accNick" maxlength="64">
+    <label class="hint">SteamID (SteamID64, STEAM_0:…, [U:1:…] oder Profil-Link) – für Admin-Rechte auf den Servern</label><input id="accSteam" class="mono">
+    <div class="row" style="justify-content:flex-end;margin:6px 0 14px"><button type="button" class="small primary" id="btnAccSave">Profil speichern</button></div>
+  </div>
   <form method="dialog" id="pwForm">
-    <h2>Eigenes Passwort ändern</h2>
+    <h3 class="pdsec">Passwort ändern</h3>
     <input type="password" name="old" placeholder="Altes Passwort" autocomplete="current-password" required>
     <input type="password" name="new1" placeholder="Neues Passwort (min. 6 Zeichen)" autocomplete="new-password" required>
     <input type="password" name="new2" placeholder="Neues Passwort wiederholen" autocomplete="new-password" required>
@@ -807,6 +815,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=94"></script>
+<script src="/static/app.js?v=95"></script>
 </body>
 </html>

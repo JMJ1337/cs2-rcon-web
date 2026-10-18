@@ -1468,7 +1468,7 @@ async function openPlayerEdit(id, tr){
     <div><label>Nickname</label><input data-pe="nick" value="${esc(p.nick || "")}" placeholder="${esc(p.name)}"></div>
     <div><label>SteamID (SteamID64, STEAM_0:…, [U:1:…] oder Profil-Link)</label><input data-pe="steamid" class="mono" value="${esc(p.steamid || "")}"></div>
     <div><label>Notiz</label><input data-pe="notes" value="${esc(p.notes || "")}"></div>
-    <div><label>Tool-Konto (dessen Rechte gelten als Admin-Rechte)</label><select data-pe="user"><option value="">–</option>${(plUsers || []).map(u => `<option ${u === p.user ? "selected" : ""}>${esc(u)}</option>`).join("")}</select></div>
+    <div><label>Tool-Konto (dessen Rechte gelten als Admin-Rechte)</label><div class="row" style="gap:6px"><select data-pe="user"><option value="">–</option>${(plUsers || []).map(u => `<option ${u === p.user ? "selected" : ""}>${esc(u)}</option>`).join("")}</select><button class="small" data-penew title="Neues Konto (nur ansehen) anlegen und verknüpfen – Passwort wird einmal angezeigt">+ neues Konto</button></div></div>
     <div style="grid-column:1/-1"><label>Admin auf den Servern (braucht SteamID)</label><div class="row" style="flex-wrap:wrap;gap:12px">
       <label class="hint"><input type="checkbox" data-pea="*" ${adm.has("*") ? "checked" : ""} style="width:auto"> alle Spiele</label>
       ${games.map(g => `<label class="hint"><input type="checkbox" data-pea="${esc(g)}" ${adm.has(g) ? "checked" : ""} style="width:auto"> ${esc(GAMES[g]?.label || g)}</label>`).join("")}</div>
@@ -1476,6 +1476,13 @@ async function openPlayerEdit(id, tr){
     <div style="grid-column:1/-1" class="row"><button class="primary small" data-pesave>Speichern</button><button class="small" data-pecancel>Abbrechen</button></div></div></td>`;
   tr.after(row);
   row.querySelector("[data-pecancel]").onclick = () => row.remove();
+  row.querySelector("[data-penew]").onclick = async () => {
+    try {
+      const r = await api(`/api/players/${encodeURIComponent(id)}/account`, {body: {}});
+      players = r.players; plUsers = null; renderPlayerRows();
+      prompt(`Konto angelegt – Zugangsdaten weitergeben (Passwort wird nur jetzt angezeigt).\nRechte unter „Benutzer“ anpassen.`, `Benutzer: ${r.username}  Passwort: ${r.password}`);
+    } catch (e){ toast(e.message, true); }
+  };
   row.querySelector("[data-pesave]").onclick = async () => {
     const body = {}; row.querySelectorAll("[data-pe]").forEach(i => body[i.dataset.pe] = i.value.trim());
     body.admin = [...row.querySelectorAll("[data-pea]")].filter(c => c.checked).map(c => c.dataset.pea);
@@ -2085,7 +2092,7 @@ async function loadUsers(){
     const r = await api("/api/users");
     $("#uRole").innerHTML = Object.entries(r.roles).map(([k,l]) => `<option value="${k}" ${k==="user"?"selected":""}>${esc(l)}</option>`).join("");
     $("#uRows").innerHTML = r.users.map(u => `<tr>
-      <td><b>${esc(u.username)}</b>${me && u.username === me.username ? ' <span class="pill">du</span>' : ""}</td>
+      <td><b>${esc(u.username)}</b>${me && u.username === me.username ? ' <span class="pill">du</span>' : ""}${u.player ? `<div class="hint">🎮 ${esc(u.player)}</div>` : ""}</td>
       <td><select data-urole="${esc(u.username)}">${Object.entries(r.roles).map(([k,l]) => `<option value="${k}" ${k===u.role?"selected":""}>${esc(l)}</option>`).join("")}</select></td>
       <td>${u.role === "admin" ? `<span class="hint">alles</span>` : `<span class="hint">${esc(permSummary(u.perms, r.levels))}</span> <button class="small" data-uperm="${esc(u.username)}">Rechte …</button>`}</td>
       <td>${u.created ? fmtDate(u.created) : "–"}</td><td>${u.last_login ? fmtDate(u.last_login) : "nie"}</td>
@@ -2142,7 +2149,19 @@ $("#btnUAdd").onclick = async () => {
     toast("Benutzer angelegt"); $("#uName").value = ""; $("#uPw").value = ""; loadUsers();
   } catch(err){ toast(err.message, true); }
 };
-$("#btnMyPw").onclick = () => { $("#pwForm").reset(); $("#dlgPw").showModal(); };
+$("#btnMyPw").onclick = async () => {
+  $("#pwForm").reset();
+  let m = null; try { m = await api("/api/me"); } catch {}
+  const u = (m && m.user) || {}, p = (m && m.player) || {};
+  $("#accInfo").innerHTML = `<b>${esc(u.username || "")}</b> · ${esc(u.role === "admin" ? "Administrator" : u.role === "viewer" ? "nur ansehen" : "Benutzer")}${p.admin && p.admin.length ? ` · ★ Admin auf: ${esc(p.admin.map(g => g === "*" ? "alle" : (GAMES[g]?.short || g)).join(", "))}` : ""}`;
+  $("#accNick").value = p.nick || ""; $("#accNick").placeholder = p.name || "Name im Spiel";
+  $("#accSteam").value = p.steamid || "";
+  $("#dlgPw").showModal();
+};
+$("#btnAccSave").onclick = async () => {
+  try { await api("/api/me/profile", {method: "PUT", body: {nick: $("#accNick").value.trim(), steamid: $("#accSteam").value.trim() || null}}); toast("Profil gespeichert"); }
+  catch (e){ toast(e.message, true); }
+};
 $("#btnPwCancel").onclick = () => $("#dlgPw").close();
 $("#pwForm").addEventListener("submit", async e => {
   e.preventDefault();
