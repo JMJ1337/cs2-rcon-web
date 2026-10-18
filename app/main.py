@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import mapimages, gslt, matchlog, steamlist, playerdb
+from . import mapimages, gslt, matchlog, steamlist, playerdb, notify
 from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
@@ -58,7 +58,8 @@ COOKIE = "cs2rcon_session"
 async def lifespan(_app):
     tasks = [asyncio.create_task(watcher()), asyncio.create_task(scan_loop()),
              asyncio.create_task(load_loop()), asyncio.create_task(live_loop()),
-             asyncio.create_task(player_loop())] if WATCH_ENABLED else []
+             asyncio.create_task(player_loop()), asyncio.create_task(monitor_loop()),
+             asyncio.create_task(gslt_loop()), asyncio.create_task(backup_loop())] if WATCH_ENABLED else []
     try:
         _resume_jobs()
     except Exception:  # noqa: BLE001
@@ -104,7 +105,7 @@ def token_user(token: str | None) -> dict | None:
     return u
 
 
-ADMIN_PATHS = ("/api/users", "/api/gslt", "/api/settings", "/api/prefill", "/api/storage", "/api/scan", "/api/cache/measure", "/api/cache/reset", "/api/docker/image-check", "/api/docker/helperlogs")
+ADMIN_PATHS = ("/api/users", "/api/gslt", "/api/notify", "/api/backup", "/api/settings", "/api/prefill", "/api/storage", "/api/scan", "/api/cache/measure", "/api/cache/reset", "/api/docker/image-check", "/api/docker/helperlogs")
 
 # Benötigte Rechtestufe für Server-Unterseiten (users.LEVELS): 1 sehen, 2 bedienen, 3 verwalten, 4 anlegen/löschen
 _MANAGE_RX = re.compile(r"(config(/file)?|files(/.*)?|saves/load|container(/(env|diag|use-lancache|steamfix))?|wreckfest/.*|sleep/config|gslt|cstv|"
@@ -353,7 +354,7 @@ async def public_servers(request: Request):
             join = st.get("join") or join_info(s)
         except Exception:  # noqa: BLE001
             join = None
-        out.append({"id": s["id"], "game": g, "name": st.get("hostname") or s.get("name") or g,
+        out.append({"id": s["id"], "game": g, "name": (st.get("hostname") if s.get("name_from_game", True) else None) or s.get("name") or g,
                     "online": bool(st.get("online")), "sleeping": (_asleep.get(s["id"]) or {}).get("mode"),
                     "install": _public_install(s),
                     "reach": steamlist.reach(g, s, st, steam, wan),
@@ -2512,6 +2513,360 @@ class PlayerIn(BaseModel):
     name: str | None = Field(None, max_length=64)
 
 
+# ---------------------------------------------------------------- Überwachung & Benachrichtigungen
+_manual_stop: dict[str, float] = {}       # vom Benutzer gestoppte Server -> kein Alarm
+_mon: dict[str, dict] = {}
+DOWN_AFTER = 300                          # 5 min offline -> Alarm
+
+
+async def _monitor_once() -> None:
+    now = time.time()
+    servers = load_servers()
+    busy_jobs = {(j.get("req") or {}).get("values", {}).get("name") for j in _jobs.values() if not j.get("done")}
+    for s in servers:
+        sid, st = s["id"], _state.get(s["id"]) or {}
+        m = _mon.setdefault(sid, {"seen_online": False, "down_since": None, "alerted": False, "inst": False, "humans": 0, "probs": set()})
+        name = st.get("hostname") or s.get("name")
+        c = s.get("container")
+        inst = (install_watch.state.get(c or "") or {}).get("progress") if c else None
+        # Server aus / wieder da
+        if st.get("online"):
+            if m["alerted"]:
+                notify.fire(f"🟢 {name} ist wieder online.", event="server_down", key=f"up-{sid}-{int(now)}")
+            m.update(seen_online=True, down_since=None, alerted=False)
+        elif m["seen_online"] and sid not in _asleep and sid not in _manual_stop and not inst and s.get("name") not in busy_jobs:
+            m["down_since"] = m["down_since"] or now
+            if not m["alerted"] and now - m["down_since"] > DOWN_AFTER:
+                m["alerted"] = True
+                err = (st.get("error") or "")[:120]
+                notify.fire(f"🔴 {name} antwortet seit {int((now - m['down_since']) // 60)} min nicht." + (f" ({err})" if err else ""),
+                            event="server_down", key=f"down-{sid}")
+        # Installation fertig
+        if inst:
+            m["inst"] = True
+        elif m["inst"] and st.get("online"):
+            m["inst"] = False
+            notify.fire(f"✅ {name}: Installation/Update fertig, Server läuft.", event="install_done", key=f"inst-{sid}-{int(now // 600)}")
+        # neue Fehler im Log
+        probs = {p.get("title") for p in ((diagnostics.state.get(c or "") or {}).get("problems") or [])} if c else set()
+        for p in probs - m["probs"]:
+            if p:
+                notify.fire(f"⚠️ {name}: {p}", event="problem", key=f"prob-{sid}-{p}")
+        m["probs"] = probs
+        # erster Spieler
+        h = st.get("humans") or 0
+        if st.get("online") and h and not m["humans"]:
+            notify.fire(f"👤 Jemand spielt auf {name} ({h} Spieler).", event="players", key=f"pl-{sid}-{int(now // 1800)}")
+        m["humans"] = h if st.get("online") else 0
+    # Speicher
+    d = cache_stats.state.get("disk") or {}
+    if d.get("total") and d.get("used", 0) / d["total"] > 0.9:
+        notify.fire(f"💾 Lancache-Platte zu {round(d['used'] / d['total'] * 100)} % voll ({round(d['free'] / 1e9)} GB frei).", event="disk", key="disk-cache")
+    try:
+        info = await server_sizes()
+        nf = info.get("nfs_free")
+    except Exception:  # noqa: BLE001
+        nf = None
+    if nf is not None and nf < 100e9:
+        notify.fire(f"💾 NAS-Freigabe fast voll: nur noch {round(nf / 1e9)} GB frei.", event="disk", key="disk-nas")
+    # Lancache
+    lc = cache_stats.state.get("container")
+    if lc:
+        ld = livestats.data.get(lc) or {}
+        if ld and not ld.get("running", True) and now - ld.get("t", 0) < 30:
+            notify.fire("🛑 Lancache-Container läuft nicht – Downloads gehen direkt ins Internet.", event="cache_down", key="cache-down")
+    for k in [k for k, v in _manual_stop.items() if now - v > 7 * 86400]:
+        _manual_stop.pop(k, None)
+
+
+async def monitor_loop():
+    await asyncio.sleep(90)                 # erst Status sammeln lassen
+    while True:
+        try:
+            await _monitor_once()
+        except Exception:  # noqa: BLE001
+            log.exception("Überwachung")
+        await asyncio.sleep(60)
+
+
+async def _gslt_maintenance() -> dict:
+    """Abgelaufene, benutzte Steam-Tokens erneuern und in die Container eintragen."""
+    res = {"renewed": [], "manual": [], "errors": []}
+    if not gslt.has_key():
+        return res
+    try:
+        await gslt.sync()
+    except gslt.GsltError as e:
+        res["errors"].append(str(e))
+        return res
+    use = await _gslt_reconcile()
+    for t in list(gslt.tokens()):
+        tok = t.get("token") or ""
+        if not t.get("expired") or tok not in use or not t.get("steamid"):
+            continue
+        srv_name = use[tok]
+        try:
+            new = await gslt.renew(t["steamid"])
+        except gslt.GsltError as e:
+            res["errors"].append(f"{srv_name}: {e}")
+            continue
+        s = next((x for x in load_servers() if x["name"] == srv_name), None)
+        done = False
+        if s and s.get("container"):
+            try:
+                info = await docker_api.inspect(s["container"])
+                if ((info.get("Config") or {}).get("Labels") or {}).get("gsm.managed") == "1":
+                    g = game_of(s)
+                    await docker_api.recreate(s["container"], lambda cfg, hc: cfg.update(Env=gslt.set_token_env(g, cfg.get("Env") or [], new["token"])))
+                    gslt.assign(new["token"], srv_name)
+                    done = True
+            except docker_api.DockerError as e:
+                res["errors"].append(f"{srv_name}: {e}")
+        (res["renewed"] if done else res["manual"]).append(srv_name)
+        notify.fire(f"🔑 Steam-Token von {srv_name} war abgelaufen und wurde erneuert"
+                    + ("" if done else " – bitte den neuen Token (Einstellungen → Steam-Tokens) im Portainer-Stack eintragen") + ".",
+                    event="token", key=f"tok-{t['steamid']}")
+    return res
+
+
+async def gslt_loop():
+    await asyncio.sleep(300)
+    while True:
+        try:
+            await _gslt_maintenance()
+        except Exception:  # noqa: BLE001
+            log.exception("Steam-Tokens prüfen")
+        await asyncio.sleep(6 * 3600)
+
+
+@app.post("/api/gslt/maintain", dependencies=auth)
+async def gslt_maintain():
+    return await _gslt_maintenance()
+
+
+@app.post("/api/gslt/cleanup", dependencies=auth)
+async def gslt_cleanup():
+    """Abgelaufene und nie bzw. nicht mehr benutzte Tokens löschen (bei Steam und in der Liste)."""
+    use = await _gslt_reconcile()
+    removed = []
+    for t in list(gslt.tokens()):
+        if (t.get("expired") or t.get("deleted")) and (t.get("token") or "") not in use and not t.get("assigned"):
+            if gslt.has_key() and t.get("steamid"):
+                try:
+                    await gslt.delete_at_steam(t["steamid"])
+                except gslt.GsltError:
+                    pass
+            gslt.remove(t.get("id") or t.get("steamid") or "")
+            removed.append(t.get("memo") or t.get("steamid") or "?")
+    return {"removed": removed}
+
+
+class NotifyIn(BaseModel):
+    enabled: bool | None = None
+    whatsapp: str | None = Field(None, max_length=2000)
+    ntfy_url: str | None = Field(None, max_length=300)
+    telegram_token: str | None = Field(None, max_length=120)
+    telegram_chat: str | None = Field(None, max_length=60)
+    events: dict[str, bool] | None = None
+    repeat_min: int | None = Field(None, ge=5, le=10080)
+    max_per_hour: int | None = Field(None, ge=1, le=120)
+    quiet_from: str | None = Field(None, max_length=5)
+    quiet_to: str | None = Field(None, max_length=5)
+
+
+@app.get("/api/notify", dependencies=auth)
+async def notify_get():
+    return notify.public_settings()
+
+
+@app.put("/api/notify", dependencies=auth)
+async def notify_put(data: NotifyIn):
+    if data.ntfy_url and not re.match(r"^https?://", data.ntfy_url):
+        raise HTTPException(400, "ntfy-Adresse muss mit http(s):// beginnen")
+    for v in (data.quiet_from, data.quiet_to):
+        if v and not re.fullmatch(r"\d\d:\d\d", v):
+            raise HTTPException(400, "Ruhezeit im Format HH:MM")
+    return notify.save(data.model_dump(exclude_none=True))
+
+
+@app.post("/api/notify/test", dependencies=auth)
+async def notify_test():
+    errs = await notify.send("Test – Benachrichtigungen funktionieren 👍", force=True)
+    if errs:
+        raise HTTPException(502, "; ".join(errs))
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- Sicherungen der Spielstände (nachts, aufs NAS)
+SAVE_PATHS = {
+    "valheim": ["/config/worlds_local", "/config/worlds"],
+    "satisfactory": ["/config/saved", "/config/gamefiles/FactoryGame/Saved/SaveGames"],
+    "factorio": ["/factorio/saves", "/factorio/config"],
+    "minecraft": ["/data/world", "/data/world_nether", "/data/world_the_end", "/data/server.properties", "/data/ops.json", "/data/whitelist.json"],
+    "wreckfest": ["/serverdata/serverfiles/server_config.cfg"],
+    "teamspeak": ["/var/ts3server/ts3server.sqlitedb", "/var/ts3server/files"],
+    "cs2": ["/home/steam/cs2-dedicated/game/csgo/cfg"],
+    "tf2": ["/home/steam/tf-dedicated/tf/cfg"],
+}
+BACKUP_DEFAULTS = {"enabled": True, "time": "04:30", "keep": 7, "dir": "", "skip": []}
+_backup = {"running": False, "last": store.load("backup_state.json", {})}
+
+
+def _backup_settings() -> dict:
+    d = {**BACKUP_DEFAULTS, **store.load("backup.json", {})}
+    if not d.get("dir"):
+        d["dir"] = os.path.normpath(automation.get_settings().get("games_base") or "/mnt/grohlan") + "/_backups"
+    return d
+
+
+async def _backup_server(s: dict, bdir: str, keep: int) -> dict:
+    g, c = game_of(s), s.get("container")
+    paths = SAVE_PATHS.get(g) or []
+    if not c or not paths:
+        return {"ok": None, "msg": "nichts zu sichern"}
+    info = await docker_api.inspect(c)
+    mounts = [(m.get("Destination") or "", m.get("Source") or "") for m in info.get("Mounts") or [] if m.get("Source")]
+    binds, items = [], []
+    for p in paths:
+        hit = max((m for m in mounts if p == m[0] or p.startswith(m[0].rstrip("/") + "/")), key=lambda m: len(m[0]), default=None)
+        if not hit:
+            continue
+        i = next((k for k, b in enumerate(binds) if b.startswith(hit[1] + ":")), None)
+        if i is None:
+            i = len(binds)
+            binds.append(f"{hit[1]}:/s{i}:ro")
+        rel = os.path.relpath(p, hit[0])
+        items.append((i, rel))
+    if not items:
+        return {"ok": None, "msg": "Speicherordner nicht als Volume eingebunden"}
+    safe = re.sub(r"[^\w.-]+", "_", s.get("name") or c)[:60]
+    stamp = time.strftime("%Y-%m-%d_%H%M")
+    # je Quelle ein tar-Teil, am Ende zusammen in einem Archiv-Ordner -> einfach: mehrere -C-Abschnitte in einem tar
+    pick = "; ".join(f'[ -e "/s{i}/{rel}" ] && set -- "$@" -C "/s{i}" "{rel}"' for i, rel in items)
+    script = (f'set --; {pick}; [ $# -gt 0 ] || {{ echo "keine Speicherdateien gefunden"; exit 3; }}; '
+              f'mkdir -p "/b/{safe}" && cd "/b/{safe}" && tar czf "{stamp}.tar.gz.part" "$@" 2>/tmp/err; rc=$?; '
+              f'if [ -s "{stamp}.tar.gz.part" ] && [ $rc -eq 0 ]; then mv "{stamp}.tar.gz.part" "{stamp}.tar.gz"; else rm -f "{stamp}.tar.gz.part"; cat /tmp/err; exit 2; fi; '
+              f'ls -1t *.tar.gz 2>/dev/null | tail -n +{keep + 1} | xargs -r rm -f; du -k "{stamp}.tar.gz" | cut -f1')
+    binds.append(f"{bdir}:/b")
+    out = await docker_api.run_helper(binds, ["sh", "-c", script], timeout=3600)
+    kb = out.strip().splitlines()[-1] if out.strip() else ""
+    return {"ok": True, "file": f"{bdir}/{safe}/{stamp}.tar.gz", "bytes": int(kb) * 1024 if kb.isdigit() else None}
+
+
+async def _run_backups(only: str | None = None) -> dict:
+    if _backup["running"]:
+        return {"error": "läuft schon"}
+    _backup["running"] = True
+    d = _backup_settings()
+    res = {}
+    try:
+        for s in load_servers():
+            if (only and s["id"] != only) or (not only and s["id"] in (d.get("skip") or [])):
+                continue
+            try:
+                r = await _backup_server(s, d["dir"], int(d.get("keep") or 7))
+            except docker_api.DockerError as e:
+                r = {"ok": False, "msg": str(e)[:300]}
+            if r.get("ok") is None:
+                continue
+            res[s["id"]] = {**r, "name": s.get("name"), "t": time.time()}
+            if r.get("ok") is False:
+                notify.fire(f"💾 Sicherung von {s.get('name')} fehlgeschlagen: {r.get('msg', '')[:120]}", event="backup", key=f"bk-{s['id']}-{time.strftime('%Y%m%d')}")
+        _backup["last"].update(res)
+        store.save("backup_state.json", _backup["last"])
+    finally:
+        _backup["running"] = False
+    return res
+
+
+async def backup_loop():
+    await asyncio.sleep(120)
+    last = max((x.get("t") or 0 for x in _backup["last"].values()), default=0)
+    done_day = time.strftime("%Y-%m-%d") if time.time() - last < 20 * 3600 else ""
+    while True:
+        try:
+            d = _backup_settings()
+            today = time.strftime("%Y-%m-%d")
+            if d.get("enabled") and time.strftime("%H:%M") >= (d.get("time") or "04:30") and done_day != today:
+                done_day = today
+                await _run_backups()
+        except Exception:  # noqa: BLE001
+            log.exception("Sicherung")
+        await asyncio.sleep(60)
+
+
+class BackupIn(BaseModel):
+    enabled: bool | None = None
+    time: str | None = Field(None, max_length=5)
+    keep: int | None = Field(None, ge=1, le=90)
+    dir: str | None = Field(None, max_length=200)
+    skip: list[str] | None = None
+
+
+@app.get("/api/backup", dependencies=auth)
+async def backup_get():
+    d = _backup_settings()
+    servers = [{"id": s["id"], "name": s.get("name"), "game": game_of(s), "supported": bool(SAVE_PATHS.get(game_of(s)) and s.get("container")),
+                "paths": SAVE_PATHS.get(game_of(s)) or [], "last": _backup["last"].get(s["id"])} for s in load_servers()]
+    return {"settings": d, "servers": servers, "running": _backup["running"]}
+
+
+@app.put("/api/backup", dependencies=auth)
+async def backup_put(data: BackupIn):
+    d = {**BACKUP_DEFAULTS, **store.load("backup.json", {})}
+    new = data.model_dump(exclude_none=True)
+    if new.get("time") and not re.fullmatch(r"\d\d:\d\d", new["time"]):
+        raise HTTPException(400, "Uhrzeit im Format HH:MM")
+    if new.get("dir") and not os.path.normpath(new["dir"]).startswith("/mnt/"):
+        raise HTTPException(400, "Sicherungsordner muss unter /mnt liegen")
+    d.update(new)
+    store.save("backup.json", d)
+    return await backup_get()
+
+
+@app.post("/api/backup/run", dependencies=auth)
+async def backup_run(sid: str | None = None):
+    if _backup["running"]:
+        raise HTTPException(409, "Sicherung läuft schon")
+    asyncio.create_task(_run_backups(sid))
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- Alle Server nach Namensschema benennen
+@app.post("/api/names/apply", dependencies=auth)
+async def names_apply():
+    """Namen nach Schema „Groh <Spiel> <Nr> <Modus>“: in der Liste/Übersicht sofort, im Spiel wo möglich
+    (CS2/TF2/Satisfactory live, Wreckfest per Konfiguration + Neustart sobald leer)."""
+    settings = automation.get_settings()
+    out = []
+    for s in load_servers():
+        g, st = game_of(s), _state.get(s["id"]) or {}
+        mode = (st.get("mode") or {}).get("label") if isinstance(st.get("mode"), dict) else ""
+        if g == "cs2":
+            want = _mode_hostname(s, st.get("hostname"), mode or "", settings)
+        else:
+            if g in ("teamspeak", "minecraft", "factorio", "valheim", "satisfactory"):
+                mode = ""
+            want = _auto_name(s, st.get("hostname"), mode or "")
+        if not want:
+            continue
+        how = "Liste"
+        if g == "wreckfest" and s.get("container"):
+            try:
+                await _wf_write(s["container"], {"server_name": want})
+                t_ = _wf_pending_restart.get(s["id"])
+                if not (t_ and not t_.done()):
+                    _wf_pending_restart[s["id"]] = asyncio.create_task(_wf_restart_when_empty(s["id"], s["container"]))
+                how = "im Spiel nach Neustart (sobald leer)"
+            except (HTTPException, docker_api.DockerError):
+                pass
+        elif g in ("cs2", "tf2", "satisfactory"):
+            how = "im Spiel (live)"
+        await _set_server_fields(s["id"], name=want, name_from_game=g in ("cs2", "tf2", "satisfactory", "wreckfest"))
+        out.append({"id": s["id"], "old": s.get("name"), "name": want, "how": how})
+    return {"renamed": out}
+
+
 # ---------------------------------------------------------------- Spieler automatisch erfassen
 LOG_GAMES = {"cs2", "tf2", "minecraft", "valheim"} | set(gslt.SRCDS_GAMES)
 _plog_since: dict[str, int] = {}
@@ -2949,6 +3304,10 @@ async def container_info(sid: str):
 @app.post("/api/servers/{sid}/container/{act}", dependencies=auth)
 async def container_action(sid: str, act: str):
     name = _container_of(sid)
+    if act in ("stop", "pause"):
+        _manual_stop[sid] = time.time()
+    elif act in ("start", "unpause", "restart"):
+        _manual_stop.pop(sid, None)
     try:
         await docker_api.action(name, act)
     except docker_api.DockerError as e:
@@ -3869,6 +4228,7 @@ async def _create_job(job: dict, data: CreateIn, host: str):
         job["t_done"] = time.time()
         _job_log(job, "Fertig")
         _save_jobs(True)
+        notify.fire(f"✅ {b['name']} ist angelegt und startet (Spieldateien laden ggf. noch).", event="install_done", key=f"job-{job['id']}")
     except asyncio.CancelledError:
         if not job.get("cancelled"):
             _save_jobs(True)             # Tool beendet sich – Job bleibt offen und wird nach dem Neustart fortgesetzt

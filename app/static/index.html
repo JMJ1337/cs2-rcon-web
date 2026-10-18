@@ -265,6 +265,8 @@
             <button id="btnGsltKey">Schlüssel speichern</button>
             <button id="btnGsltSync">Von Steam abrufen</button>
             <button id="btnGsltImport" title="Tokens der laufenden CS2/TF2-Server in die Liste übernehmen">Von Servern übernehmen</button>
+            <button id="btnGsltMaintain" title="Abgelaufene, benutzte Tokens erneuern und in die Container eintragen (läuft auch automatisch alle 6 h)">Abgelaufene erneuern</button>
+            <button class="danger" id="btnGsltCleanup" title="Abgelaufene Tokens, die kein Server nutzt, bei Steam und hier löschen">Unbenutzte abgelaufene löschen</button>
           </div>
           <div class="row" style="flex-wrap:wrap;gap:8px;align-items:end;margin-bottom:10px">
             <div><label>Spiel</label><select id="gsltGame"><option value="cs2">CS2</option><option value="tf2">TF2</option></select></div>
@@ -274,6 +276,32 @@
           </div>
           <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Spiel</th><th>Notiz</th><th>Token</th><th>Benutzt von</th><th>Status</th><th></th></tr></thead><tbody id="gsltRows"></tbody></table></div>
           <div class="hint" id="gsltHint" style="margin-top:6px"></div>
+        </div>
+        <div class="panel" id="notifyPanel">
+          <h2>Benachrichtigungen <span class="hint">WhatsApp (über CallMeBot), optional ntfy-Push oder Telegram</span></h2>
+          <div class="hint" style="margin-bottom:8px">WhatsApp einrichten (einmalig, kostenlos): die Nummer <b class="mono">+34 644 51 95 23</b> als Kontakt speichern, ihr per WhatsApp <span class="mono">I allow callmebot to send me messages</span> schicken – die Antwort enthält deinen API-Key. Dann unten <span class="mono">+49…;API-Key</span> eintragen (eine Zeile pro Empfänger).</div>
+          <div class="settings-grid">
+            <div class="field"><label><input type="checkbox" id="ntEnabled" style="width:auto"> Benachrichtigungen an</label></div>
+            <div class="field" style="grid-column:1/-1"><label>WhatsApp-Empfänger (Nummer;API-Key je Zeile)</label><textarea id="ntWhatsapp" rows="2" class="mono" placeholder="+491701234567;123456"></textarea></div>
+            <div class="field"><label>ntfy-Adresse (optional, z. B. https://ntfy.sh/groh-lan-geheim)</label><input id="ntNtfy" class="mono"></div>
+            <div class="field"><label>Telegram Bot-Token / Chat-ID (optional)</label><div class="row" style="gap:6px"><input id="ntTgToken" type="password" class="mono" placeholder="Bot-Token"><input id="ntTgChat" class="mono" placeholder="Chat-ID" style="max-width:140px"></div></div>
+            <div class="field"><label>Ruhezeit (keine Nachrichten) von / bis</label><div class="row" style="gap:6px"><input id="ntQuietFrom" placeholder="23:00" style="max-width:90px"><input id="ntQuietTo" placeholder="08:00" style="max-width:90px"></div></div>
+            <div class="field"><label>Gleiche Meldung frühestens wieder nach (Min.)</label><input id="ntRepeat" inputmode="numeric" style="max-width:100px"></div>
+          </div>
+          <div id="ntEvents" class="row" style="flex-wrap:wrap;gap:12px;margin:8px 0"></div>
+          <div class="row" style="gap:8px"><button class="primary" id="btnNtSave">Speichern</button><button id="btnNtTest">Testnachricht senden</button></div>
+          <div class="hint" id="ntHistory" style="margin-top:8px;white-space:pre-line"></div>
+        </div>
+        <div class="panel" id="backupPanel">
+          <h2>Sicherungen <span class="hint">Spielstände jede Nacht aufs NAS, die letzten Tage bleiben</span></h2>
+          <div class="settings-grid">
+            <div class="field"><label><input type="checkbox" id="bkEnabled" style="width:auto"> nächtliche Sicherung an</label></div>
+            <div class="field"><label>Uhrzeit</label><input id="bkTime" placeholder="04:30" style="max-width:90px"></div>
+            <div class="field"><label>Aufbewahren (Anzahl je Server)</label><input id="bkKeep" inputmode="numeric" style="max-width:90px"></div>
+            <div class="field"><label>Ordner</label><input id="bkDir" class="mono"></div>
+          </div>
+          <div style="overflow:auto;margin-top:8px"><table class="cachetable"><thead><tr><th>sichern</th><th>Server</th><th>Was</th><th>Letzte Sicherung</th><th></th></tr></thead><tbody id="bkRows"></tbody></table></div>
+          <div class="row" style="gap:8px;margin-top:8px"><button class="primary" id="btnBkSave">Speichern</button><button id="btnBkRun">Jetzt alle sichern</button><span class="hint" id="bkState"></span></div>
         </div>
         <div class="panel">
           <h2>Sonstiges</h2>
@@ -286,6 +314,7 @@
             <div class="field"><label>Lancache-Container (leer = automatisch)</label><input id="setCacheContainer" placeholder="z. B. lancache-monolithic-1" class="mono"></div>
             <div class="field"><label>CS2-Servername nach Modus (<span class="mono">{nr}</span> = Servernummer, <span class="mono">{mode}</span> = Modus; leer = aus)</label><input id="setHostnamePattern" placeholder="Groh CS {nr} {mode}" class="mono" maxlength="60"></div>
             <div class="field"><label>Name der übrigen Spielserver (<span class="mono">{game}</span> = Spiel, <span class="mono">{nr}</span> = Nummer, <span class="mono">{mode}</span> = Modus; leer = aus) – live bei TF2/Satisfactory, Wreckfest beim Speichern der Rotation</label><input id="setNamesPattern" placeholder="Groh {game} {nr} {mode}" class="mono" maxlength="60"></div>
+            <div class="field"><label>Alle Server jetzt nach Schema benennen</label><button id="btnNamesApply" title="Liste/Übersicht sofort; im Spiel live bei CS2/TF2/Satisfactory, Wreckfest nach Neustart sobald leer">Alle umbenennen</button></div>
             <div class="field"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="setAutoBots" style="width:auto"> CS2: allein auf dem Server → mit Bots auffüllen (nicht in Competitive/Wingman)</label>
               <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="setAutoMz" style="width:auto"> CS2: MatchZy nur in Competitive/Wingman laden (sonst entladen)</label></div>
             <div class="field"><label>Öffentliche Adresse für Besucher aus dem Internet (IP oder DNS-Name; leer = automatisch ermitteln)</label><input id="setInternetHost" placeholder="z. B. lan.groh-pa.de" class="mono" maxlength="120"></div>
@@ -772,6 +801,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=89"></script>
+<script src="/static/app.js?v=91"></script>
 </body>
 </html>

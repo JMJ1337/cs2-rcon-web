@@ -331,7 +331,7 @@ function showView(v){
   renderServerList();
   if (v === "dash"){ refreshDash(); refreshCache(); }
   if (v === "players") loadPlayers();
-  if (v === "auto"){ renderAuto(); loadGslt(); }
+  if (v === "auto"){ renderAuto(); loadGslt(); loadNotify(); loadBackup(); }
   if (v === "cache"){ loadCacheLive(); loadCacheHistory(); loadDnsCheck(); }
   if (v === "prefill"){ pfLoaded = false; loadPrefill(); }
   if (v === "storage"){ loadStorage(true); loadFolders(); }
@@ -2928,3 +2928,50 @@ $$("[data-gva]").forEach(b => b.onclick = async () => {
   if (act === "delete") gvSel = new Set();
   setTimeout(async () => { await loadServers(); refreshDash(); renderGameView(); }, act === "delete" ? 3000 : 1500);
 });
+
+/* ================= Benachrichtigungen ================= */
+async function loadNotify(){
+  let d; try { d = await api("/api/notify"); } catch { return; }
+  $("#ntEnabled").checked = !!d.enabled; $("#ntWhatsapp").value = d.whatsapp || ""; $("#ntNtfy").value = d.ntfy_url || "";
+  $("#ntTgToken").value = d.telegram_token || ""; $("#ntTgChat").value = d.telegram_chat || "";
+  $("#ntQuietFrom").value = d.quiet_from || ""; $("#ntQuietTo").value = d.quiet_to || ""; $("#ntRepeat").value = d.repeat_min || 360;
+  $("#ntEvents").innerHTML = Object.entries(d.event_labels).map(([k, l]) => `<label class="hint" style="display:flex;gap:5px;align-items:center"><input type="checkbox" data-nte="${k}" ${d.events[k] ? "checked" : ""} style="width:auto"> ${esc(l)}</label>`).join("");
+  $("#ntHistory").textContent = (d.history || []).slice(-8).reverse().map(h => `${new Date(h.t * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"})} · ${h.text}${h.errors && h.errors.length ? "  ✕ " + h.errors.join(", ") : ""}`).join("\n");
+}
+async function saveNotify(){
+  const events = {}; $$("[data-nte]").forEach(c => events[c.dataset.nte] = c.checked);
+  return api("/api/notify", {method: "PUT", body: {enabled: $("#ntEnabled").checked, whatsapp: $("#ntWhatsapp").value, ntfy_url: $("#ntNtfy").value.trim(),
+    telegram_token: $("#ntTgToken").value.trim(), telegram_chat: $("#ntTgChat").value.trim(), events,
+    quiet_from: $("#ntQuietFrom").value.trim(), quiet_to: $("#ntQuietTo").value.trim(), repeat_min: parseInt($("#ntRepeat").value, 10) || 360}});
+}
+$("#btnNtSave").onclick = async () => { try { await saveNotify(); toast("Benachrichtigungen gespeichert"); loadNotify(); } catch (e){ toast(e.message, true); } };
+$("#btnNtTest").onclick = async () => { try { await saveNotify(); await api("/api/notify/test", {method: "POST"}); toast("Testnachricht gesendet"); loadNotify(); } catch (e){ toast(e.message, true); loadNotify(); } };
+
+/* ================= Sicherungen ================= */
+let bkData = null;
+async function loadBackup(){
+  try { bkData = await api("/api/backup"); } catch { return; }
+  const s = bkData.settings;
+  $("#bkEnabled").checked = !!s.enabled; $("#bkTime").value = s.time || "04:30"; $("#bkKeep").value = s.keep || 7; $("#bkDir").value = s.dir || "";
+  $("#bkRows").innerHTML = bkData.servers.map(x => `<tr><td><input type="checkbox" data-bk="${esc(x.id)}" ${x.supported ? "" : "disabled"} ${x.supported && !(s.skip || []).includes(x.id) ? "checked" : ""} style="width:auto"></td>
+    <td>${gameTile(x.game, 14)} ${esc(x.name)}</td><td class="hint mono" style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(x.paths.join("\n"))}">${x.supported ? esc(x.paths.map(p => p.split("/").pop()).join(", ")) : "–"}</td>
+    <td>${x.last ? (x.last.ok ? `<span style="color:var(--ok)">✓</span> ${new Date(x.last.t * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"})}${x.last.bytes ? " · " + fmtBytes(x.last.bytes) : ""}` : `<span style="color:var(--bad)" title="${esc(x.last.msg || "")}">✕ ${esc((x.last.msg || "").slice(0, 60))}</span>`) : `<span class="hint">noch nie</span>`}</td>
+    <td>${x.supported ? `<button class="small" data-bkrun="${esc(x.id)}">jetzt</button>` : ""}</td></tr>`).join("");
+  $("#bkState").textContent = bkData.running ? "Sicherung läuft …" : "";
+  $$("[data-bkrun]").forEach(b => b.onclick = async () => { try { await api(`/api/backup/run?sid=${encodeURIComponent(b.dataset.bkrun)}`, {method: "POST"}); toast("Sicherung läuft"); setTimeout(loadBackup, 8000); } catch (e){ toast(e.message, true); } });
+  if (bkData.running && view === "auto") setTimeout(loadBackup, 5000);
+}
+$("#btnBkSave").onclick = async () => {
+  const skip = $$("[data-bk]").filter(c => !c.checked && !c.disabled).map(c => c.dataset.bk);
+  try { await api("/api/backup", {method: "PUT", body: {enabled: $("#bkEnabled").checked, time: $("#bkTime").value.trim(), keep: parseInt($("#bkKeep").value, 10) || 7, dir: $("#bkDir").value.trim(), skip}}); toast("Sicherung gespeichert"); loadBackup(); }
+  catch (e){ toast(e.message, true); }
+};
+$("#btnBkRun").onclick = async () => { try { await api("/api/backup/run", {method: "POST"}); toast("Sicherung aller Server läuft"); setTimeout(loadBackup, 8000); } catch (e){ toast(e.message, true); } };
+$("#btnGsltMaintain").onclick = async () => { try { const r = await api("/api/gslt/maintain", {method: "POST"}); toast(`Erneuert: ${r.renewed.length + r.manual.length}${r.manual.length ? " (von Hand eintragen: " + r.manual.join(", ") + ")" : ""}${r.errors.length ? " · Fehler: " + r.errors.join("; ") : ""}`, !!r.errors.length); loadGslt(); } catch (e){ toast(e.message, true); } };
+$("#btnGsltCleanup").onclick = async () => { if (!confirm("Abgelaufene Tokens, die kein Server benutzt, bei Steam und hier löschen?")) return; try { const r = await api("/api/gslt/cleanup", {method: "POST"}); toast(`Gelöscht: ${r.removed.length ? r.removed.join(", ") : "keine"}`); loadGslt(); } catch (e){ toast(e.message, true); } };
+
+$("#btnNamesApply").onclick = async () => {
+  if (!confirm("Alle Server nach dem Namensschema umbenennen? (vorher „Speichern“, falls du das Schema geändert hast)")) return;
+  try { const r = await api("/api/names/apply", {method: "POST"}); toast(`${r.renamed.length} Server umbenannt: ` + r.renamed.map(x => x.name).join(", ")); await loadServers(); }
+  catch (e){ toast(e.message, true); }
+};

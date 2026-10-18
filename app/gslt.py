@@ -179,6 +179,10 @@ async def renew(steamid: str) -> dict:
     return next(t for t in tokens() if t.get("steamid") == steamid)
 
 
+async def delete_at_steam(steamid: str) -> None:
+    await _call("DeleteAccount", "POST", steamid=steamid)
+
+
 def assign(token: str, target: str | None) -> None:
     d = _load()
     for t in d["tokens"]:
