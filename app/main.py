@@ -233,6 +233,10 @@ def _map_image(g: str, st: dict) -> str | None:
     return mapimages.image_for(g, st.get("map"), st.get("workshop"), track)
 
 
+def _wf_layout(track: str | None) -> str | None:
+    return mapimages.wf_layouts([k for k, _, _ in wfd.TRACKS]).get(track or "") if track else None
+
+
 def _public_install(s: dict) -> dict | None:
     p = ((install_watch.state.get(s.get("container") or "") or {}).get("progress")) if s.get("container") else None
     if not p:
@@ -254,7 +258,9 @@ async def _public_rotation(s: dict) -> list[dict]:
         if c and docker_api.available():
             if g == "wreckfest":
                 text = await _wf_read(c) or ""
-                out = [{"name": wfd.track_name(e.get("track")),
+                lay = mapimages.wf_layouts([k for k, _, _ in wfd.TRACKS])
+                out = [{"name": wfd.track_name(e.get("track")), "layout": lay.get(e.get("track") or ""),
+                        "image": mapimages.wf_photo(wfd.track_name(e.get("track"))),
                         "sub": " · ".join(x for x in (wfd.MODE_NAMES.get(e.get("gamemode") or "racing", e.get("gamemode") or ""),
                                                       f"{e['laps']} Runden" if e.get("laps") else "",
                                                       f"Klasse {e['car_class_restriction'].upper()}" if e.get("car_class_restriction") else "") if x)}
@@ -330,6 +336,7 @@ async def public_servers(request: Request):
                     "max_players": st.get("max_players"), "map": st.get("map"),
                     "map_label": wfd.track_name(st.get("map")) if g == "wreckfest" else (mapimages.workshop_title(st.get("map")) or st.get("map")),
                     "map_image": _map_image(g, st),
+                    "map_layout": _wf_layout(st.get("map")) if g == "wreckfest" else None,
                     "workshop": {k: (st.get("workshop") or {}).get(k) for k in ("preview", "title")} if st.get("workshop") else None,
                     "mode": (st.get("mode") or {}).get("label") if isinstance(st.get("mode"), dict) else None,
                     "version": st.get("version"), "join": await localize_join(request, s, join), "join_password": await _join_password(s)})
@@ -1231,6 +1238,8 @@ async def overview(request: Request):
             item["join"] = await localize_join(request, s, item["join"])
         item["sleeping"] = (_asleep.get(s["id"]) or {}).get("mode")
         item["map_image"] = _map_image(game_of(s), st)
+        if game_of(s) == "wreckfest":
+            item["map_layout"] = _wf_layout(st.get("map"))
         item["reach"] = steamlist.reach(game_of(s), s, st, steam, wan)
         if game_of(s) == "cs2" and not item.get("workshop") and mapimages.workshop_title(st.get("map")):
             item["map_title"] = mapimages.workshop_title(st.get("map"))
@@ -3835,6 +3844,11 @@ async def wf_config_put(sid: str, data: WfConfigIn):
     return {"ok": True}
 
 
+def _wf_tracks() -> list[dict]:
+    lay = mapimages.wf_layouts([k for k, _, _ in wfd.TRACKS])
+    return [{"id": k, "name": n, "type": t, "layout": lay.get(k), "photo": mapimages.wf_photo(n)} for k, n, t in wfd.TRACKS]
+
+
 @app.get("/api/servers/{sid}/wreckfest/rotation", dependencies=auth)
 async def wf_rotation_get(sid: str):
     s = _wf_server(sid)
@@ -3851,7 +3865,7 @@ async def wf_rotation_get(sid: str):
             glob[m.group(1)] = m.group(2).strip('"')
     vals = _wf_values(text)
     return {"exists": True, "events": wfd.parse_events(text), "globals": glob, "global_labels": wfd.GLOBAL_KEYS,
-            "tracks": [{"id": k, "name": n, "type": t} for k, n, t in wfd.TRACKS], "gamemodes": wfd.GAMEMODES,
+            "tracks": _wf_tracks(), "gamemodes": wfd.GAMEMODES,
             "car_classes": wfd.CAR_CLASSES, "current": {k: vals.get(k, "") for k in ("track", "gamemode", "laps", "bots", "server_name")},
             "auto_name": _auto_name(s, vals.get("server_name"), "")}
 

@@ -112,8 +112,9 @@ function mapThumb(o, g){
   const hero = steamImg(g, "library_hero.jpg"), fallback = steamImg(g, "header.jpg");
   if (!src) src = hero || fallback;
   if (!src) return "";
+  const lay = o.map_layout ? `<img class="mlayout" src="${esc(o.map_layout)}" alt="" loading="lazy" referrerpolicy="no-referrer" title="Streckenverlauf" onerror="this.remove()">` : "";
   return `<div class="mthumb" title="${esc(title || GAMES[g]?.label || "")}"><img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer"
-    onerror="if(this.dataset.fb!=='1'&&'${fallback}'){this.dataset.fb='1';this.src='${fallback}'}else{(this.closest('.pubthumb')||this.parentNode).remove()}"></div>`;
+    onerror="if(this.dataset.fb!=='1'&&'${fallback}'){this.dataset.fb='1';this.src='${fallback}'}else{(this.closest('.pubthumb')||this.parentNode).remove()}">${lay}</div>`;
 }
 // echtes Spiel-Icon (Steam bzw. Favicon) in der Kachel, eigenes Symbol nur als Ersatz
 function gameTile(g, size = 16){
@@ -223,7 +224,7 @@ function renderPublic(){
     const g = GAMES[x.game] || r.games[x.game] || {label: x.game, color: "#888"};
     const j = x.join || {};
     const meta = [x.mode ? esc(x.mode) : "", x.version ? "v" + esc(x.version) : ""].filter(Boolean).join(" · ");
-    const thumb = mapThumb({map: MAP_GAMES.has(x.game) && x.online ? x.map : "", workshop: x.workshop, map_image: x.map_image, map_title: x.map_label}, x.game);
+    const thumb = mapThumb({map: MAP_GAMES.has(x.game) && x.online ? x.map : "", workshop: x.workshop, map_image: x.map_image, map_title: x.map_label, map_layout: x.online ? x.map_layout : null}, x.game);
     return `<div class="pubcard${x.online || x.sleeping || x.install ? "" : " off"}" style="--gc:${g.color}" data-pub="${esc(x.id)}" tabindex="0" title="Details: Spieler, Rotation">
       ${thumb ? `<div class="pubthumb">${thumb}<span class="pubmap">${MAP_GAMES.has(x.game) && x.online ? esc(x.map_label || x.map || "") : ""}</span></div>` : ""}
       <div class="pubtop">${gameTile(x.game, 18)}<div class="pubname"><b title="${esc(x.name)}">${esc(x.name)}</b><span class="hint">${esc(g.label)} ${x.online ? reachPill(x.reach) : ""}</span></div>
@@ -270,7 +271,7 @@ async function renderPubDetail(){
   let d = null;
   try { d = await (await fetch(`/api/public/${encodeURIComponent(x.id)}`, {cache: "no-store"})).json(); } catch {}
   const g = GAMES[x.game] || {label: x.game, color: "#888"}, j = x.join || {};
-  const thumb = mapThumb({map: MAP_GAMES.has(x.game) && x.online ? x.map : "", workshop: x.workshop, map_image: x.map_image, map_title: x.map_label}, x.game);
+  const thumb = mapThumb({map: MAP_GAMES.has(x.game) && x.online ? x.map : "", workshop: x.workshop, map_image: x.map_image, map_title: x.map_label, map_layout: x.online ? x.map_layout : null}, x.game);
   const players = (d && d.players) || [];
   const rot = (d && d.rotation) || [];
   const cur = (d && d.map) || x.map_label || x.map;
@@ -300,7 +301,7 @@ async function renderPubDetail(){
       ${players.map(p => `<tr><td>${esc(p.name)}${p.bot ? ' <span class="pill">Bot</span>' : ""}</td><td class="mono">${esc(p.time || "")}</td>${players.some(q => q.score != null) ? `<td class="mono">${esc(p.score ?? "")}</td>` : ""}${players.some(q => q.ping != null) ? `<td class="mono">${esc(p.ping ?? "")}</td>` : ""}</tr>`).join("")}
       </tbody></table>` : `<div class="hint">${x.online ? "Gerade niemand drauf – oder das Spiel meldet keine Namen." : "Server ist offline."}</div>`}
     ${rot.length ? `<h3 class="pdsec">${x.game === "wreckfest" ? "Rotation" : "Mapcycle"} <span class="hint">(${rot.length})</span></h3>
-      <ol class="pdrot">${rot.map(r => `<li class="${r.name === cur ? "cur" : ""}"><b>${esc(r.name)}</b>${r.sub ? ` <span class="hint">${esc(r.sub)}</span>` : ""}</li>`).join("")}</ol>` : ""}`;
+      <ol class="pdrot${rot.some(r => r.layout || r.image) ? " withimg" : ""}">${rot.map(r => `<li class="${r.name === cur ? "cur" : ""}">${r.layout || r.image ? wfThumb(r.image, r.layout, r.name) : ""}<span><b>${esc(r.name)}</b>${r.sub ? ` <span class="hint">${esc(r.sub)}</span>` : ""}</span></li>`).join("")}</ol>` : ""}`;
   $$("#pubDetail [data-pdcopy]").forEach(b => b.onclick = () => copyText(b.dataset.pdcopy));
 }
 $("#btnPubLogin").onclick = () => pubLoggedIn ? start() : showLogin();
@@ -1713,6 +1714,7 @@ function renderWfRot(){
   $("#wfRotInfo").textContent = ev.length ? `${ev.length} Events` : "Keine Rotation – der Server bleibt auf einer Strecke.";
   $("#wfRotRows").innerHTML = ev.map((e, i) => `<tr data-i="${i}">
     <td class="mono">${i + 1}</td>
+    <td>${(t => wfThumb(t && t.photo, t && t.layout, (t && t.name) || e.track, `data-pick="${i}"`))(wfRot.tracks.find(x => x.id === e.track))}</td>
     <td><select data-ef="track">${wfTrackOpts(e.track)}</select></td>
     <td><select data-ef="gamemode">${wfRot.gamemodes.map(([k, l]) => `<option value="${k}" ${k === (e.gamemode || "racing") ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></td>
     <td><input data-ef="laps" value="${esc(e.laps ?? "")}" style="width:60px" placeholder="Std."></td>
@@ -1721,7 +1723,7 @@ function renderWfRot(){
     <td><input data-ef="num_teams" value="${esc(e.num_teams ?? "")}" style="width:50px" placeholder="–"></td>
     <td><input type="checkbox" data-ef="car_reset_disabled" ${String(e.car_reset_disabled) === "1" ? "checked" : ""} style="width:auto"></td>
     <td style="white-space:nowrap"><button class="small" data-em="-1" title="nach oben">↑</button><button class="small" data-em="1" title="nach unten">↓</button><button class="small" data-ed title="kopieren">⧉</button><button class="small danger" data-ex title="entfernen">✕</button></td></tr>`).join("") ||
-    `<tr><td colspan="9" class="hint">Mit „＋ Event“ oder einer Vorlage oben anfangen.</td></tr>`;
+    `<tr><td colspan="10" class="hint">Mit „＋ Event“ oder einer Vorlage oben anfangen.</td></tr>`;
   $$("#wfRotRows tr[data-i]").forEach(tr => {
     const i = +tr.dataset.i;
     tr.querySelectorAll("[data-ef]").forEach(inp => inp.onchange = () => {
@@ -1735,10 +1737,37 @@ function renderWfRot(){
       }
     });
     tr.querySelectorAll("[data-em]").forEach(b => b.onclick = () => { const j = i + +b.dataset.em; if (j < 0 || j >= ev.length) return; [ev[i], ev[j]] = [ev[j], ev[i]]; renderWfRot(); });
+    const pk = tr.querySelector("[data-pick]"); if (pk) pk.onclick = () => wfOpenPicker(i);
     tr.querySelector("[data-ed]").onclick = () => { ev.splice(i + 1, 0, {...ev[i]}); renderWfRot(); };
     tr.querySelector("[data-ex]").onclick = () => { ev.splice(i, 1); renderWfRot(); };
   });
 }
+function wfThumb(photo, layout, name, attr = ""){
+  return `<div class="wfth${photo ? "" : " nophoto"}" ${attr} title="${esc(name || "")}${attr ? " – klicken zum Auswählen" : ""}">${photo ? `<img class="ph" src="${esc(photo)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}${layout ? `<img class="ly" src="${esc(layout)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}</div>`;
+}
+let wfPickIdx = -1;
+function wfOpenPicker(i){
+  wfPickIdx = i; $("#wfPickFilter").value = "";
+  $("#wfPickTitle").textContent = `Strecke für Event ${i + 1} wählen`;
+  renderWfPicker(); $("#wfPick").classList.remove("hidden"); $("#wfPickFilter").focus();
+}
+function renderWfPicker(){
+  const q = $("#wfPickFilter").value.trim().toLowerCase(), cur = (wfRot.events[wfPickIdx] || {}).track;
+  const sec = (type, label) => { const l = wfRot.tracks.filter(x => x.type === type && (!q || x.name.toLowerCase().includes(q) || x.id.includes(q)));
+    return l.length ? `<h3 class="pdsec">${label} <span class="hint">(${l.length})</span></h3><div class="wfpgrid">${l.map(x => `<button class="wfpitem${x.id === cur ? " active" : ""}" data-tid="${esc(x.id)}">${wfThumb(x.photo, x.layout, x.name)}<span>${esc(x.name)}</span></button>`).join("")}</div>` : ""; };
+  $("#wfPickGrid").innerHTML = sec("race", "Rennstrecken") + sec("derby", "Derby-Arenen") || `<div class="hint">Nichts gefunden</div>`;
+  $$("#wfPickGrid [data-tid]").forEach(b => b.onclick = () => {
+    const e = wfRot.events[wfPickIdx], t = wfRot.tracks.find(x => x.id === b.dataset.tid);
+    if (!e || !t) return;
+    e.track = t.id;
+    if (t.type === "derby" && !/derby/.test(e.gamemode || "")) e.gamemode = "derby";
+    if (t.type === "race" && /derby/.test(e.gamemode || "")) e.gamemode = "racing";
+    $("#wfPick").classList.add("hidden"); renderWfRot();
+  });
+}
+$("#wfPickFilter").addEventListener("input", renderWfPicker);
+$("#wfPickClose").onclick = () => $("#wfPick").classList.add("hidden");
+$("#wfPick").addEventListener("click", e => { if (e.target.id === "wfPick") $("#wfPick").classList.add("hidden"); });
 const wfPreset = type => wfRot.tracks.filter(t => !type || t.type === type).filter(t => !/_rev$/.test(t.id))
   .map(t => ({...WF_EV_DEFAULT, track: t.id, gamemode: t.type === "derby" ? "derby" : "racing", laps: t.type === "derby" ? "" : "3"}));
 $("#wfRotAdd").onclick = () => { const last = wfRot.events[wfRot.events.length - 1]; wfRot.events.push(last ? {...last} : {...WF_EV_DEFAULT, track: wfRot.tracks[0].id}); renderWfRot(); };

@@ -97,6 +97,67 @@ def _get(key: str) -> str | None:
     return None
 
 
+# ---- Wreckfest: Streckenverlauf (wie im Spiel beim Beitreten) – Wiki-Datei „<Strecken-ID>.png“ (256×116)
+WF_LAYOUT_KEY = "wflayouts"
+_wfl_busy = {"on": False}
+
+
+def _wf_file(tid: str) -> str:
+    return "File:" + (tid[:1].upper() + tid[1:]).replace("_", " ") + ".png"
+
+
+async def _fetch_wf_layouts(ids: list[str]) -> dict:
+    out = {}
+    async with httpx.AsyncClient(timeout=15, headers={"User-Agent": "Spielservermanager"}) as cl:
+        for i in range(0, len(ids), 40):
+            chunk = ids[i:i + 40]
+            r = await cl.get("https://wreckfest.fandom.com/api.php",
+                             params={"action": "query", "titles": "|".join(_wf_file(x) for x in chunk), "prop": "imageinfo",
+                                     "iiprop": "url", "format": "json"})
+            q = r.json().get("query") or {}
+            norm = {n["to"]: n["from"] for n in q.get("normalized") or []}
+            by_title = {_wf_file(x): x for x in chunk}
+            for pg in (q.get("pages") or {}).values():
+                info = (pg.get("imageinfo") or [{}])[0]
+                title = norm.get(pg.get("title"), pg.get("title"))
+                tid = by_title.get(title) or by_title.get(pg.get("title"))
+                if tid is None:   # Titel nach Normalisierung vergleichen
+                    tid = next((x for x in chunk if _wf_file(x).lower() == str(pg.get("title")).lower()), None)
+                if tid and info.get("url"):
+                    out[tid] = info["url"].split("?")[0]
+    return out
+
+
+async def _resolve_wf_layouts(ids: list[str]) -> None:
+    try:
+        m = await _fetch_wf_layouts(ids)
+        c = _load()
+        c[WF_LAYOUT_KEY] = {"map": m, "t": time.time()}
+        store.save(FILE, c)
+    except (httpx.HTTPError, ValueError, KeyError):
+        c = _load()
+        c[WF_LAYOUT_KEY] = {**(c.get(WF_LAYOUT_KEY) or {"map": {}}), "t": time.time() - 6 * 86400}   # in 1 Tag erneut
+        store.save(FILE, c)
+    finally:
+        _wfl_busy["on"] = False
+
+
+def wf_layouts(ids: list[str]) -> dict:
+    """Strecken-ID -> Bild-URL des Streckenverlaufs (wird bei Bedarf im Hintergrund geholt, 7 Tage gültig)."""
+    e = _load().get(WF_LAYOUT_KEY) or {}
+    if time.time() - e.get("t", 0) > 7 * 86400 and not _wfl_busy["on"]:
+        _wfl_busy["on"] = True
+        try:
+            asyncio.get_running_loop().create_task(_resolve_wf_layouts(ids))
+        except RuntimeError:
+            _wfl_busy["on"] = False
+    return e.get("map") or {}
+
+
+def wf_photo(track_label: str) -> str | None:
+    return _get(f"wf:{_venue(track_label)}")
+
+
 def _base(map_name: str | None) -> str:
     return (map_name or "").split("/")[-1].replace(".vpk", "").lower()
 

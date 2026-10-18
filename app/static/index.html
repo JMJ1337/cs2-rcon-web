@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=80">
+<link rel="stylesheet" href="/static/app.css?v=81">
 </head>
 <body>
 
@@ -392,7 +392,8 @@
             <span class="hint" id="wfRotInfo"></span>
           </div>
           <div class="wfdefaults" id="wfRotDefaults"></div>
-          <div style="overflow:auto"><table class="cachetable wfrot"><thead><tr><th>#</th><th>Strecke</th><th>Modus</th><th>Runden</th><th>Bots</th><th>Klasse</th><th>Teams</th><th title="Fahrzeug-Reset aus">Reset aus</th><th></th></tr></thead><tbody id="wfRotRows"></tbody></table></div>
+          <div style="overflow:auto"><table class="cachetable wfrot"><thead><tr><th>#</th><th></th><th>Strecke</th><th>Modus</th><th>Runden</th><th>Bots</th><th>Klasse</th><th>Teams</th><th title="Fahrzeug-Reset aus">Reset aus</th><th></th></tr></thead><tbody id="wfRotRows"></tbody></table></div>
+          <div id="wfPick" class="wfpick hidden"><div class="wfpickbox"><div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px"><b id="wfPickTitle">Strecke wählen</b><input id="wfPickFilter" placeholder="Suchen …" style="max-width:220px"><button class="small" id="wfPickClose">✕</button></div><div id="wfPickGrid"></div></div></div>
           <h3 style="margin-top:14px">Lobby &amp; Regeln</h3>
           <div class="wfgrid" id="wfRotGlobals"></div>
           <div class="row" style="margin-top:12px"><button class="primary" id="btnWfRotSave">Rotation speichern &amp; neu starten</button><span class="hint" id="wfRotName"></span></div>
@@ -747,6 +748,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=80"></script>
+<script src="/static/app.js?v=81"></script>
 </body>
 </html>
