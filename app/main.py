@@ -1612,9 +1612,26 @@ async def activity():
             items.append({"server_id": None, "name": "SteamPrefill" + (f": {cur['name']}" if cur else ""), "game": "prefill",
                           "container": prefill.NAME, "errors": [], "prefill": True,
                           "progress": {"label": "Vorladen", "pct": cur["pct"] if cur else 0.0, "rate": d.get("rx_bps"),
-                                       "apps_done": done, "apps_total": len(pp["apps"])}})
+                                       "apps_done": done, "apps_total": len(pp["apps"])}, "svc": "steam"})
     except docker_api.DockerError:
         pass
+    for svc, sv in prefill_more.SERVICES.items():      # Battle.net / Epic
+        try:
+            pst = await prefill_more.state(svc)
+            if not (pst and pst.get("running")):
+                continue
+            text = await prefill_more.log(svc, 1500)
+            pp = prefill.parse_progress(text)
+            cur = pp["current"]
+            d = livestats.data.get(sv["name"]) or {}
+            done = sum(1 for a in pp["apps"] if a["state"] in ("fertig", "aktuell"))
+            waiting = prefill_more.prompt_of(text)
+            items.append({"server_id": None, "name": f"{sv['label']}-Prefill" + (": Anmeldung nötig" if waiting else f": {cur['name']}" if cur else ""),
+                          "game": "prefill", "container": sv["name"], "errors": [], "prefill": True, "svc": svc,
+                          "progress": {"label": "wartet auf Anmeldung" if waiting else "Vorladen", "pct": cur["pct"] if cur else 0.0,
+                                       "rate": d.get("rx_bps"), "apps_done": done, "apps_total": len(pp["apps"])}})
+        except docker_api.DockerError:
+            pass
     jobs = [{"id": j["id"], "game": j["game"], "step": j["step"], "error": j["error"], "done": j["done"],
              "server_id": j["server_id"], "title": j.get("title"), "progress": j.get("progress")}
             for j in _jobs.values() if (not j["done"] or j["error"]) and not j.get("cancelled")]
