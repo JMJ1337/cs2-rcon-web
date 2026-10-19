@@ -3655,29 +3655,42 @@ async def container_info(sid: str):
 AUTO_UPDATE_GAMES = {"factorio"}          # Version steckt im Image -> beim Neustart/ nachts neues Image holen
 
 
-async def _image_update(s: dict, force_recreate: bool = False) -> str:
-    """Neuestes Image holen; ist es neuer als das laufende, Container damit neu erstellen (Daten/Einstellungen bleiben)."""
+async def _image_update(s: dict, force_recreate: bool = False, tag: str | None = None) -> str:
+    """Neuestes Image holen; ist es neuer als das laufende, Container damit neu erstellen (Daten/Einstellungen bleiben).
+    tag: anderes Image-Tag (z. B. Factorio „latest“ = experimentell, „stable“)."""
     c = s["container"]
     info = await docker_api.inspect(c)
     ref = (info.get("Config") or {}).get("Image") or ""
     if not ref or ref.startswith("sha256:"):
         raise docker_api.DockerError("Container hat kein Image mit Namen – Update nicht möglich")
+    if tag:
+        if not re.fullmatch(r"[\w.-]{1,64}", tag):
+            raise docker_api.DockerError("ungültiges Tag")
+        repo = ref.rsplit(":", 1)[0] if ":" in ref.split("/")[-1] else ref
+        changed = f"{repo}:{tag}" != ref
+        ref = f"{repo}:{tag}"
+        force_recreate = force_recreate or changed
     await docker_api.pull(ref)
     new_id = ((await docker_api._req("GET", f"/images/{ref}/json")).json() or {}).get("Id")
     if new_id and new_id == info.get("Image") and not force_recreate:
         return "schon aktuell"
-    await docker_api.recreate(c, lambda cfg, hc: None)
+    await docker_api.recreate(c, lambda cfg, hc: cfg.update(Image=ref))
     drop_client(s["id"])
     return f"auf neuestes {ref} aktualisiert"
 
 
 @app.post("/api/servers/{sid}/image-update", dependencies=auth)
-async def image_update(sid: str):
+async def image_update(sid: str, tag: str | None = None):
     s = get_server(sid)
     if not s.get("container"):
         raise HTTPException(400, "Kein Container")
     try:
-        return {"ok": True, "result": await _image_update(s)}
+        if tag:                       # vor einem Versionswechsel die Spielstände sichern
+            try:
+                await _backup_server(s, _backup_settings()["dir"], int(_backup_settings().get("keep") or 7))
+            except docker_api.DockerError as e:
+                log.warning("Sicherung vor Versionswechsel: %s", e)
+        return {"ok": True, "result": await _image_update(s, tag=tag)}
     except docker_api.DockerError as e:
         raise HTTPException(502, str(e))
 
