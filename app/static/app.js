@@ -440,7 +440,9 @@ async function refreshHost(){
   const g = h.games || {};
   $("#hlSub").innerHTML = `${fmtMem(h.mem_used_mb)} von ${fmtMem(h.mem_total_mb)} · Load ${h.load ? h.load.map(x => x.toFixed(2)).join(" ") : "–"}` +
     (g.containers ? `<br>Spielserver: ${g.running}/${g.containers} laufen · ${g.cpu_host} % CPU · ${fmtMem(g.mem_mb)}` +
-      "" : "");
+      "" : "") +
+    (h.local_disk ? `<br><span title="Interne Platte des Servers (Docker)">💽 Interne Platte: <b>${fmtBytes(h.local_disk.free)}</b> frei von ${fmtBytes(h.local_disk.total)}</span>` : "") +
+    (h.cs2_template ? `<br><span title="Lokale Kopie von ${esc(h.cs2_template.src_name || "CS #1")} – neue CS-Server kopieren von hier">CS-Vorlage: ${h.cs2_template.busy ? "wird aktualisiert" + (h.cs2_template.progress != null ? " " + h.cs2_template.progress + " %" : " …") : h.cs2_template.last ? fmtBytes(h.cs2_template.bytes || 0) + " · Stand " + new Date(h.cs2_template.last * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"}) : "noch keine"}${h.cs2_template.error ? " · ⚠ " + esc(h.cs2_template.error.slice(0, 60)) : ""}</span>` : "");
 }
 function problemsHtml(list){
   if (!list || !list.length) return "";
@@ -2025,8 +2027,11 @@ async function initCreate(){
     : `<input data-cf="${k}" type="${type==="password"?"password":"text"}" value="${esc(fill(def, k))}" ${type==="number"?'inputmode="numeric"':""} autocomplete="off">`
   }${hint && type !== "select" ? `<div class="hint">${esc(hint)}</div>` : ""}</div>`).join("");
   const same = createGame === "cs2" ? servers.filter(s => gameOf(s) === createGame && s.container) : [];   // Kopieren nur bei CS2
-  if (same.length) $("#createFields").insertAdjacentHTML("beforeend", `<div class="field"><label>Spieldateien kopieren von (spart den Download)</label>
-    <select data-cf="_copy_from"><option value="">– nicht kopieren, neu herunterladen –</option>${same.map(s => `<option value="${esc(s.id)}" ${s === same[0] ? "selected" : ""}>${esc(s.name)} (${esc(s.container)})</option>`).join("")}</select>
+  let tplInfo = null;
+  if (createGame === "cs2"){ try { tplInfo = await api("/api/cs2-template"); } catch {} }
+  const hasTpl = tplInfo && tplInfo.last;
+  if (same.length || hasTpl) $("#createFields").insertAdjacentHTML("beforeend", `<div class="field"><label>Spieldateien kopieren von (spart den Download)</label>
+    <select data-cf="_copy_from"><option value="">– nicht kopieren, neu herunterladen –</option>${hasTpl ? `<option value="_local" selected>Lokale Vorlage auf der internen Platte (${esc(fmtBytes(tplInfo.bytes || 0))}, Stand ${new Date(tplInfo.last * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"})}) – am schnellsten</option>` : ""}${same.map(s => `<option value="${esc(s.id)}" ${!hasTpl && s === same[0] ? "selected" : ""}>${esc(s.name)} (${esc(s.container)})</option>`).join("")}</select>
     <div class="hint">Kopiert die Installation eines vorhandenen Servers ins neue Datenverzeichnis, bevor er startet. SteamCMD prüft danach nur noch Unterschiede. Quelle sollte fertig installiert sein.</div></div>`);
   const upd = () => { const name = ($('[data-cf="name"]') || {}).value || ""; $("#createDataDir").value = t.data_default.replace("{base}", tpl.games_base || settings.games_base || "/mnt/grohlan").replace("{n}", n).replace("{name}", name); };
   upd(); $('[data-cf="name"]').addEventListener("input", upd);

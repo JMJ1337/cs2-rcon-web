@@ -1491,6 +1491,8 @@ async def load_loop():
                 lh = livestats.host
                 await prefill.yield_check(cd.get("tx_bps"), prx, dls, _lan_client_tx(lh))
                 await _prefill_queue_tick()
+                if n % 12 == 0:
+                    await _tpl_tick()
             except docker_api.DockerError:
                 pass
             except Exception:  # noqa: BLE001
@@ -2230,6 +2232,10 @@ async def host_load():
                   "mem_mb": sum(v.get("mem_mb") or 0 for v in games),
                   "rx_bps": sum(v.get("rx_bps") or 0 for v in games), "tx_bps": sum(v.get("tx_bps") or 0 for v in games)}
     h["net"] = {k: livestats.host.get(k) for k in ("rx_bps", "tx_bps", "source", "ifaces")}
+    h["local_disk"] = _tpl.get("disk")
+    h["cs2_template"] = {k: _tpl.get(k) for k in ("last", "bytes", "busy", "progress", "src_name", "error")}
+    if time.time() - _tpl["disk_t"] > 300 and docker_api.available():
+        asyncio.create_task(_tpl_disk())
     return h
 
 
@@ -4369,16 +4375,27 @@ echo DONE
 async def _copy_game_files(job: dict, b: dict, src_id: str) -> None:
     """Spieldateien eines vorhandenen Servers desselben Spiels kopieren, bevor der neue Container startet.
     Läuft als eigener Container weiter, auch wenn das Tool neu startet; Fortschritt nach Dateien, mit Restzeit."""
-    src = next((x for x in load_servers() if x["id"] == src_id), None)
-    if not src or not src.get("container"):
-        _job_log(job, "Kopieren übersprungen: Quell-Server ohne Container")
-        return
-    try:
-        info = await docker_api.inspect(src["container"])
-    except docker_api.DockerError as e:
-        _job_log(job, f"Kopieren übersprungen: {e}")
-        return
-    src_mounts = {m.get("Destination", "").rstrip("/"): m.get("Source") for m in info.get("Mounts") or [] if m.get("Source")}
+    if src_id == "_local":
+        if not _tpl.get("last"):
+            _job_log(job, "Lokale Vorlage gibt es noch nicht – kopiere vom Vorlage-Server")
+            s_ = _tpl_source()
+            if not s_:
+                return
+            src_id = s_["id"]
+        else:
+            src = {"name": "lokaler Vorlage (interne Platte)", "id": "_local"}
+            src_mounts = {CS2_DIR: LOCAL_TPL_VOL}
+    if src_id != "_local":
+        src = next((x for x in load_servers() if x["id"] == src_id), None)
+        if not src or not src.get("container"):
+            _job_log(job, "Kopieren übersprungen: Quell-Server ohne Container")
+            return
+        try:
+            info = await docker_api.inspect(src["container"])
+        except docker_api.DockerError as e:
+            _job_log(job, f"Kopieren übersprungen: {e}")
+            return
+        src_mounts = {m.get("Destination", "").rstrip("/"): m.get("Source") for m in info.get("Mounts") or [] if m.get("Source")}
     pairs = []
     for bind in b["spec"]["HostConfig"].get("Binds") or []:
         hp, cp = bind.split(":")[0], bind.split(":")[1].rstrip("/")
@@ -4447,6 +4464,137 @@ async def _copy_game_files(job: dict, b: dict, src_id: str) -> None:
         except docker_api.DockerError:
             pass
     job.pop("progress", None)
+
+
+# ---------------------------------------------------------------- Lokale CS2-Vorlage auf der internen Platte
+LOCAL_TPL_VOL = "gsm-cs2-vorlage"          # Docker-Volume -> liegt auf der internen Platte des Docker-Hosts
+CS2_DIR = "/home/steam/cs2-dedicated"
+_tpl: dict = {**{"busy": False, "last": None, "bytes": None, "error": None, "src": None, "src_name": None, "disk": None,
+                 "disk_t": 0.0, "progress": None}, **{k: v for k, v in store.load("cs2_template.json", {}).items()
+                                                      if k in ("last", "bytes", "src", "src_name")}}
+
+
+def _tpl_save():
+    store.save("cs2_template.json", {k: _tpl.get(k) for k in ("last", "bytes", "src", "src_name")})
+
+
+def _tpl_source() -> dict | None:
+    """Vorlage-Server: gewählter, sonst „#1“, sonst der erste CS2-Server mit Container."""
+    cs = [s for s in load_servers() if game_of(s) == "cs2" and s.get("container")]
+    want = automation.get_settings().get("cs2_template_src")
+    return next((s for s in cs if s["id"] == want), None) or next((s for s in cs if re.search(r"#\s*1\b", s.get("name") or "")), None) \
+        or (cs[0] if cs else None)
+
+
+async def _tpl_disk() -> dict | None:
+    if time.time() - _tpl["disk_t"] < 300 and _tpl["disk"]:
+        return _tpl["disk"]
+    try:
+        out = await docker_api.run_helper([f"{LOCAL_TPL_VOL}:/t"], ["sh", "-c", "df -kP /t | tail -1; du -sk /t 2>/dev/null | cut -f1"], timeout=600)
+        lines = out.strip().splitlines()
+        f = lines[0].split()
+        _tpl["disk"] = {"total": int(f[1]) * 1024, "used": int(f[2]) * 1024, "free": int(f[3]) * 1024}
+        if len(lines) > 1 and lines[1].strip().isdigit():
+            _tpl["bytes"] = int(lines[1]) * 1024
+        _tpl["disk_t"] = time.time()
+    except (docker_api.DockerError, ValueError, IndexError):
+        pass
+    return _tpl["disk"]
+
+
+async def _tpl_refresh(src: dict | None = None) -> None:
+    """Spieldateien des Vorlage-Servers auf die interne Platte spiegeln (nur Geänderte/Neue)."""
+    if _tpl["busy"]:
+        return
+    src = src or _tpl_source()
+    if not src:
+        _tpl["error"] = "kein CS2-Server als Vorlage gefunden"
+        return
+    _tpl.update(busy=True, error=None, progress=None)
+    try:
+        info = await docker_api.inspect(src["container"])
+        sp = next((m.get("Source") for m in info.get("Mounts") or [] if (m.get("Destination") or "").rstrip("/") == CS2_DIR), None)
+        if not sp:
+            raise docker_api.DockerError("Datenordner des Vorlage-Servers nicht gefunden")
+        cname = "gsm-vorlage-sync"
+        try:
+            await docker_api.remove_container(cname)
+        except docker_api.DockerError:
+            pass
+        script = ("T=$(du -sk /s 2>/dev/null | cut -f1); echo TOTAL ${T:-0}; "
+                  "( while sleep 10; do echo BYTES $(du -sk /t 2>/dev/null | cut -f1); done ) & W=$!; "
+                  "cp -au /s/. /t/ 2>/tmp/e; rc=$?; kill $W; grep -v 'Permission denied' /tmp/e | tail -3; "
+                  "echo BYTES $(du -sk /t | cut -f1); echo DONE $rc")
+        await docker_api._req("POST", "/containers/create", params={"name": cname}, json={
+            "Image": docker_api.HELPER_IMAGE, "Cmd": ["sh", "-c", script], "Labels": {"gsm.helper": "vorlage"},
+            "HostConfig": {"Binds": [f"{sp}:/s:ro", f"{LOCAL_TPL_VOL}:/t"], "CpuShares": 256}}, timeout=60)
+        await docker_api._req("POST", f"/containers/{cname}/start", timeout=60)
+        while True:
+            await asyncio.sleep(5)
+            i2 = await docker_api.inspect(cname)
+            lg = await docker_api.logs(cname, 400)
+            tot = re.search(r"TOTAL (\d+)", lg)
+            done = re.findall(r"BYTES (\d+)", lg)
+            if tot and done and int(tot.group(1)):
+                _tpl["progress"] = round(min(100.0, int(done[-1]) / int(tot.group(1)) * 100), 1)
+            if not (i2.get("State") or {}).get("Running"):
+                m = re.search(r"DONE (\d+)", lg)
+                if not m:
+                    raise docker_api.DockerError(lg.strip()[-200:] or "abgebrochen")
+                if done:
+                    _tpl["bytes"] = int(done[-1]) * 1024
+                break
+        try:
+            await docker_api.remove_container(cname)
+        except docker_api.DockerError:
+            pass
+        _tpl.update(last=time.time(), src=src["id"], src_name=src.get("name"), disk_t=0)
+        _tpl_save()
+        log.info("CS2-Vorlage aktualisiert von %s (%s)", src.get("name"), fmt_gb(_tpl["bytes"] or 0))
+    except docker_api.DockerError as e:
+        _tpl["error"] = str(e)[:300]
+        log.warning("CS2-Vorlage: %s", e)
+    finally:
+        _tpl.update(busy=False, progress=None)
+
+
+_tpl_watch = {"inst": False, "day": ""}
+
+
+async def _tpl_tick() -> None:
+    """Vorlage nach Installation/Update des Vorlage-Servers und einmal täglich (05:00) aktualisieren."""
+    src = _tpl_source()
+    if not src or _tpl["busy"]:
+        return
+    inst = bool((install_watch.state.get(src["container"]) or {}).get("progress"))
+    st = _state.get(src["id"]) or {}
+    today = time.strftime("%Y-%m-%d")
+    if _tpl_watch["inst"] and not inst and st.get("online"):
+        _tpl_watch["inst"] = False
+        asyncio.create_task(_tpl_refresh(src))
+        return
+    _tpl_watch["inst"] = inst or _tpl_watch["inst"]
+    if not _tpl.get("last") or (time.strftime("%H:%M") >= "05:00" and _tpl_watch["day"] != today
+                                 and time.time() - (_tpl.get("last") or 0) > 20 * 3600):
+        _tpl_watch["day"] = today
+        if st.get("online") and not inst:
+            asyncio.create_task(_tpl_refresh(src))
+
+
+@app.get("/api/cs2-template", dependencies=auth)
+async def cs2_template():
+    src = _tpl_source()
+    return {**{k: v for k, v in _tpl.items() if k not in ("disk_t",)}, "disk": await _tpl_disk(),
+            "source_id": src["id"] if src else None, "source_name": src.get("name") if src else None}
+
+
+@app.post("/api/cs2-template/refresh", dependencies=auth)
+async def cs2_template_refresh(request: Request):
+    _need_admin(request)
+    if _tpl["busy"]:
+        raise HTTPException(409, "Vorlage wird gerade aktualisiert")
+    asyncio.create_task(_tpl_refresh())
+    return {"ok": True}
 
 
 def fmt_gb(b: int) -> str:
