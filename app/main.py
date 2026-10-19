@@ -2018,7 +2018,7 @@ async def live_values():
     return {"t": now, "cpu": h.get("cpu"), "mem_used_mb": h.get("mem_used_mb"), "mem_total_mb": h.get("mem_total_mb"),
             "net": {k: livestats.host.get(k) for k in ("rx_bps", "tx_bps", "source", "nic_rx_bps", "nic_tx_bps", "inet")},
             "cache": {"rx_bps": cd.get("rx_bps"), "tx_bps": cd.get("tx_bps")} if cd else None, "servers": srv,
-            "io": livestats.io}
+            "io": livestats.io, "peak24": livestats.peak24()}
 
 
 @app.get("/api/cache", dependencies=auth)

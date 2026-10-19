@@ -511,7 +511,7 @@ function latencyRow(io){
 let liveBusy = false, lastLive = null;
 // Seitenleiste: Spitzenwert der letzten 5 Minuten als Marke im Balken
 const PEAK = {};
-function peakMark(barId, pct){
+function peakMark(barId, pct, scale){
   const bar = document.getElementById(barId); if (!bar) return;
   const now = Date.now(), h = (PEAK[barId] = (PEAK[barId] || []).filter(x => now - x[0] < 300000));
   h.push([now, pct || 0]);
@@ -520,7 +520,7 @@ function peakMark(barId, pct){
   let m = box.querySelector(".pk");
   if (!m){ m = document.createElement("span"); m.className = "pk"; box.appendChild(m); }
   m.style.left = `calc(${Math.min(100, pk)}% - 1px)`;
-  box.title = `Spitze der letzten 5 Minuten: ${Math.round(pk)} %` + (barId.includes("Net") ? " der Leitung (1 Gbit/s)" : "");
+  box.title = scale ? `Spitze der letzten 5 Minuten: ${fmtRate(pk / 100 * scale)} · Balken voll = ${fmtRate(scale)} (Höchstwert 24 h)` : `Spitze der letzten 5 Minuten: ${Math.round(pk)} %`;
 }
 async function liveTick(){
   if (liveBusy || document.hidden || !me || $("#app").classList.contains("hidden")) return;
@@ -531,14 +531,16 @@ async function liveTick(){
     const memPct = L.mem_total_mb ? L.mem_used_mb / L.mem_total_mb * 100 : null;
     if (L.cpu != null){ peakMark("hlCpuBar", L.cpu); $("#hlCpuBar").style.width = L.cpu + "%"; $("#hlCpuBar").className = lvl(L.cpu); tween($("#hlCpu"), L.cpu, v => v.toFixed(0) + " %"); }
     if (memPct != null){ peakMark("hlMemBar", memPct); $("#hlMemBar").style.width = memPct + "%"; $("#hlMemBar").className = lvl(memPct); tween($("#hlMem"), memPct, v => Math.round(v) + " %"); }
-    const n = L.net || {}, bw = v => v > 0 ? Math.max(2, Math.min(100, v / LINK_BPS * 100)) : 0;
+    // Skala der Netz-Balken: höchster Wert der letzten 24 h (mind. 1 MB/s), nicht die Leitung
+    const P = L.peak24 || {}, sc = k => niceMax(Math.max(1e6, P[k] || 0));
+    const n = L.net || {}, bwk = (v, k) => v > 0 ? Math.max(2, Math.min(100, v / sc(k) * 100)) : 0, bw = v => bwk(v, "rx");
     if (n.rx_bps != null){
-      $("#hlNetDownBar").style.width = bw(n.rx_bps) + "%"; $("#hlNetUpBar").style.width = bw(n.tx_bps) + "%";
-      peakMark("hlNetDownBar", bw(n.rx_bps)); peakMark("hlNetUpBar", bw(n.tx_bps));
+      $("#hlNetDownBar").style.width = bwk(n.rx_bps, "rx") + "%"; $("#hlNetUpBar").style.width = bwk(n.tx_bps, "tx") + "%";
+      peakMark("hlNetDownBar", bwk(n.rx_bps, "rx"), sc("rx")); peakMark("hlNetUpBar", bwk(n.tx_bps, "tx"), sc("tx"));
       if (n.nic_rx_bps != null){
-        const tot = (n.nic_rx_bps || 0) + (n.nic_tx_bps || 0), tp = tot > 0 ? Math.max(2, Math.min(100, tot / (2 * LINK_BPS) * 100)) : 0;
-        $("#hlNicBar").style.width = tp + "%"; peakMark("hlNicBar", tp); tween($("#hlNic"), tot, v => fmtRate(v));
-        $("#hlNicRow").title = `Netzwerkkarte gesamt inkl. LAN: ${fmtRate(tot)}\n↓ ${fmtRate(n.nic_rx_bps)} · ↑ ${fmtRate(n.nic_tx_bps)}\nBalken = Anteil an 2 × 1 Gbit/s (Vollduplex)`;
+        const tot = (n.nic_rx_bps || 0) + (n.nic_tx_bps || 0), tp = bwk(tot, "nic");
+        $("#hlNicBar").style.width = tp + "%"; peakMark("hlNicBar", tp, sc("nic")); tween($("#hlNic"), tot, v => fmtRate(v));
+        $("#hlNicRow").title = `Netzwerkkarte gesamt inkl. LAN: ${fmtRate(tot)}\n↓ ${fmtRate(n.nic_rx_bps)} · ↑ ${fmtRate(n.nic_tx_bps)}\nBalken voll = ${fmtRate(sc("nic"))} (Höchstwert der letzten 24 h)`;
       }
       tween($("#hlNetDown"), n.rx_bps, v => fmtRate(v)); tween($("#hlNetUp"), n.tx_bps, v => fmtRate(v));
       const tt = `Internet-Durchsatz (geschätzt): ↓ was Lancache und Spielserver empfangen, ↑ was die Spielserver senden – ohne LAN-Verkehr (Cache → Clients, NAS)` + (n.nic_rx_bps != null ? `\nNetzwerkkarte gesamt inkl. LAN: ↓ ${fmtRate(n.nic_rx_bps)} · ↑ ${fmtRate(n.nic_tx_bps)}` : "");
@@ -546,7 +548,7 @@ async function liveTick(){
     }
     latencyRow(L.io);
     if (L.cache && L.cache.tx_bps != null && !$("#hlNetRow").classList.contains("hidden")){
-      $("#hlNetBar").style.width = bw(L.cache.tx_bps) + "%"; peakMark("hlNetBar", bw(L.cache.tx_bps)); tween($("#hlNet"), L.cache.tx_bps, v => fmtRate(v));
+      $("#hlNetBar").style.width = bwk(L.cache.tx_bps, "cache") + "%"; peakMark("hlNetBar", bwk(L.cache.tx_bps, "cache"), sc("cache")); tween($("#hlNet"), L.cache.tx_bps, v => fmtRate(v));
     }
     if (view === "dash") for (const [sid, d] of Object.entries(L.servers || {})) updateLoadRow(document.querySelector(`[data-ld="${sid}"]`), d);
   } catch {} finally { liveBusy = false; }

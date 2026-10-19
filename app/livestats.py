@@ -25,6 +25,30 @@ _tasks: dict[str, asyncio.Task] = {}
 _host_prev: tuple[float, int, int] | None = None
 host: dict = {"rx_bps": None, "tx_bps": None, "source": None, "ifaces": [], "nic_rx_bps": None, "nic_tx_bps": None}
 cache_name: str | None = None          # Lancache-Container: sein Upload geht an die LAN-Clients, nicht ins Internet
+_pk: dict[int, dict] = {}              # Minute -> Höchstwerte (für die Balken-Skala: Max der letzten 24 h)
+
+
+def _peak(key: str, v) -> None:
+    if v is None:
+        return
+    m = int(time.time() // 60)
+    b = _pk.setdefault(m, {})
+    if v > b.get(key, 0):
+        b[key] = v
+    if len(_pk) > 1445:
+        for k in [k for k in _pk if k < m - 1440]:
+            del _pk[k]
+
+
+def peak24() -> dict:
+    out: dict = {}
+    for b in _pk.values():
+        for k, v in b.items():
+            if v > out.get(k, 0):
+                out[k] = v
+    return out
+
+
 LAN_ONLY = {"steamprefill", "bnetprefill", "epicprefill"}   # Prefill lädt vom Lancache (LAN)
 
 
@@ -167,6 +191,12 @@ def sample_host() -> None:
         rx_bps = sum(d["rx_bps"] for d in vals.values())
         tx_bps = sum(d["tx_bps"] or 0 for n, d in vals.items() if n != cache_name)
     host.update(rx_bps=rx_bps, tx_bps=tx_bps, nic_rx_bps=nic_rx, nic_tx_bps=nic_tx, t=now, inet=bool(vals))
+    _peak("rx", rx_bps); _peak("tx", tx_bps)
+    if nic_rx is not None:
+        _peak("nic", nic_rx + (nic_tx or 0))
+    cd = data.get(cache_name or "") or {}
+    if cd.get("tx_bps") is not None and now - cd.get("t", 0) < 5:
+        _peak("cache", cd["tx_bps"])
     mem_pct = round(h["mem_used_mb"] / h["mem_total_mb"] * 100, 1) if h.get("mem_total_mb") else None
     _ring("_host").append((now, h.get("cpu"), mem_pct, rx_bps, tx_bps))
 
