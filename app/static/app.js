@@ -563,7 +563,8 @@ setInterval(async () => {
 }, 2000);
 
 /* ================= Lancache ================= */
-const fmtBytes = b => b == null ? "–" : b >= 1e12 ? (b/1e12).toFixed(2) + " TB" : b >= 1e9 ? (b/1e9).toFixed(1) + " GB" : b >= 1e6 ? (b/1e6).toFixed(0) + " MB" : Math.round(b/1e3) + " KB";
+// Größen binär wie „df -h“ und der Lancache (1 GB = 1024³ Byte), damit die Zahlen übereinstimmen
+const fmtBytes = b => b == null ? "–" : b >= 2**40 ? (b/2**40).toFixed(2) + " TB" : b >= 2**30 ? (b/2**30).toFixed(1) + " GB" : b >= 2**20 ? (b/2**20).toFixed(0) + " MB" : Math.round(b/2**10) + " KB";
 const LINK_BPS = 125e6;   // 1 Gbit/s als 100 % für den Durchsatz-Balken
 const fmtRate = bps => bps == null ? "–" : bps >= 1e9 ? (bps/1e9).toFixed(2) + " GB/s" : bps >= 1e6 ? (bps/1e6).toFixed(1) + " MB/s" : bps >= 1e4 ? Math.round(bps/1e3) + " KB/s" : bps >= 1e3 ? (bps/1e3).toFixed(1) + " KB/s" : Math.round(bps) + " B/s";
 let cacheData = null;
