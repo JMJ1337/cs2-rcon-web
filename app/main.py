@@ -5108,7 +5108,7 @@ class WfConsoleIn(BaseModel):
 async def _wf_console(container: str, cmd: str, wait: float = 1.5) -> str:
     """Befehl an die laufende Wreckfest-Konsole (screen-Sitzung im Container) und Bildschirm danach lesen."""
     safe = re.sub(r"[\r\n\"$`\\]", "", cmd)[:200]
-    await docker_api.exec_cmd(container, ["sh", "-c", f'screen -S Wreckfest -X stuff "{safe}$(printf \\r)"'], timeout=10, user="steam")
+    await docker_api.exec_cmd(container, ["screen", "-S", "Wreckfest", "-X", "stuff", safe + "\r"], timeout=10, user="steam")
     await asyncio.sleep(wait)
     out = await docker_api.exec_cmd(container, ["sh", "-c", "screen -S Wreckfest -X hardcopy -h /tmp/wfscr.txt; tail -n 40 /tmp/wfscr.txt"], timeout=10, user="steam")
     return "\n".join(ln.rstrip() for ln in out.splitlines() if ln.strip())[-3000:]
