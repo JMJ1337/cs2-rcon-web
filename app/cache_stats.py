@@ -363,7 +363,7 @@ async def du_start(name: str) -> None:
         return                                   # läuft und kommt voran
     # alte/hängende Zählung beenden (z. B. mit der früheren Leerlauf-Priorität, die bei Last nie drankommt)
     try:
-        await docker_api.exec_cmd(name, ["sh", "-c", "pkill -f 'gsm_cache_d[u]'; pkill -x du; rm -f /tmp/gsm_cache_du.out.tmp; true"], timeout=15)
+        await docker_api.exec_cmd(name, ["sh", "-c", "for p in $(ps -eo pid,args | awk '/gsm_cache_d[u]|[d]u -sb/{print $1}'); do kill $p 2>/dev/null; done; rm -f /tmp/gsm_cache_du.out.tmp /tmp/gsm_cache_du.out; true"], timeout=15)
     except docker_api.DockerError:
         pass
     body = {"Cmd": ["sh", "-c", f"( {DU_SH} ) > {DU_OUT}.tmp 2>&1; mv {DU_OUT}.tmp {DU_OUT}"], "AttachStdout": False, "AttachStderr": False}
@@ -374,7 +374,7 @@ async def du_start(name: str) -> None:
 
 async def du_stop(name: str) -> None:
     try:
-        await docker_api.exec_cmd(name, ["sh", "-c", "pkill -f 'gsm_cache_d[u]'; pkill -x du; rm -f /tmp/gsm_cache_du.out.tmp; true"], timeout=15)
+        await docker_api.exec_cmd(name, ["sh", "-c", "for p in $(ps -eo pid,args | awk '/gsm_cache_d[u]|[d]u -sb/{print $1}'); do kill $p 2>/dev/null; done; rm -f /tmp/gsm_cache_du.out.tmp /tmp/gsm_cache_du.out; true"], timeout=15)
     except docker_api.DockerError:
         pass
     storage["du"] = {"active": False}

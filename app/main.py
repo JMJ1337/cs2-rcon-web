@@ -64,7 +64,6 @@ async def lifespan(_app):
              asyncio.create_task(player_loop()), asyncio.create_task(monitor_loop()),
              asyncio.create_task(gslt_loop()), asyncio.create_task(backup_loop()),
              asyncio.create_task(_names_loop())] if WATCH_ENABLED else []
-    _cache_du_watch()
     try:
         _resume_jobs()
     except Exception:  # noqa: BLE001
@@ -2340,7 +2339,6 @@ async def cache_measure():
     await cache_stats.poll_storage(full=True)
     if cache_stats.storage.get("error"):
         raise HTTPException(502, cache_stats.storage["error"])
-    _cache_du_watch()
     return {"ok": True, "storage": _storage_view()}
 
 
