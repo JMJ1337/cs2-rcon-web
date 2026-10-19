@@ -3674,7 +3674,7 @@ async def _sysdisk_scan() -> None:
             binds.append(f"{old}:/old:ro")
         binds.append("/home:/home:ro")
         script = ('[ -d /old ] && echo "OLD $(du -sk -x /old 2>/dev/null | cut -f1)"; '
-                  'for d in /home/* /home/*/*; do [ -d "$d" ] && echo "DIR $(du -sk -x "$d" 2>/dev/null | cut -f1) $d"; done')
+                  'for d in /home/* /home/*/*; do [ -d "$d" ] && echo "DIR $(du -sk -x "$d" 2>/dev/null | cut -f1) $d"; done; true')
         out = await docker_api.run_helper(binds, ["sh", "-c", script], timeout=3600)
         others = await docker_api.all_mounts()
         used_src = [os.path.normpath(m["source"]) for ms in others.values() for m in ms if m.get("source")]
