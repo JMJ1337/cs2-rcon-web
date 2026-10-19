@@ -5983,7 +5983,7 @@ async def prefill_state(tail: int = 300):
             "rate": (livestats.data.get(prefill.NAME) or {}).get("rx_bps") if st and st.get("running") else None, "config_dir": prefill.config_dir(), "files": files,
             "logged_in": any(f.lower().startswith("account") or f.endswith(".dat") or "token" in f.lower() for f in files),
             "log": lg, "prompt": prefill.prompt_of(lg) if st and st.get("running") else None, "progress": prog,
-            "job": prefill.job, "dns": await lancache_dns(), "auto": prefill.auto, "who": who}
+            "job": prefill.job, "dns": await lancache_dns(), "auto": {**prefill.auto, "throttle_ok": prefill.throttle_ok}, "who": who}
 
 
 class PrefillRunIn(BaseModel):
