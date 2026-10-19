@@ -5433,6 +5433,60 @@ async def change_ports(sid: str, data: PortsIn):
     return {"ok": True, **res}
 
 
+class CatPortsIn(BaseModel):
+    ports: dict[str, int]
+
+
+@app.post("/api/servers/{sid}/catalog-ports", dependencies=auth)
+async def catalog_ports(sid: str, data: CatPortsIn):
+    """Ports von Katalog-Spielen mit Port-Startparametern (z. B. Rust) ändern: innen = außen + Startparameter."""
+    s = get_server(sid)
+    g = game_of(s)
+    c = catmod.CATALOG.get(g) or {}
+    pp = c.get("port_params") or {}
+    if not pp or not s.get("container"):
+        raise HTTPException(400, "Für dieses Spiel nicht möglich")
+    try:
+        info = await docker_api.inspect(s["container"])
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    if ((info.get("Config") or {}).get("Labels") or {}).get("gsm.managed") != "1":
+        raise HTTPException(400, "Container stammt nicht aus diesem Tool")
+    want = {f: int(v) for f, v in data.ports.items() if f in pp and 1024 <= int(v) <= 65535}
+    if len(want) != len(pp) or len(set(want.values())) != len(want):
+        raise HTTPException(400, "Alle Ports angeben, jeder verschieden: " + ", ".join(pp))
+    used = await docker_api.used_host_ports()
+    own = {int(b["HostPort"]) for lst in ((info.get("HostConfig") or {}).get("PortBindings") or {}).values()
+           for b in (lst or []) if str(b.get("HostPort", "")).isdigit()}
+    clash = [p for p in want.values() if p in used and p not in own]
+    if clash:
+        raise HTTPException(409, f"Port {clash[0]} ist schon belegt ({used.get(clash[0])})")
+    protos = {f: pr for f, _l, _d, pr, _c in c["ports"]}
+
+    def mutate(cfg, hc):
+        keep = {k: v for k, v in (hc.get("PortBindings") or {}).items() if k == "8080/tcp"}
+        for f, port in want.items():
+            for pr in protos.get(f, "udp").split(","):
+                keep[f"{port}/{pr}"] = [{"HostPort": str(port)}]
+        hc["PortBindings"] = keep
+        cfg["ExposedPorts"] = {k: {} for k in keep}
+        env = []
+        for e in cfg.get("Env") or []:
+            if e.startswith("GAME_PARAMS="):
+                prm = re.sub(r"\s*(" + "|".join(re.escape(x) for x in pp.values()) + r")\s+\S+", "", e.split("=", 1)[1])
+                e = "GAME_PARAMS=" + (prm + " " + " ".join(f"{pp[f]} {want[f]}" for f in pp)).strip()
+            env.append(e)
+        cfg["Env"] = env
+    try:
+        await docker_api.recreate(s["container"], mutate)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    st_field = (c.get("status") or ("a2s", "query_port"))
+    await _set_server_fields(sid, port=want.get(st_field[1] if len(st_field) > 1 else "port") or want.get("port"),
+                             game_port=want.get((c.get("join") or ("addr", "port"))[1]) or want.get("port"))
+    return {"ok": True, "ports": want}
+
+
 @app.post("/api/servers/{sid}/wreckfest/bridgenet", dependencies=auth)
 async def wf_bridgenet(sid: str):
     """Zurück ins normale Docker-Netz mit Portfreigaben (Host-Netz bringt Wreckfest/Wine zum Absturz)."""

@@ -286,8 +286,14 @@ def build(game: str, v: dict, data_dir: str) -> dict:
         sub = {"data": data_dir, "params": (v.get("params") if v.get("params") is not None else c.get("params", "")),
                "steam_user": v.get("steam_user") or "", "steam_pw": v.get("steam_pw") or "", "host": v.get("_host") or "",
                "port": vals.get("port", ""), **{f[0]: v.get(f[0]) or "" for f in c.get("fields", [])}}
+        pp = c.get("port_params") or {}
+        if pp:      # Spiel bekommt seine Ports als Startparameter -> innen = außen (wichtig für Steam-Liste/Beitreten)
+            base = re.sub(r"\s*(" + "|".join(re.escape(x) for x in pp.values()) + r")\s+\S+", "", sub["params"] or "")
+            sub["params"] = (base + " " + " ".join(f"{pp[f]} {vals[f]}" for f in pp if f in vals)).strip()
         env = [e.format(**sub) for e in c["env"]]
         for f, _lbl, _d, protos, cport in c["ports"]:
+            if f in pp:
+                cport = vals[f]
             for proto in protos.split(","):
                 exposed[f"{cport}/{proto}"] = {}
                 host["PortBindings"][f"{cport}/{proto}"] = [{"HostPort": str(vals[f])}]

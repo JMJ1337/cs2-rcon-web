@@ -11,6 +11,7 @@ RE_STEAM_ERR = re.compile(r"Error! App '?(\d+)'? state is (0x[0-9a-fA-F]+)")
 RE_ERROR = re.compile(r"(Error!|\bERROR\b|\bFATAL\b|Fatal error|Segmentation fault|No space left on device|"
                       r"Permission denied|Traceback \(most recent call last\)|failed to|Failed to|panic:)")
 RE_IGNORE = re.compile(r"(0 errors|no error|error_log|ERROR_SUCCESS|errors: 0|Failed to load .*steamclient|"
+                       r"Got EOF on stdin|Missing token|Matching server connection failed|"
                        r"\[S_API FAIL\]|SteamAPI_Init|ConVarRef|ignoring|deprecated)", re.I)
 
 PHASES = {"downloading": "Lädt herunter", "verifying install": "Prüft Dateien", "verifying update": "Prüft Update",
@@ -38,7 +39,7 @@ def _ts(line: str):
     return t, m.group(2)
 
 
-def parse(text: str, container: str) -> dict:
+def parse(text: str, container: str, started: float | None = None) -> dict:
     lines = [ln for ln in re.split(r"[\r\n]+", text) if ln.strip()]
     progress, success_t, errors = None, None, []
     for raw in lines:
@@ -78,7 +79,7 @@ def parse(text: str, container: str) -> dict:
         progress["eta"] = round(left / rate) if rate and rate > 0 and progress["phase"] == "downloading" else None
         # veraltet? (letzte Fortschrittszeile älter als 3 Min. und keine neue)
         progress["stale"] = now - progress["t"] > 180
-    cut = max(_dismissed.get(container, 0), now - 3600)
+    cut = max(_dismissed.get(container, 0), now - 3600, (started - 5) if started else 0)   # nur seit dem letzten Start
     errors = [e for e in errors if (e["t"] or now) >= cut and (success_t is None or (e["t"] or now) >= success_t)]
     uniq, seen = [], set()
     for e in reversed(errors):
@@ -98,7 +99,14 @@ async def poll(container: str) -> dict:
         info = await docker_api.inspect(container)
         raw = r.content
         text = raw.decode("utf-8", "replace") if info.get("Config", {}).get("Tty") else docker_api._demux(raw)
-        return parse(text, container)
+        sa = (info.get("State") or {}).get("StartedAt") or ""
+        started = None
+        if sa and not sa.startswith("0001"):
+            try:
+                started = datetime.fromisoformat(sa[:19] + "+00:00").timestamp()
+            except ValueError:
+                started = None
+        return parse(text, container, started)
     except docker_api.DockerError as e:
         return state.setdefault(container, {"progress": None, "errors": [], "error_poll": str(e)})
 
