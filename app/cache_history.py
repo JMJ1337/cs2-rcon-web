@@ -139,7 +139,7 @@ def reset_all() -> None:
     global _dirty
     load()
     now = float(time.time())
-    _h.clear(); _ips.clear(); _disk.clear()
+    _h.clear(); _ips.clear(); _disk.clear(); _ipdep.clear(); _ipname.clear()
     meta.update(watermark=now, bf_cut=now, bf_done=True, bf_pos=0, bf_size=0, bf_lines=0, bf_error=None, since=now,
                 dep_cut=now, dbf_done=True, reset_at=now)
     meta.pop("watermark_next", None)

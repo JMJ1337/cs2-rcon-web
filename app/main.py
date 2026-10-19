@@ -1786,8 +1786,9 @@ def _cached_games() -> list[dict]:
     """Spiele, die im Lancache liegen (alles je aus dem Internet geholt, 1 Jahr) – 5 min zwischengespeichert."""
     if time.time() - _cg_cache["t"] < 300:
         return _cg_cache["data"]
-    gl = [g for g in depots.games(cache_history.series("365d").get("depots") or {}) if (g.get("miss") or 0) > 200 * 2**20]
-    gl = _enrich_games(gl[:40])
+    gl = [g for g in _games_list(cache_history.series("365d").get("depots") or {}, 60) if (g.get("stored") or 0) > 200 * 2**20]
+    gl.sort(key=lambda g: -(g.get("stored") or 0))
+    gl = gl[:40]
     data = [{"app": g.get("app"), "name": g["name"], "service": g.get("service"), "stored": g.get("stored") or g.get("miss"),
              "size": g.get("size"), "cached_pct": g.get("cached_pct")} for g in gl
             if (g.get("app") and (g.get("stored") or 0) > 200 * 2**20) or (not g.get("app") and not g["name"].startswith(("Depot ", "Epic-Spiel")))]
@@ -2250,7 +2251,7 @@ async def cache_history_api(range: str = "30d"):
     out["error"] = cache_stats.state["error"]
     out["disk_now"] = cache_stats.state["disk"]
     out["storage"] = _storage_view()
-    out["games"] = _enrich_games(depots.games(out.pop("depots", {}) or {})[:30])
+    out["games"] = _games_list(out.pop("depots", {}) or {}, 30)
     try:
         mdl = cache_model.model()
         out["model"] = {"total": round(mdl["total"]), "limit": mdl["limit"], "evictions": cache_model.evictions(30),
@@ -2404,6 +2405,29 @@ def _cache_du_watch() -> None:
     _du_task = asyncio.create_task(run())
 
 
+def _games_list(dep: dict, n: int) -> list[dict]:
+    """Spiele aus dem Verlauf PLUS alles, was laut Inhalts-Abgleich im Cache liegt (auch ohne Traffic im Zeitraum,
+    z. B. nach dem Zurücksetzen der Statistik). Sortiert nach Traffic, dann nach Menge im Cache."""
+    merged = {str(k): list(v) for k, v in (dep or {}).items()}
+    for d in (cache_inventory.saved().get("depots") or {}):
+        merged.setdefault(str(d), [0, 0])
+    gl = _enrich_games(depots.games(merged))
+    gl.sort(key=lambda g: (-(g.get("hit", 0) + g.get("miss", 0)), -(g.get("stored") or 0)))
+    return gl[:n]
+
+
+def _svc_stored() -> dict:
+    """Epic/Battle.net: im Cache liegende Menge je (Dienst, Spielname) aus dem Cache-Modell."""
+    out: dict = {}
+    for k, v in (cache_model.model().get("stored") or {}).items():
+        if k.startswith(("epic:", "bnet:")) and v > 0:
+            g = depots.games({k: [0, 1]})
+            if g:
+                key = (g[0].get("service"), g[0]["name"])
+                out[key] = out.get(key, 0) + v
+    return out
+
+
 def _enrich_games(games: list[dict]) -> list[dict]:
     """Wie viel von jedem Spiel liegt (geschätzt) noch im Cache? Nachbildung der Verdrängung, siehe cache_model."""
     for g in games:
@@ -2413,7 +2437,8 @@ def _enrich_games(games: list[dict]) -> list[dict]:
             g["size"], g["stored"], g["cached_pct"] = st["ref"], st["stored"], st["pct"]
             g["steam_size"], g["evicted"], g["last_used"] = st["steam_size"], st["evicted"], st["last"]
         else:
-            g["size"] = g["stored"] = g["cached_pct"] = None
+            g["size"] = g["cached_pct"] = None
+            g["stored"] = _svc_stored().get((g.get("service"), g["name"]))
     asyncio.create_task(depots.ensure_sizes([g["app"] for g in games if g.get("app") and not g.get("steam_size")]))
     return games
 
