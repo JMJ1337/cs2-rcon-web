@@ -33,8 +33,11 @@ def model(force: bool = False) -> dict:
     limit = cache_stats.storage.get("limit")
     stored: dict[str, float] = {}
     last: dict[str, int] = {}
-    full: dict[str, float] = {}
-    burst: dict[str, list] = {}           # app -> [Start-Stunde, letzte Stunde, Bytes]
+    # Downloadgröße je Depot = Menge im ERSTEN Durchgang dieses Depots (spätere Wiederholungen,
+    # z. B. Prefill lädt dasselbe nochmal aus dem Cache, würden sonst doppelt zählen)
+    dfirst: dict[str, float] = {}
+    dburst: dict[str, int] = {}           # Depot -> letzte Stunde des ersten Durchgangs (None = abgeschlossen)
+    done: set = set()
     evicted: list[dict] = []
     ev_sum: dict[str, float] = {}
     for hour in sorted(cache_history._h):
@@ -43,20 +46,23 @@ def model(force: bool = False) -> dict:
             continue
         per: dict[str, list] = {}
         for d, (h, m) in dep.items():
-            p = per.setdefault(_key(d), [0, 0])
+            d = str(d)
+            if d not in done:
+                if d in dburst and hour - dburst[d] > BURST_H:
+                    done.add(d)
+                else:
+                    dfirst[d] = dfirst.get(d, 0) + h + m
+                    dburst[d] = hour
+            p = per.setdefault(_key(d), [0, 0, set()])
             p[0] += h
             p[1] += m
-        for k, (h, m) in per.items():
+            p[2].add(d)
+        for k, (h, m, ds) in per.items():
             size = depots.app_size(int(k)) if k.isdigit() else None
-            b = burst.get(k)
-            if not b or hour - b[1] > BURST_H:
-                b = burst[k] = [hour, hour, 0]
-            b[1] = hour
-            b[2] += h + m
-            full[k] = max(full.get(k, 0), b[2])
-            cap = min(size, full[k]) if size else full[k]
-            cap = max(cap, b[2])
-            stored[k] = min(cap, max(stored.get(k, 0) + m, b[2]))
+            ref = sum(v for d, v in dfirst.items() if _key(d) == k) if ds else 0
+            cap = min(size, ref) if size and ref else (ref or size or float("inf"))
+            # aus dem Internet -> liegt jetzt im Cache; aus dem Cache -> war (mindestens so viel) da
+            stored[k] = min(cap, max(stored.get(k, 0) + m, min(h + m, cap)))
             last[k] = hour
         if limit:
             total = sum(stored.values())
@@ -71,6 +77,9 @@ def model(force: bool = False) -> dict:
                     total -= take
                     ev_sum[k] = ev_sum.get(k, 0) + take
                     evicted.append({"t": hour * 3600, "key": k, "bytes": take})
+    full: dict[str, float] = {}
+    for d, v in dfirst.items():
+        full[_key(d)] = full.get(_key(d), 0) + v
     data = {"stored": stored, "last": {k: v * 3600 for k, v in last.items()}, "full": full, "limit": limit,
             "total": sum(stored.values()), "evicted": evicted[-300:], "evicted_sum": ev_sum}
     _cache.update(t=time.time(), data=data)
