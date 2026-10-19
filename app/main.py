@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import mapimages, gslt, matchlog, steamlist, playerdb, notify, prefill_more
+from . import cache_model
 from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
@@ -1764,7 +1765,7 @@ def _cached_games() -> list[dict]:
     gl = _enrich_games(gl[:40])
     data = [{"app": g.get("app"), "name": g["name"], "service": g.get("service"), "stored": g.get("stored") or g.get("miss"),
              "size": g.get("size"), "cached_pct": g.get("cached_pct")} for g in gl
-            if g.get("app") or not g["name"].startswith(("Depot ", "Epic-Spiel"))]
+            if (g.get("app") and (g.get("stored") or 0) > 200 * 2**20) or (not g.get("app") and not g["name"].startswith(("Depot ", "Epic-Spiel")))]
     _cg_cache.update(t=time.time(), data=data)
     return data
 
@@ -2225,6 +2226,12 @@ async def cache_history_api(range: str = "30d"):
     out["disk_now"] = cache_stats.state["disk"]
     out["storage"] = _storage_view()
     out["games"] = _enrich_games(depots.games(out.pop("depots", {}) or {})[:30])
+    try:
+        mdl = cache_model.model()
+        out["model"] = {"total": round(mdl["total"]), "limit": mdl["limit"], "evictions": cache_model.evictions(30)}
+    except Exception:  # noqa: BLE001
+        log.exception("Cache-Modell")
+        out["model"] = None
     asyncio.create_task(depots.run())
     out["clients"] = _merge_clients(await _hist_names(out["clients"]))
     return out
@@ -2314,16 +2321,16 @@ async def cache_measure():
 
 
 def _enrich_games(games: list[dict]) -> list[dict]:
-    """Wie weit ist jedes Spiel im Cache? -> alles, was je aus dem Internet geholt wurde, im Verhältnis zur Spielgröße."""
-    alltime = {g["app"]: g for g in depots.games(cache_history.series("365d").get("depots") or {}) if g.get("app")}
+    """Wie viel von jedem Spiel liegt (geschätzt) noch im Cache? Nachbildung der Verdrängung, siehe cache_model."""
     for g in games:
         a = g.get("app")
-        size = depots.app_size(a) if a else None
-        stored = (alltime.get(a) or {}).get("miss") or 0
-        g["size"] = size
-        g["stored"] = stored
-        g["cached_pct"] = round(min(100.0, stored / size * 100), 1) if size else None
-    asyncio.create_task(depots.ensure_sizes([g["app"] for g in games if g.get("app") and not g.get("size")]))
+        if a:
+            st = cache_model.app_state(a)
+            g["size"], g["stored"], g["cached_pct"] = st["ref"], st["stored"], st["pct"]
+            g["steam_size"], g["evicted"], g["last_used"] = st["steam_size"], st["evicted"], st["last"]
+        else:
+            g["size"] = g["stored"] = g["cached_pct"] = None
+    asyncio.create_task(depots.ensure_sizes([g["app"] for g in games if g.get("app") and not g.get("steam_size")]))
     return games
 
 
@@ -5955,16 +5962,15 @@ CACHED_PCT = 85      # Spielgröße enthält auch Depots, die nie geladen werden
 
 
 def _apps_cache_status(appids) -> dict:
-    """Wie viel jedes Spiel seit dem letzten Zurücksetzen aus dem Internet in den Cache geholt hat (geschätzt)."""
-    stored = {g["app"]: g.get("miss") or 0 for g in depots.games(cache_history.series("365d").get("depots") or {}) if g.get("app")}
+    """Wie viel von jedem Spiel liegt (geschätzt) noch im Cache – mit nachgebildeter Verdrängung (LRU),
+    bezogen auf die tatsächliche Downloadgröße (nicht die Steam-Gesamtgröße mit allen Sprachen/DLCs)."""
     out, missing = {}, []
     for a in appids:
         a = int(a)
-        size = depots.app_size(a)
-        if not size:
+        if not depots.app_size(a):
             missing.append(a)
-        st = stored.get(a, 0)
-        out[str(a)] = {"stored": st, "size": size, "pct": round(min(100.0, st / size * 100), 1) if size else None}
+        st = cache_model.app_state(a)
+        out[str(a)] = {"stored": st["stored"], "size": st["ref"], "pct": st["pct"], "evicted": st["evicted"], "last": st["last"]}
     if missing:
         asyncio.create_task(depots.ensure_sizes(missing[:10]))
     return out

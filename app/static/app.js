@@ -657,10 +657,18 @@ function gamesTable(list, label){
         <div><b>${esc(g.name)}</b>${g.app ? `<div class="hint mono">App ${g.app}${g.depots > 1 ? " · " + g.depots + " Depots" : ""}</div>` : g.service ? `<div class="hint">${esc(cacheName(g.service))}</div>` : `<div class="hint">Spiel wird ermittelt …</div>`}</div></div></td>
         <td class="mono" title="${p} % davon aus dem Cache">${fmtBytes(tot)}<div class="cachebar" style="margin-top:3px"><i style="width:${(tot / max * 100).toFixed(1)}%;background:linear-gradient(90deg,var(--ok) ${p}%,#8a7a66 ${p}%)"></i></div></td>
         <td class="mono" style="color:var(--ok)">${fmtBytes(g.hit)}</td><td class="mono">${fmtBytes(g.miss)}</td>
-        <td>${cp != null ? `<div class="cachebar" title="${fmtBytes(g.stored)} von ${fmtBytes(g.size)} (Download-Größe laut Steam)"><i style="width:${cp}%;background:var(--ct)"></i></div>
-          <div class="hint mono">${cp.toFixed(0)} % · ${fmtBytes(g.stored)} / ${fmtBytes(g.size)}</div>` : g.app ? `<span class="hint">Größe wird ermittelt …</span>` : `<span class="hint">–</span>`}</td></tr>`; }).join("")}
+        <td>${cp != null ? `<div class="cachebar" title="${fmtBytes(g.stored)} von ${fmtBytes(g.size)} (größter Download des Spiels${g.steam_size ? "; Steam gesamt mit allen Sprachen/DLCs " + fmtBytes(g.steam_size) : ""})${g.evicted ? "\nVerdrängt (geschätzt): " + fmtBytes(g.evicted) : ""}${g.last_used ? "\nZuletzt benutzt: " + new Date(g.last_used * 1000).toLocaleString("de-DE") : ""}"><i style="width:${cp}%;background:${cp < 50 ? "var(--accent)" : "var(--ct)"}"></i></div>
+          <div class="hint mono">${cp.toFixed(0)} % · ${fmtBytes(g.stored)} / ${fmtBytes(g.size)}${g.evicted > 1e9 ? ` · <span style="color:var(--accent)">${fmtBytes(g.evicted)} verdrängt</span>` : ""}</div>` : g.app ? `<span class="hint">Größe wird ermittelt …</span>` : `<span class="hint">–</span>`}</td></tr>`; }).join("")}
     </tbody></table></div>
-    <div class="hint" style="margin-top:6px">„Im Cache“ = alles, was für das Spiel je aus dem Internet in den Cache geladen wurde, im Verhältnis zur Download-Größe (Windows, Englisch) – Schätzung, abgelaufene Cache-Einträge sind nicht abgezogen.</div></div>`;
+    <div class="hint" style="margin-top:6px">„Im Cache“ = Schätzung, was vom Spiel noch im Cache liegt, bezogen auf seinen größten Download (so viel lädt der Prefill wirklich). Ist der Cache voll, löscht er die am längsten nicht mehr benutzten Daten (nicht die ältesten) – das wird hier nachgerechnet und abgezogen.</div></div>`;
+}
+function evictHtml(m){
+  if (!m) return "";
+  const lim = m.limit, ev = m.evictions || [];
+  return `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:6px">Was hat der Cache gelöscht? <span class="hint">Schätzung · belegt laut Verlauf ≈ ${fmtBytes(m.total)}${lim ? " von " + fmtBytes(lim) : ""}</span></h2>
+    <div class="hint" style="margin-bottom:8px">Der Lancache löscht still (ohne Logeintrag), sobald das Limit erreicht ist – und zwar die Daten, die am längsten <b>nicht mehr benutzt</b> wurden (LRU), nicht einfach die ältesten. Jedes Laden aus dem Cache zählt als Benutzung. Hier wird das aus dem Verlauf nachgerechnet.</div>
+    ${ev.length ? `<table class="cachetable"><thead><tr><th>Spiel</th><th>verdrängt</th><th>wann (etwa)</th></tr></thead><tbody>${ev.map(e => `<tr><td><div class="row" style="gap:8px;flex-wrap:nowrap">${e.app ? appIcon(e.app, 20) : ""}<b>${esc(e.name)}</b></div></td><td class="mono">${fmtBytes(e.bytes)}</td><td class="hint">${new Date(e.t * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"})}</td></tr>`).join("")}</tbody></table>`
+      : `<div class="hint">Bisher nichts – ${lim && m.total < lim ? `es sind noch ≈ ${fmtBytes(lim - m.total)} frei` : "der Cache war laut Verlauf noch nicht voll"}.</div>`}</div>`;
 }
 function savedCard(bytes, label){
   return `<div class="card savedcard"><div class="k">Traffic gespart${label ? " · " + label : ""}</div><div class="v" style="color:var(--ok)">${fmtBytes(bytes || 0)}</div>
@@ -2529,6 +2537,7 @@ async function loadCacheHistory(){
     ${c.services.length ? `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:6px">Was wurde gecacht? <span class="hint">(${CACHE_RANGES[c.range]}, nach Dienst)</span></h2>
       <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Dienst</th><th>aus dem Cache</th><th>aus dem Internet</th><th>gesamt</th><th>Trefferquote</th><th></th></tr></thead><tbody>${svcRows(c.services)}</tbody></table></div></div>` : ""}
     ${gamesTable(c.games, CACHE_RANGES[c.range])}
+    ${evictHtml(c.model)}
     ${c.depot_backfill && !c.depot_backfill.done && c.depot_backfill.size ? `<div class="hint" style="margin:-8px 0 14px">Spiele aus dem alten Log werden nachgetragen … ${Math.floor(c.depot_backfill.pos / c.depot_backfill.size * 100)} %</div>` : ""}
     ${(c.storage && c.storage.logs && c.storage.logs.length) ? `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:6px">Ordner im Lancache-Container <span class="hint">${c.storage.updated ? "gemessen " + new Date(c.storage.updated * 1000).toLocaleString("de-DE") : ""}</span></h2>
       <table class="cachetable"><tbody>
