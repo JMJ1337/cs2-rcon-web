@@ -509,6 +509,19 @@ function latencyRow(io){
     + `\nGrenzen für vollen Balken: NAS ${LAT_LIMIT.nas} ms, Platte ${LAT_LIMIT.disk} ms, TCP ${LAT_LIMIT.tcp} %`;
 }
 let liveBusy = false, lastLive = null;
+// Seitenleiste: Spitzenwert der letzten 5 Minuten als Marke im Balken
+const PEAK = {};
+function peakMark(barId, pct){
+  const bar = document.getElementById(barId); if (!bar) return;
+  const now = Date.now(), h = (PEAK[barId] = (PEAK[barId] || []).filter(x => now - x[0] < 300000));
+  h.push([now, pct || 0]);
+  const pk = Math.max(...h.map(x => x[1]));
+  const box = bar.parentNode;
+  let m = box.querySelector(".pk");
+  if (!m){ m = document.createElement("span"); m.className = "pk"; box.appendChild(m); }
+  m.style.left = `calc(${Math.min(100, pk)}% - 1px)`;
+  box.title = `Spitze der letzten 5 Minuten: ${Math.round(pk)} %` + (barId.includes("Net") ? " der Leitung (1 Gbit/s)" : "");
+}
 async function liveTick(){
   if (liveBusy || document.hidden || !me || $("#app").classList.contains("hidden")) return;
   liveBusy = true;
@@ -516,18 +529,19 @@ async function liveTick(){
     const L = await api("/api/live");
     lastLive = L;
     const memPct = L.mem_total_mb ? L.mem_used_mb / L.mem_total_mb * 100 : null;
-    if (L.cpu != null){ $("#hlCpuBar").style.width = L.cpu + "%"; $("#hlCpuBar").className = lvl(L.cpu); tween($("#hlCpu"), L.cpu, v => v.toFixed(0) + " %"); }
-    if (memPct != null){ $("#hlMemBar").style.width = memPct + "%"; $("#hlMemBar").className = lvl(memPct); tween($("#hlMem"), memPct, v => Math.round(v) + " %"); }
+    if (L.cpu != null){ peakMark("hlCpuBar", L.cpu); $("#hlCpuBar").style.width = L.cpu + "%"; $("#hlCpuBar").className = lvl(L.cpu); tween($("#hlCpu"), L.cpu, v => v.toFixed(0) + " %"); }
+    if (memPct != null){ peakMark("hlMemBar", memPct); $("#hlMemBar").style.width = memPct + "%"; $("#hlMemBar").className = lvl(memPct); tween($("#hlMem"), memPct, v => Math.round(v) + " %"); }
     const n = L.net || {}, bw = v => v > 0 ? Math.max(2, Math.min(100, v / LINK_BPS * 100)) : 0;
     if (n.rx_bps != null){
       $("#hlNetDownBar").style.width = bw(n.rx_bps) + "%"; $("#hlNetUpBar").style.width = bw(n.tx_bps) + "%";
+      peakMark("hlNetDownBar", bw(n.rx_bps)); peakMark("hlNetUpBar", bw(n.tx_bps));
       tween($("#hlNetDown"), n.rx_bps, v => fmtRate(v)); tween($("#hlNetUp"), n.tx_bps, v => fmtRate(v));
       const tt = `Internet-Durchsatz (geschätzt): ↓ was Lancache und Spielserver empfangen, ↑ was die Spielserver senden – ohne LAN-Verkehr (Cache → Clients, NAS)` + (n.nic_rx_bps != null ? `\nNetzwerkkarte gesamt inkl. LAN: ↓ ${fmtRate(n.nic_rx_bps)} · ↑ ${fmtRate(n.nic_tx_bps)}` : "");
       $("#hlNetTotRow").title = tt; $("#hlNetTotRow").nextElementSibling.title = tt;
     }
     latencyRow(L.io);
     if (L.cache && L.cache.tx_bps != null && !$("#hlNetRow").classList.contains("hidden")){
-      $("#hlNetBar").style.width = bw(L.cache.tx_bps) + "%"; tween($("#hlNet"), L.cache.tx_bps, v => fmtRate(v));
+      $("#hlNetBar").style.width = bw(L.cache.tx_bps) + "%"; peakMark("hlNetBar", bw(L.cache.tx_bps)); tween($("#hlNet"), L.cache.tx_bps, v => fmtRate(v));
     }
     if (view === "dash") for (const [sid, d] of Object.entries(L.servers || {})) updateLoadRow(document.querySelector(`[data-ld="${sid}"]`), d);
   } catch {} finally { liveBusy = false; }
@@ -681,25 +695,7 @@ async function loadMetrics(force){
   if (!force && Date.now() - metricsAt < (metricsRange <= 10 ? 2000 : 30000)) return;
   try { metricsData = await api(`/api/metrics?minutes=${metricsRange}`); metricsAt = Date.now(); } catch {}
 }
-function spark(vals, color, opts = {}){
-  const w = 200, h = opts.h || 34, pad = 2;
-  const nums = vals.filter(v => v != null);
-  if (!nums.length) return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><line x1="0" y1="${h-1}" x2="${w}" y2="${h-1}" stroke="var(--line)"/></svg>`;
-  const max = opts.fmt ? niceMax(Math.max(opts.min || 1, ...nums)) : Math.max(opts.min || 1, ...nums), n = vals.length;
-  const x = i => (i / Math.max(1, n - 1)) * w, y = v => h - pad - (v / max) * (h - pad * 2);
-  let d = "", area = "", seg = [];
-  const flush = () => {
-    if (!seg.length) return;
-    const pts = seg.map(([i, v]) => [x(i), y(v)]), c = smoothPath(pts);
-    d += c;
-    area += `M${pts[0][0].toFixed(1)},${h}L` + c.slice(1) + `L${pts[pts.length-1][0].toFixed(1)},${h}Z`;
-    seg = [];
-  };
-  vals.forEach((v, i) => v == null ? flush() : seg.push([i, v])); flush();
-  return withAxis(`<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
-    <line x1="0" y1="${(h/2).toFixed(1)}" x2="${w}" y2="${(h/2).toFixed(1)}" stroke="var(--line)" stroke-dasharray="2 3" vector-effect="non-scaling-stroke"/>
-    <path d="${area}" fill="${color}" opacity=".18"/><path d="${d}" fill="none" stroke="${color}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`, max, opts.fmt, h);
-}
+function spark(vals, color, opts = {}){ return dchart([{vals, color}], opts); }
 // „schöne“ Obergrenze für die y-Achse (1/2/2,5/5 × 10^n)
 function niceMax(v){
   if (!(v > 0)) return 1;
@@ -712,30 +708,76 @@ function withAxis(svg, max, fmt, h){
 }
 const AX = {pct: v => Math.round(v) + " %", rate: v => fmtRate(v).replace(" ", "\u202f"), mem: v => fmtMem(Math.round(v)), num: v => String(Math.round(v * 10) / 10), bytes: v => fmtBytes(v)};
 // zwei Reihen in einem Diagramm (z. B. Download/Upload) in verschiedenen Farben
-function spark2(a, b, colA, colB, opts = {}){
-  const w = 200, h = opts.h || 34, pad = 2;
-  const nums = [...a, ...b].filter(v => v != null);
-  if (!nums.length) return spark([], colA, opts);
-  const max = opts.fmt ? niceMax(Math.max(opts.min || 1, ...nums)) : Math.max(opts.min || 1, ...nums), n = Math.max(a.length, b.length);
-  const x = i => (i / Math.max(1, n - 1)) * w, y = v => h - pad - (v / max) * (h - pad * 2);
-  const path = vals => {
-    let d = "", area = "", seg = [];
+function spark2(a, b, colA, colB, opts = {}){ return dchart([{vals: a, color: colA}, {vals: b, color: colB}], opts); }
+
+/* ---- Canvas-Diagramme (Stil D: große Zahl darüber, dünne Spur) – gleiten bei Live-Daten flüssig weiter ---- */
+const DCH = {};
+let dchSeq = 0;
+const cssCol = (() => { const c = {}; return v => {
+  if (!String(v).startsWith("var(")) return v;
+  return c[v] || (c[v] = getComputedStyle(document.documentElement).getPropertyValue(v.slice(4, -1).trim()).trim() || "#888");
+}; })();
+function dchart(series, opts = {}){
+  const key = opts.key || ("a" + (dchSeq++ % 500));
+  const h = opts.h || 34, prev = DCH[key];
+  const nums = series.flatMap(x => x.vals).filter(v => v != null);
+  const max = niceMax(Math.max(opts.min || 1, ...(nums.length ? nums : [0])));
+  const sig = series.map(x => x.vals.length + ":" + x.vals.slice(-3).join(",")).join("|");
+  if (!prev || prev.sig !== sig){
+    let k = 0;                            // um wie viele Punkte ist die Reihe weitergerückt?
+    if (prev && opts.key && prev.series[0]){
+      const o = prev.series[0].vals, n = series[0].vals, L = n.length;
+      if (o.length === L) for (let j = 1; j <= Math.min(30, L - 3); j++){
+        if (o[L - 1] === n[L - 1 - j] && o[L - 2] === n[L - 2 - j] && o[L - 3] === n[L - 3 - j]){ k = j; break; }
+      }
+    }
+    const pre = k ? series.map((x, i) => (prev.series[i] ? prev.series[i].vals.slice(0, k) : [])) : null;
+    DCH[key] = {series, pre, max, fmt: opts.fmt, sig, t: performance.now(), shift: k, dur: opts.dur || 2000,
+                oldMax: prev ? prev.curMax || prev.max : max, drawn: null};
+  } else Object.assign(prev, {series, fmt: opts.fmt});
+  return `<div class="dchbox" style="height:${h}px"><canvas class="dch" data-dch="${key}" aria-hidden="true"></canvas></div>`;
+}
+function dchDraw(cv, now){
+  const st = DCH[cv.dataset.dch]; if (!st) return;
+  const p = Math.min(1, (now - st.t) / st.dur), e = 1 - Math.pow(1 - p, 2);
+  const w = cv.clientWidth, h = cv.clientHeight; if (!w || !h) return;
+  const tag = st.sig + "|" + w + "x" + h + "|" + (p < 1 ? now : "done");
+  if (cv._drawn === tag) return;
+  cv._drawn = tag;
+  const d = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(w * d) || cv.height !== Math.round(h * d)){ cv.width = Math.round(w * d); cv.height = Math.round(h * d); }
+  const x = cv.getContext("2d"); x.setTransform(d, 0, 0, d, 0, 0); x.clearRect(0, 0, w, h);
+  const max = st.curMax = st.oldMax + (st.max - st.oldMax) * e;
+  const n = Math.max(...st.series.map(s => s.vals.length)), off = st.shift * (1 - p);   // gleichmäßig weiterrücken
+  const top = 12, X = i => ((i + off) / Math.max(1, n - 1)) * w, Y = v => h - 2 - (v / max) * (h - top - 3);
+  x.strokeStyle = cssCol("var(--line)"); x.lineWidth = 1; x.setLineDash([2, 3]);
+  x.beginPath(); x.moveTo(0, Math.round(Y(max / 2)) + .5); x.lineTo(w, Math.round(Y(max / 2)) + .5); x.stroke(); x.setLineDash([]);
+  st.series.forEach((sr, si) => {
+    const col = cssCol(sr.color); let seg = [], lastPt = null;
+    const pre = p < 1 && st.pre ? st.pre[si] || [] : [];
     const flush = () => {
       if (!seg.length) return;
-      const pts = seg.map(([i, v]) => [x(i), y(v)]), c = smoothPath(pts);
-      d += c;
-      area += `M${pts[0][0].toFixed(1)},${h}L` + c.slice(1) + `L${pts[pts.length-1][0].toFixed(1)},${h}Z`;
-      seg = [];
+      x.beginPath(); x.moveTo(seg[0][0], seg[0][1]);
+      for (let i = 1; i < seg.length; i++){ const a = seg[i - 1], b = seg[i], m = (a[0] + b[0]) / 2; x.bezierCurveTo(m, a[1], m, b[1], b[0], b[1]); }
+      x.strokeStyle = col; x.lineWidth = 1.6; x.lineJoin = "round"; x.stroke();
+      x.lineTo(seg[seg.length - 1][0], h); x.lineTo(seg[0][0], h); x.closePath();
+      x.globalAlpha = .12; x.fillStyle = col; x.fill(); x.globalAlpha = 1;
+      lastPt = seg[seg.length - 1]; seg = [];
     };
-    vals.forEach((v, i) => v == null ? flush() : seg.push([i, v])); flush();
-    return [d, area];
-  };
-  const [da, aa] = path(a), [db, ab] = path(b);
-  return withAxis(`<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
-    <line x1="0" y1="${(h/2).toFixed(1)}" x2="${w}" y2="${(h/2).toFixed(1)}" stroke="var(--line)" stroke-dasharray="2 3" vector-effect="non-scaling-stroke"/>
-    <path d="${aa}" fill="${colA}" opacity=".15"/><path d="${ab}" fill="${colB}" opacity=".15"/>
-    <path d="${da}" fill="none" stroke="${colA}" stroke-width="1.6" vector-effect="non-scaling-stroke"/>
-    <path d="${db}" fill="none" stroke="${colB}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`, max, opts.fmt, h);
+    pre.forEach((v, i) => v == null ? flush() : seg.push([X(i - pre.length), Y(v)]));
+    sr.vals.forEach((v, i) => v == null ? flush() : seg.push([X(i), Y(v)])); flush();
+    if (lastPt){ x.beginPath(); x.arc(Math.min(lastPt[0], w - 3), lastPt[1], 3, 0, 7); x.fillStyle = col; x.fill(); }
+  });
+  if (st.fmt){ x.font = "10px " + (getComputedStyle(cv).fontFamily || "monospace"); x.fillStyle = cssCol("var(--muted)"); x.textAlign = "right"; x.fillText(st.fmt(max), w - 1, 9); }
+}
+let dchLast = 0;
+(function dchLoop(now){
+  if (now - dchLast > 33){ dchLast = now; document.querySelectorAll("canvas.dch").forEach(cv => dchDraw(cv, now)); }
+  requestAnimationFrame(dchLoop);
+})(0);
+// Kopfzeile im Stil D: Bezeichnung, große Zahl, kleine Zusatzwerte
+function dhead(label, big, sub){
+  return `<div class="dhd"><div class="dl">${label}</div><div class="drow"><span class="dbig">${big}</span>${sub ? `<span class="ds">${sub}</span>` : ""}</div></div>`;
 }
 const C_DOWN = "#4f9dde", C_UP = "#f0a04b";
 function netLegend(){ return `<span class="lgd" style="background:${C_DOWN}"></span>Download <span class="lgd" style="background:${C_UP}"></span>Upload`; }
@@ -744,8 +786,8 @@ function netPanelCell(m, label){
   const rN = rx.filter(v => v != null), tN = tx.filter(v => v != null);
   if (!rN.length && !tN.length) return "";
   const avg = a => a.length ? a.reduce((p, q) => p + q, 0) / a.length : 0;
-  return `<div><div class="mlab"><span>${label}</span><b><span style="color:${C_DOWN}">↓ ${fmtRate(rN[rN.length-1] || 0)}</span> · <span style="color:${C_UP}">↑ ${fmtRate(tN[tN.length-1] || 0)}</span></b></div>
-    ${spark2(rx, tx, C_DOWN, C_UP, {min: 100000, h: 64, fmt: AX.rate})}
+  return `<div>${dhead(label, `<span style="color:${C_DOWN}">↓ ${fmtRate(rN[rN.length-1] || 0)}</span>`, `<span style="color:${C_UP}">↑ ${fmtRate(tN[tN.length-1] || 0)}</span>`)}
+    ${spark2(rx, tx, C_DOWN, C_UP, {min: 100000, h: 64, fmt: AX.rate, key: "net-" + label})}
     <div class="hint" style="font-size:11px">${netLegend()} · Ø ↓ ${fmtRate(avg(rN))} · ↑ ${fmtRate(avg(tN))} · max ↓ ${fmtRate(Math.max(0, ...rN))} · ↑ ${fmtRate(Math.max(0, ...tN))}</div></div>`;
 }
 const rangeLabel = m => m >= 1440 ? "24 h" : m >= 60 ? (m / 60) + " h" : m <= 10 ? "live " + Math.round(m) + " min" : m + " min";
@@ -757,8 +799,8 @@ function hostPanelHtml(){
   const mx = a => a.length ? Math.max(...a).toFixed(0) : "–";
   return `<div class="dsect"><h3 class="dhead"><span class="gtile" style="background:#8aa4c8">${gicon("_", 16)}</span>Gesamtlast des Servers <span class="hint">${rangeLabel(m.minutes)}</span></h3>
     <div class="panel"><div class="hostpanel">
-      <div><div class="mlab"><span>CPU</span><b>Ø ${avg(cpuN)} % · max ${mx(cpuN)} %</b></div>${spark(m.cpu, "var(--ct)", {min: 100, h: 64, fmt: AX.pct})}</div>
-      <div><div class="mlab"><span>RAM belegt</span><b>jetzt ${memN.length ? memN[memN.length-1] : "–"} % · max ${mx(memN)} %</b></div>${spark(m.mem, "#a78bfa", {min: 100, h: 64, fmt: AX.pct})}</div>
+      <div>${dhead("CPU", `${cpuN.length ? Math.round(cpuN[cpuN.length-1]) : "–"} %`, `Ø ${avg(cpuN)} % · max ${mx(cpuN)} %`)}${spark(m.cpu, "var(--ct)", {min: 100, h: 64, fmt: AX.pct, key: "h-cpu"})}</div>
+      <div>${dhead("RAM belegt", `${memN.length ? Math.round(memN[memN.length-1]) : "–"} %`, `max ${mx(memN)} %`)}${spark(m.mem, "#a78bfa", {min: 100, h: 64, fmt: AX.pct, key: "h-mem"})}</div>
       ${netPanelCell(m, "Internet")}
       ${metricsData._cache && metricsData._cache.samples ? netPanelCell(metricsData._cache, "Lancache") : ""}
       ${ioCells()}
@@ -822,7 +864,7 @@ function ioCells(){
   if (!m || !m.samples) return "";
   const last = a => { const n = (a || []).filter(v => v != null); return n.length ? n[n.length - 1] : null; };
   const mx = a => { const n = (a || []).filter(v => v != null); return n.length ? Math.max(...n) : null; };
-  const cell = (label, vals, color, fmt, min, hint) => `<div title="${esc(hint)}"><div class="mlab"><span>${label}</span><b>${last(vals) != null ? fmt(last(vals)) : "–"} · max ${mx(vals) != null ? fmt(mx(vals)) : "–"}</b></div>${spark(vals, color, {min, h: 64, fmt})}</div>`;
+  const cell = (label, vals, color, fmt, min, hint) => `<div title="${esc(hint)}">${dhead(label, last(vals) != null ? fmt(last(vals)) : "–", `max ${mx(vals) != null ? fmt(mx(vals)) : "–"}`)}${spark(vals, color, {min, h: 64, fmt, key: "io-" + label})}</div>`;
   return [
     m.rtt.some(v => v != null) ? cell("NAS-Antwortzeit (NFS)", m.rtt, "#e5a50a", AX.ms, 5, "Durchschnittliche Zeit pro NFS-Anfrage an das NAS. Steigt sie stark (> 20–50 ms), ist das NAS ausgelastet – dann bremsen viele gleichzeitige Zugriffe alles aus.") : "",
     m.nfs.some(v => v != null) ? cell("NAS-Durchsatz", m.nfs, "#4f9dde", AX.rate, 1e6, "Lesen + Schreiben über alle NFS-Mounts") : "",
@@ -842,7 +884,7 @@ function netCell(m){
   const rx = m.rx || [], tx = m.tx || [];
   const rN = rx.filter(v => v != null), tN = tx.filter(v => v != null);
   if (!rN.length && !tN.length) return "";
-  return `<div class="mcell" title="Netzwerk: blau = Download, orange = Upload"><div class="mlab"><span>Netz</span><b><span style="color:${C_DOWN}">↓${fmtRate(rN[rN.length-1] || 0)}</span> <span style="color:${C_UP}">↑${fmtRate(tN[tN.length-1] || 0)}</span></b></div>${spark2(rx, tx, C_DOWN, C_UP, {min: 20000, fmt: AX.rate})}</div>`;
+  return `<div class="mcell" title="Netzwerk: blau = Download, orange = Upload">${dhead("Netz", `<span style="color:${C_DOWN}">↓ ${fmtRate(rN[rN.length-1] || 0)}</span>`, `<span style="color:${C_UP}">↑ ${fmtRate(tN[tN.length-1] || 0)}</span>`)}${spark2(rx, tx, C_DOWN, C_UP, {min: 20000, h: 44, fmt: AX.rate, key: (m._key || "") + "-net"})}</div>`;
 }
 function metricsHtml(sid, color){
   const m = metricsData[sid];
@@ -850,10 +892,10 @@ function metricsHtml(sid, color){
   const cpuNums = m.cpu.filter(v => v != null), memNums = m.mem.filter(v => v != null);
   const cpuAvg = cpuNums.length ? (cpuNums.reduce((a, b) => a + b, 0) / cpuNums.length).toFixed(1) : null;
   return `<div class="mgrid">
-      <div class="mcell"><div class="mlab"><span>Spieler · ${rangeLabel(m.minutes)}</span><b>Peak ${m.peak_24h}</b></div>${spark(m.players, color, {min: 2, fmt: AX.num})}</div>
-      ${cpuNums.length ? `<div class="mcell"><div class="mlab"><span>CPU</span><b>Ø ${cpuAvg} %</b></div>${spark(m.cpu, "var(--ct)", {min: 5, fmt: AX.pct})}</div>` : ""}
-      ${memNums.length ? `<div class="mcell"><div class="mlab"><span>RAM</span><b>${fmtMem(memNums[memNums.length-1])}</b></div>${spark(m.mem, "#a78bfa", {min: 256, fmt: AX.mem})}</div>` : ""}
-      ${netCell(m)}
+      <div class="mcell">${dhead(`Spieler · ${rangeLabel(m.minutes)}`, (m.players || []).filter(v => v != null).slice(-1)[0] ?? 0, `Peak ${m.peak_24h}`)}${spark(m.players, color, {min: 2, h: 44, fmt: AX.num, key: sid + "-pl"})}</div>
+      ${cpuNums.length ? `<div class="mcell">${dhead("CPU", `${cpuNums[cpuNums.length-1].toFixed(1)} %`, `Ø ${cpuAvg} %`)}${spark(m.cpu, "var(--ct)", {min: 5, h: 44, fmt: AX.pct, key: sid + "-cpu"})}</div>` : ""}
+      ${memNums.length ? `<div class="mcell">${dhead("RAM", fmtMem(memNums[memNums.length-1]), "")}${spark(m.mem, "#a78bfa", {min: 256, h: 44, fmt: AX.mem, key: sid + "-mem"})}</div>` : ""}
+      ${netCell({...m, _key: sid})}
     </div>
     ${!cpuNums.length && !memNums.length ? `<div class="hint mstats">CPU/RAM: ${servers.find(x => x.id === sid)?.container ? "Container läuft nicht" : "unter „Bearbeiten“ den Docker-Container zuordnen"}</div>` : ""}
     <div class="hint mstats">Verfügbarkeit 24 h: <b>${m.uptime_24h != null ? m.uptime_24h + " %" : "–"}</b>${m.ping != null ? ` · Ping Ø <b>${m.ping} ms</b>` : ""} · Peak 24 h: <b>${m.peak_24h}</b></div>`;
@@ -2463,7 +2505,7 @@ async function loadCacheHistory(){
       ${total ? cacheChart(c.points, c.step_h) : `<div class="hint">Für diesen Zeitraum liegen noch keine Daten vor.</div>`}</div>
     ${c.points.some(p => p.rx != null) ? `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:8px">Netzwerk des Lancache-Containers
       <span class="hint">${netLegend()} (Download = aus dem Internet, Upload = an Clients; erst ab heute gemessen)</span></h2>
-      ${spark2(c.points.map(p => p.rx), c.points.map(p => p.tx), C_DOWN, C_UP, {min: 1e6, h: 120, fmt: AX.bytes})}
+      ${spark2(c.points.map(p => p.rx), c.points.map(p => p.tx), C_DOWN, C_UP, {min: 1e6, h: 120, fmt: AX.bytes, key: "cache-hist"})}
       <div class="row hint" style="justify-content:space-between;margin-top:4px"><span>↓ gesamt ${fmtBytes(c.points.reduce((a, p) => a + (p.rx || 0), 0))}</span><span>↑ gesamt ${fmtBytes(c.points.reduce((a, p) => a + (p.tx || 0), 0))}</span></div></div>` : ""}
     ${c.services.length ? `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:6px">Was wurde gecacht? <span class="hint">(${CACHE_RANGES[c.range]}, nach Dienst)</span></h2>
       <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Dienst</th><th>aus dem Cache</th><th>aus dem Internet</th><th>gesamt</th><th>Trefferquote</th><th></th></tr></thead><tbody>${svcRows(c.services)}</tbody></table></div></div>` : ""}
@@ -2502,7 +2544,7 @@ async function loadCacheLive(){
   $("#cacheLive").innerHTML = `<div class="panel" style="padding:12px 16px;margin-bottom:14px">
     <h2 style="margin-bottom:8px">Live <span class="hint">(aktualisiert alle 5 s · Netzwerk des Lancache-Containers)</span>
       <span style="float:right" class="mono"><span style="color:${C_UP}">↑ ${fmtRate((c.net || {}).tx_bps || 0)}</span> an Clients · <span style="color:${C_DOWN}">↓ ${fmtRate((c.net || {}).rx_bps || 0)}</span> aus dem Internet</span></h2>
-    ${(() => { const m = cacheLiveMetrics; return m && m.samples ? `<div class="mlab"><span>letzte ${rangeLabel(m.minutes)} · ${netLegend()}</span><b></b></div>${spark2(m.rx, m.tx, C_DOWN, C_UP, {min: 100000, fmt: AX.rate, h: 70})}` : ""; })()}
+    ${(() => { const m = cacheLiveMetrics; return m && m.samples ? `<div class="mlab"><span>letzte ${rangeLabel(m.minutes)} · ${netLegend()}</span><b></b></div>${spark2(m.rx, m.tx, C_DOWN, C_UP, {min: 100000, fmt: AX.rate, h: 70, key: "cache-live", dur: 10000})}` : ""; })()}
     ${(c.live_downloads || []).length ? `<h3 class="pdsec">Wird gerade geladen <span class="hint">(letzte 60 s, nach Client und Spiel)</span></h3>
       <div class="livedl">${c.live_downloads.map(d => `<div class="ldrow">
         <span class="ldico">${d.icon ? `<img src="${esc(d.icon)}" alt="" onerror="this.remove()">` : svcIcon(d.service, 16)}</span>
