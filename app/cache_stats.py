@@ -285,7 +285,8 @@ def _size(txt: str) -> int | None:
     m = re.match(r"^\s*(\d+(?:\.\d+)?)\s*([kmgtp]?)", (txt or "").lower())
     if not m:
         return None
-    return int(float(m.group(1)) * {"": 1, "k": 1e3, "m": 1e6, "g": 1e9, "t": 1e12, "p": 1e15}[m.group(2)])
+    # nginx rechnet binär: 900g = 900 × 1024³ Byte (≈ 966 GB)
+    return int(float(m.group(1)) * {"": 1, "k": 2**10, "m": 2**20, "g": 2**30, "t": 2**40, "p": 2**50}[m.group(2)])
 
 
 DU_OUT = "/tmp/gsm_cache_du.out"
