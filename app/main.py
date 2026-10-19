@@ -159,6 +159,9 @@ def require_auth(request: Request):
     return u
 
 
+auth = [Depends(require_auth)]
+
+
 def need_game(request: Request, game: str | None, level: int):
     u = getattr(request.state, "user", None)
     if users.level(u, game) < level:
@@ -337,6 +340,27 @@ async def matchzy_event(sid: str, request: Request):
     return {"ok": True}
 
 
+@app.post("/api/cs2log/{sid}/{key}")
+async def cs2_log_http(sid: str, key: str, request: Request):
+    """Server-Log von CS2 (logaddress_add_http): Matches mit Spielstand/K/D/A und Spieler mit SteamID."""
+    s = next((x for x in load_servers() if x["id"] == sid), None)
+    if not s or not hmac.compare_digest(key, matchlog.secret(sid, SECRET)):
+        raise HTTPException(403, "falscher Schlüssel")
+    body = (await request.body())[:2_000_000].decode("utf-8", "replace")
+    name = (_state.get(sid) or {}).get("hostname") or s.get("name") or sid
+    try:
+        matchlog.ingest_log(sid, name, body)
+        playerdb.parse_log(body, "cs2", sid, name)
+    except Exception:  # noqa: BLE001
+        log.exception("CS2-Log")
+    return {"ok": True}
+
+
+@app.get("/api/matches", dependencies=auth)
+async def matches_list(n: int = 10):
+    return [_public_match(m) for m in matchlog.recent(None, max(1, min(50, n)))]
+
+
 def _public_match(m: dict) -> dict:
     return {k: m.get(k) for k in ("server", "sid", "map", "maps", "live", "finished", "started", "ended", "updated", "series")} | {
         "team1": m["team1"], "team2": m["team2"]}
@@ -387,7 +411,7 @@ async def public_servers(request: Request):
              "tx_bps": ld.get("tx_bps") if fresh else None, "rx_bps": ld.get("rx_bps") if fresh else None, "hit_ratio": hr}
     return {"servers": out, "games": games, "updated": time.time(), "net": "lan" if lan else "internet", "cache": cache,
             "internet": internet,
-            "matches": [_public_match(m) for m in matchlog.recent(None, 6)],
+            "matches": [_public_match(m) for m in matchlog.recent(None, 5)],
             "address": None if lan else await wan_host()}
 
 
@@ -1012,6 +1036,7 @@ def _mode_hostname(s: dict, hostname: str | None, mode_label: str, settings: dic
 
 _mzlog_set: dict[str, float] = {}
 _tvpw_set: dict[str, float] = {}
+_cslog_set: dict[str, float] = {}
 TOOL_PORT = int(os.getenv("TOOL_PORT", "8090"))
 
 
@@ -1143,7 +1168,14 @@ async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = 
             _mzlog_set[s["id"]] = time.time()
         except RconError:
             pass
-    if str(cv.get("tv_enable") or "").strip() in ("1", "1.000000") and time.time() - _tvpw_set.get(s["id"], 0) > 600:
+    if apply_auto and time.time() - _cslog_set.get(s["id"], 0) > 1800:
+        try:   # Server-Log per HTTP an das Tool: Matches (auch ohne MatchZy) und Spieler mit SteamID
+            url = f"{_tool_url(s)}/api/cs2log/{s['id']}/{matchlog.secret(s['id'], SECRET)}"
+            await c.execute(f'log on; mp_logdetail 3; logaddress_delall_http; logaddress_add_http "{url}"')
+            _cslog_set[s["id"]] = time.time()
+        except RconError:
+            pass
+    if str(cv.get("tv_enable") or "").strip() in ("1", "1.000000", "true") and time.time() - _tvpw_set.get(s["id"], 0) > 600:
         try:   # Zuschauer brauchen kein Passwort (Image-Standard „changeme“ überschreiben)
             await c.execute('tv_password ""')
             _tvpw_set[s["id"]] = time.time()

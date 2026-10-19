@@ -3114,3 +3114,14 @@ async function loadPf2(full){
   if ($("#pf2Send")) $("#pf2Send").onclick = async () => { try { await api(`/api/prefill2/${svc}/send`, {body: {text: $("#pf2Input").value}}); toast("gesendet"); setTimeout(() => loadPf2(), 1500); } catch (e){ toast(e.message, true); } };
   pf2Timer = setTimeout(() => loadPf2(), run ? 3000 : 15000);
 }
+
+/* Letzte 10 Matches in der Verwaltung */
+let dashMatchesAt = 0;
+async function loadDashMatches(){
+  if (view !== "dash" || Date.now() - dashMatchesAt < 30000) return;
+  dashMatchesAt = Date.now();
+  let ms; try { ms = await api("/api/matches?n=10"); } catch { return; }
+  $("#dashMatches").classList.toggle("hidden", !ms.length);
+  $("#dashMatchList").innerHTML = ms.map(matchHtml).join("");
+}
+setInterval(loadDashMatches, 5000);
