@@ -237,8 +237,8 @@ def series(rng: str) -> dict:
     ipdep: dict = defaultdict(lambda: defaultdict(int))
     for day, d in _ipdep.items():
         if day * 24 + 23 >= first:
-            for ip, deps in d.items():
-                for dp, v in deps.items():
+            for ip, idep in d.items():
+                for dp, v in idep.items():
                     ipdep[ip][dp] += v
     disk = [{"t": d * 86400, **v} for d, v in sorted(_disk.items()) if d * 24 + 23 >= first]
     total = tot["hit"] + tot["miss"]
