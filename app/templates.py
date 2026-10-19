@@ -28,6 +28,7 @@ TEMPLATES = {
             ["port", "Spielport (UDP)", "number", "34197", ""],
             ["rcon_port", "RCON-Port (TCP)", "number", "27100", "nicht 27015–27019 (CS2)"],
             ["save_name", "Spielstand-Name", "text", "lan", "wird beim ersten Start erzeugt"],
+            ["space_age", "Space Age (DLC)", "select", "aus", "aus,an"],
         ],
     },
     "satisfactory": {
@@ -215,7 +216,8 @@ def build(game: str, v: dict, data_dir: str) -> dict:
     elif game == "factorio":
         port, rport = _port(v.get("port"), "Spielport"), _port(v.get("rcon_port"), "RCON-Port")
         env = [f"PORT={port}", f"RCON_PORT={rport}", f"SAVE_NAME={v.get('save_name') or 'lan'}",
-               "GENERATE_NEW_SAVE=true", "LOAD_LATEST_SAVE=true"]
+               "GENERATE_NEW_SAVE=true", "LOAD_LATEST_SAVE=true",
+               f"DLC_SPACE_AGE={'true' if (v.get('space_age') or 'aus') == 'an' else 'false'}"]
         pub(port, "udp"); pub(rport, "tcp")
         host["Binds"].append(f"{data_dir}:/factorio")
         spec_extra = {}

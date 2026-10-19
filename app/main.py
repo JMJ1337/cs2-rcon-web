@@ -3982,7 +3982,7 @@ ENV_KEYS = {
     "tf2": [("SRCDS_MAXPLAYERS", "Max. Spieler"), ("SRCDS_STARTMAP", "Startmap"), ("SRCDS_PW", "Server-Passwort"),
             ("SRCDS_TOKEN", "Steam-Token (GSLT)"), ("SRCDS_TICKRATE", "Tickrate"), ("SRCDS_FPSMAX", "Max. FPS")],
     "teamspeak": [("TS3SERVER_DEFAULT_VOICE_PORT", "Sprach-Port")],
-    "factorio": [("SAVE_NAME", "Spielstand"), ("LOAD_LATEST_SAVE", "Letzten Spielstand laden (true/false)")],
+    "factorio": [("DLC_SPACE_AGE", "Space Age (DLC) aktiv (true/false)"), ("SAVE_NAME", "Spielstand"), ("LOAD_LATEST_SAVE", "Letzten Spielstand laden (true/false)")],
     "satisfactory": [("MAXPLAYERS", "Max. Spieler"), ("AUTOSAVENUM", "Anzahl Autosaves"), ("SKIPUPDATE", "Updates überspringen (true/false)")],
     "enshrouded": [("SERVER_NAME", "Servername"), ("SERVER_PASSWORD", "Passwort"), ("SERVER_SLOTS", "Max. Spieler")],
     "projectzomboid": [("SRV_NAME", "Servername"), ("ADMIN_PWD", "Admin-Passwort")],
