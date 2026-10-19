@@ -2869,7 +2869,8 @@ async def _cache_autostart(lc: str) -> None:
     # nur, wenn ihn der Neustart des Rechners erwischt hat – nicht, wenn ihn jemand bewusst gestoppt hat
     try:
         boot = now - float(open("/proc/uptime").read().split()[0])
-        ts = lambda x: datetime.fromisoformat(x[:19] + "+00:00").timestamp() if x and not x.startswith("0001") else 0.0  # noqa: E731
+        ts = lambda x: (datetime.fromisoformat(re.sub(r"(\.\d{6})\d*", r"\1", x).replace("Z", "+00:00")).timestamp()  # noqa: E731
+                        if x and not x.startswith("0001") else 0.0)
         started, finished = ts(d["started"]), ts(d["finished"])
     except (OSError, ValueError):
         return
