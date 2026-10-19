@@ -28,9 +28,19 @@ cache_name: str | None = None          # Lancache-Container: sein Upload geht an
 _pk: dict[int, dict] = {}              # Minute -> Höchstwerte (für die Balken-Skala: Max der letzten 24 h)
 
 
+_pkwin: dict[str, deque] = {}
+_pk_start = time.time()
+
+
 def _peak(key: str, v) -> None:
-    if v is None:
+    """Höchstwert als 5-s-Mittel (einzelne Ausreißer, z. B. direkt nach dem Start, zählen nicht)."""
+    if v is None or time.time() - _pk_start < 20:
         return
+    w = _pkwin.setdefault(key, deque(maxlen=5))
+    w.append(v)
+    if len(w) < 5:
+        return
+    v = sum(w) / len(w)
     m = int(time.time() // 60)
     b = _pk.setdefault(m, {})
     if v > b.get(key, 0):
