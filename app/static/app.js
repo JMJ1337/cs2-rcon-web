@@ -535,6 +535,11 @@ async function liveTick(){
     if (n.rx_bps != null){
       $("#hlNetDownBar").style.width = bw(n.rx_bps) + "%"; $("#hlNetUpBar").style.width = bw(n.tx_bps) + "%";
       peakMark("hlNetDownBar", bw(n.rx_bps)); peakMark("hlNetUpBar", bw(n.tx_bps));
+      if (n.nic_rx_bps != null){
+        const tot = (n.nic_rx_bps || 0) + (n.nic_tx_bps || 0), tp = tot > 0 ? Math.max(2, Math.min(100, tot / (2 * LINK_BPS) * 100)) : 0;
+        $("#hlNicBar").style.width = tp + "%"; peakMark("hlNicBar", tp); tween($("#hlNic"), tot, v => fmtRate(v));
+        $("#hlNicRow").title = `Netzwerkkarte gesamt inkl. LAN: ${fmtRate(tot)}\n↓ ${fmtRate(n.nic_rx_bps)} · ↑ ${fmtRate(n.nic_tx_bps)}\nBalken = Anteil an 2 × 1 Gbit/s (Vollduplex)`;
+      }
       tween($("#hlNetDown"), n.rx_bps, v => fmtRate(v)); tween($("#hlNetUp"), n.tx_bps, v => fmtRate(v));
       const tt = `Internet-Durchsatz (geschätzt): ↓ was Lancache und Spielserver empfangen, ↑ was die Spielserver senden – ohne LAN-Verkehr (Cache → Clients, NAS)` + (n.nic_rx_bps != null ? `\nNetzwerkkarte gesamt inkl. LAN: ↓ ${fmtRate(n.nic_rx_bps)} · ↑ ${fmtRate(n.nic_tx_bps)}` : "");
       $("#hlNetTotRow").title = tt; $("#hlNetTotRow").nextElementSibling.title = tt;
