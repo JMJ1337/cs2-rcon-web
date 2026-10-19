@@ -501,13 +501,14 @@ aside .head .logo{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space
 .pltable tr.plmerge td{background:rgba(232,137,43,.12)}
 .pltable td{vertical-align:middle;font-size:13px}
 
-.livedl{display:grid;gap:4px;margin-bottom:10px}
-.ldrow{display:grid;grid-template-columns:22px 1fr 90px 140px;gap:10px;align-items:center;font-size:13px}
+.livedl{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;margin-bottom:10px}
+.ldrow{display:grid;grid-template-columns:22px minmax(0,1fr) 100px 150px;gap:10px;align-items:center;font-size:13px}
 .ldrow img{width:20px;height:20px;border-radius:4px;object-fit:cover}
-.ldname{display:flex;flex-direction:column;min-width:0}.ldname b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ldname{display:flex;flex-direction:column;min-width:0}.ldname b,.ldname .hint{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ldname small{opacity:.7;margin-left:6px}
+.ldico{width:22px;height:20px;display:flex;align-items:center;justify-content:center}
 .ldhit{position:relative;height:16px;background:var(--panel2);border-radius:4px;overflow:hidden;border:1px solid var(--line)}
 .ldhit i{position:absolute;inset:0 auto 0 0;background:rgba(61,186,120,.35)}
 .ldhit em{position:relative;font-style:normal;font-size:11px;padding-left:6px}
-@media (max-width:600px){.ldrow{grid-template-columns:22px 1fr 80px}.ldhit{display:none}}
+@media (max-width:600px){.ldrow{grid-template-columns:22px minmax(0,1fr) 80px}.ldhit{display:none}}
 
 .pleditbox{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;padding:10px;background:var(--panel2);border-radius:8px}

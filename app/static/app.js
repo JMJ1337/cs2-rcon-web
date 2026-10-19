@@ -2483,8 +2483,8 @@ async function loadCacheLive(){
     ${(() => { const m = cacheLiveMetrics; return m && m.samples ? `<div class="mlab"><span>letzte ${rangeLabel(m.minutes)} · ${netLegend()}</span><b></b></div>${spark2(m.rx, m.tx, C_DOWN, C_UP, {min: 100000, fmt: AX.rate, h: 70})}` : ""; })()}
     ${(c.live_downloads || []).length ? `<h3 class="pdsec">Wird gerade geladen <span class="hint">(letzte 60 s, nach Client und Spiel)</span></h3>
       <div class="livedl">${c.live_downloads.map(d => `<div class="ldrow">
-        ${d.icon ? `<img src="${esc(d.icon)}" alt="" onerror="this.remove()">` : svcIcon(d.service, 16)}
-        <span class="ldname"><b>${esc(d.name || cacheName(d.service))}</b><span class="hint">${esc(d.client)}${d.client !== d.ip ? ` · ${esc(d.ip)}` : ""}</span></span>
+        <span class="ldico">${d.icon ? `<img src="${esc(d.icon)}" alt="" onerror="this.remove()">` : svcIcon(d.service, 16)}</span>
+        <span class="ldname"><b title="${esc(d.name || cacheName(d.service))}">${esc(d.name || cacheName(d.service))}</b><span class="hint" title="${esc(d.ip)}">${esc(d.client)}${d.client !== d.ip ? ` <small class="mono">${esc(d.ip)}</small>` : ""}</span></span>
         <span class="mono">${fmtRate(d.bps)}</span>
         <span class="ldhit" title="Anteil aus dem Cache"><i style="width:${d.hit_pct ?? 0}%"></i><em>${d.hit_pct != null ? d.hit_pct + " % Cache" : ""}</em></span></div>`).join("")}</div>` : ""}
     <div class="hint" style="margin:6px 0 8px">Laut Log: ${fmtRate(c.rate_bps || 0)} (davon ${fmtRate(c.hit_rate_bps || 0)} aus dem Cache) – das Log schreibt einen Download erst, wenn er fertig ist.</div>
