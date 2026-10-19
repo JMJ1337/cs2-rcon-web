@@ -1469,7 +1469,7 @@ async def load_loop():
         if n % 2 == 0 and docker_api.available():
             await cache_stats.poll(automation.get_settings().get("cache_container") or "")
             st_ = cache_stats.storage
-            if cache_stats.state["container"] and not st_["running"] and (st_["updated"] is None or time.time() - st_["updated"] > 120):
+            if cache_stats.state["container"] and not st_["running"] and (st_["updated"] is None or time.time() - st_["updated"] > 60):
                 st_["updated"] = st_["updated"] or 0.0
                 asyncio.create_task(cache_stats.poll_storage())
             if (cache_stats.state["container"] and cache_history.meta["bf_done"] and not cache_history.meta.get("dbf_done")

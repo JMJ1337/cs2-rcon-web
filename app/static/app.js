@@ -637,7 +637,7 @@ function storageCard(st, disk){
   return `<div class="card" title="${measured ? `${how}, ${when}` : "Geschätzt aus den Logs (alles, was in den Cache geladen wurde) – ohne Festplattenzugriff"}">
     <div class="k">Cache-Ordner${lim ? " (Limit " + esc(st.limit_raw || fmtBytes(lim)) + ")" : ""}</div><div class="v">${val != null ? (measured ? "" : "≈ ") + fmtBytes(val) : "–"}</div>
     ${pct != null ? `<div class="bar" style="margin-top:6px"><i class="${lvl(pct)}" style="width:${pct}%"></i></div>` : ""}
-    <div class="s">${pct != null ? pct + " % vom Limit · " : ""}${measured ? `${how} ${when} · ` : ""}Logs ${fmtBytes(logs)} · ${st.busy ? "misst …" : du.active ? "" : `<a href="#" onclick="measureCache();return false" title="Belegung des Cache-Datenträgers messen (dauert eine Sekunde – der Cache liegt auf eigenem Datenträger)">messen</a>`}</div>
+    <div class="s">${pct != null ? pct + " % vom Limit · " : ""}${measured ? `${st.method === "df" ? "per df, jede Minute" : how} · ${when} · ` : ""}Logs ${fmtBytes(logs)} · ${st.busy ? "misst …" : du.active ? "" : `<a href="#" onclick="measureCache();return false" title="Belegung des Cache-Datenträgers messen (dauert eine Sekunde – der Cache liegt auf eigenem Datenträger)">messen</a>`}</div>
     ${duBar}${iv.running ? `<div class="dubar" title="Liest eine gleichmäßig verteilte Stichprobe der Cache-Dateien (1/256) und erkennt daran, welche Spiele wirklich im Cache liegen">
       <div class="bar"><i style="width:${(iv.done / (iv.total || 256) * 100).toFixed(1)}%;background:var(--ct)"></i></div>
       <div class="hint">Inhalt wird abgeglichen … ${iv.done}/${iv.total || 256} Ordner</div></div>`
