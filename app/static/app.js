@@ -241,7 +241,7 @@ function renderPublic(){
         ${j.address ? `<button class="small" data-pcopy="${esc(j.address)}" title="Adresse kopieren">⧉ <span class="mono">${esc(j.address)}</span></button>` : ""}
         ${x.join_password ? `<button class="small" data-pcopy="${esc(x.join_password)}" title="Passwort kopieren">🔑 <span class="mono">${esc(x.join_password)}</span></button>` : ""}
         ${j.url && x.online ? `<a class="btn primary small" href="${esc(j.url)}">▶ Beitreten</a>` : ""}
-        ${j.tv_url && x.online ? `<a class="btn small tvbtn" href="${esc(j.tv_url)}" title="Als Zuschauer über CSTV verbinden (${esc(j.tv_address || "")})">👁 Zusehen</a>` : ""}
+        ${j.tv_url && x.online ? `<a class="btn small tvbtn" href="${esc(j.tv_url)}" title="Startet CS2 und verbindet als Zuschauer (CSTV). Läuft CS2 schon: Konsole öffnen und connect ${esc(j.tv_address || "")} eingeben">👁 Zusehen</a>` : ""}
       </div>
       ${j.hint ? `<div class="hint pubhint">${esc(j.hint)}</div>` : ""}
     </div>`;
@@ -296,7 +296,7 @@ async function renderPubDetail(){
       ${j.address ? `<button class="small" data-pdcopy="${esc(j.address)}">⧉ Adresse kopieren</button>` : ""}
       ${x.join_password ? `<button class="small" data-pdcopy="${esc(x.join_password)}">🔑 Passwort kopieren</button>` : ""}
       ${j.url && x.online ? `<a class="btn primary small" href="${esc(j.url)}">▶ Beitreten</a>` : ""}
-      ${j.tv_url && x.online ? `<a class="btn small tvbtn" href="${esc(j.tv_url)}">👁 Zusehen (CSTV)</a>` : ""}
+      ${j.tv_url && x.online ? `<a class="btn small tvbtn" href="${esc(j.tv_url)}">👁 Zusehen (CSTV)</a> <span class="hint">läuft CS2 schon: Konsole → <span class="mono">connect ${esc(j.tv_address || "")}</span></span>` : ""}
     </div>
     ${j.hint ? `<div class="hint" style="margin-bottom:12px">${esc(j.hint)}</div>` : ""}
     ${(d && d.matches || []).length ? `<h3 class="pdsec">Letzte Matches</h3><div class="mlist">${d.matches.map(matchHtml).join("")}</div>` : ""}

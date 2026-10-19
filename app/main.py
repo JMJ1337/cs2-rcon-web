@@ -872,7 +872,7 @@ def _join_host(s: dict) -> str:
 
 
 def _with_tv(j: dict, s: dict, cv: dict) -> dict:
-    """CSTV (Zuschauen): steam://connect auf den TV-Port, wenn tv_enable an ist."""
+    """CSTV (Zuschauen): CS2 direkt mit „connect TV-Port“ starten (steam://connect scheitert an der Server-Abfrage), wenn tv_enable an ist."""
     try:
         on = str(cv.get("tv_enable") or "").strip() in ("1", "true", "1.000000")
         port = int(float(cv.get("tv_port") or 0))
@@ -880,7 +880,7 @@ def _with_tv(j: dict, s: dict, cv: dict) -> dict:
         on, port = False, 0
     if on and port:
         host = _join_host(s)
-        return {**j, "tv_url": f"steam://connect/{host}:{port}", "tv_address": f"{host}:{port}"}
+        return {**j, "tv_url": f"steam://run/730//+connect%20{host}:{port}", "tv_address": f"{host}:{port}"}
     return j
 
 
