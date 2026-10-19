@@ -223,6 +223,7 @@ function renderPublic(){
   $("#pubStat").innerHTML = `<b>${on.length}</b> von ${r.servers.length} Servern online · <b>${pl}</b> Spieler · ` +
     (r.net === "internet" ? `<span class="pill" title="Du kommst aus dem Internet – Adressen zeigen die öffentliche IP">🌐 Internet${r.address ? " · " + esc(r.address) : ""}</span>`
                           : `<span class="pill ok" title="Du bist im LAN – Adressen zeigen die LAN-IP">LAN</span>`) + pubNetHtml(r.internet) + pubCacheHtml(r.cache);
+  $("#pubCache").innerHTML = cacheGamesHtml(r.cached_games);
   if (!r.servers.length){ $("#pubGrid").innerHTML = `<div class="hint">Noch keine Server eingerichtet.</div>`; return; }
   $("#pubGrid").innerHTML = r.servers.map((x, i) => {
     const g = GAMES[x.game] || r.games[x.game] || {label: x.game, color: "#888"};
@@ -872,27 +873,21 @@ function metricsLine(sid){
   return `Verfügbarkeit 24 h <b>${m.uptime_24h != null ? m.uptime_24h + " %" : "–"}</b>${m.ping != null ? ` · Ping Ø <b>${m.ping} ms</b>` : ""} · Spieler-Peak 24 h <b>${m.peak_24h}</b>`;
 }
 // Logo-Leiste: Spiele, die im Lancache liegen
-let cacheGamesList = null, cacheGamesAt = 0;
-async function loadCacheGames(){
-  if (Date.now() - cacheGamesAt < 300000 && cacheGamesList) return;
-  cacheGamesAt = Date.now();
-  try { cacheGamesList = await api("/api/cache/games"); } catch {}
-}
-function cacheGamesHtml(){
-  const l = cacheGamesList || [];
+function cacheGamesHtml(l){
+  l = l || [];
   if (!l.length) return "";
-  return `<div class="cgstrip" title="Spiele im Lancache – laden im LAN mit voller Geschwindigkeit">${l.map(g => {
+  return `<h3 class="pdsec" style="margin-top:22px">Im Lancache <span class="hint">– diese Spiele laden im LAN mit voller Geschwindigkeit</span></h3><div class="cgstrip">${l.map(g => {
     const tip = `${g.name} – ${fmtBytes(g.stored)} im Cache${g.cached_pct != null ? ` (${Math.round(g.cached_pct)} % des Spiels)` : ""}`;
     const pct = g.cached_pct != null ? g.cached_pct : null;
     const img = g.app ? `<img src="/api/applogo/${g.app}" alt="${esc(g.name)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'cgname',textContent:this.alt}))">`
       : `<span class="cgsvc">${svcIcon(g.service, 22)}<span class="cgname">${esc(g.name)}</span></span>`;
-    return `<a class="cg" href="#" onclick="showView('cache');return false" title="${esc(tip)}">${img}${pct != null ? `<i style="width:${pct}%"></i>` : ""}</a>`;
+    return `<span class="cg" title="${esc(tip)}">${img}${pct != null ? `<i style="width:${pct}%"></i>` : ""}</span>`;
   }).join("")}</div>`;
 }
 async function refreshDash(){
   try { overview = await api("/api/overview"); } catch { return; }
-  await Promise.all([loadMetrics(), loadSizes(), loadCacheGames()]);
-  if (view === "dash") { $("#hostPanel").innerHTML = hostPanelHtml(); $("#cacheGames").innerHTML = cacheGamesHtml(); }
+  await Promise.all([loadMetrics(), loadSizes()]);
+  if (view === "dash") $("#hostPanel").innerHTML = hostPanelHtml();
   renderServerList();
   if (view !== "dash") return;
   $("#dashEmpty").classList.toggle("hidden", overview.length > 0);

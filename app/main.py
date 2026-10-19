@@ -413,6 +413,7 @@ async def public_servers(request: Request):
     return {"servers": out, "games": games, "updated": time.time(), "net": "lan" if lan else "internet", "cache": cache,
             "internet": internet,
             "matches": [_public_match(m) for m in matchlog.recent(None, 5)],
+            "cached_games": _safe_cached_games(),
             "address": None if lan else await wan_host()}
 
 
@@ -1744,14 +1745,32 @@ async def app_logo(appid: int):
                         headers={"Cache-Control": "public, max-age=2592000, immutable"})
 
 
-@app.get("/api/cache/games", dependencies=auth)
-async def cache_games():
-    """Spiele, die im Lancache liegen (alles je aus dem Internet geholt, 1 Jahr) – für die Logo-Leiste der Übersicht."""
+_cg_cache: dict = {"t": 0.0, "data": []}
+
+
+def _safe_cached_games() -> list[dict]:
+    try:
+        return _cached_games()
+    except Exception:  # noqa: BLE001
+        return _cg_cache["data"]
+
+
+def _cached_games() -> list[dict]:
+    """Spiele, die im Lancache liegen (alles je aus dem Internet geholt, 1 Jahr) – 5 min zwischengespeichert."""
+    if time.time() - _cg_cache["t"] < 300:
+        return _cg_cache["data"]
     gl = [g for g in depots.games(cache_history.series("365d").get("depots") or {}) if (g.get("miss") or 0) > 200 * 2**20]
     gl = _enrich_games(gl[:40])
-    return [{"app": g.get("app"), "name": g["name"], "service": g.get("service"), "stored": g.get("stored") or g.get("miss"),
+    data = [{"app": g.get("app"), "name": g["name"], "service": g.get("service"), "stored": g.get("stored") or g.get("miss"),
              "size": g.get("size"), "cached_pct": g.get("cached_pct")} for g in gl
             if g.get("app") or not g["name"].startswith(("Depot ", "Epic-Spiel"))]
+    _cg_cache.update(t=time.time(), data=data)
+    return data
+
+
+@app.get("/api/cache/games")
+async def cache_games():
+    return _cached_games()
 
 
 LOGO_URLS = {"teamspeak": "https://icons.duckduckgo.com/ip3/teamspeak.com.ico",
