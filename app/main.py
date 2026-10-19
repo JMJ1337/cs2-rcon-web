@@ -4522,6 +4522,8 @@ async def _tpl_refresh(src: dict | None = None) -> None:
         except docker_api.DockerError:
             pass
         script = ("T=$(du -sk /s 2>/dev/null | cut -f1); echo TOTAL ${T:-0}; "
+                  "F=$(df -kP /t | tail -1 | awk '{print $4}'); C=$(du -sk /t 2>/dev/null | cut -f1); "
+                  "if [ $(( ${T:-0} - ${C:-0} )) -gt $(( F - 10000000 )) ]; then echo NOSPACE $F; exit 0; fi; "
                   "( while sleep 10; do echo BYTES $(du -sk /t 2>/dev/null | cut -f1); done ) & W=$!; "
                   "cp -au /s/. /t/ 2>/tmp/e; rc=$?; kill $W; grep -v 'Permission denied' /tmp/e | tail -3; "
                   "echo BYTES $(du -sk /t | cut -f1); echo DONE $rc")
@@ -4538,6 +4540,8 @@ async def _tpl_refresh(src: dict | None = None) -> None:
             if tot and done and int(tot.group(1)):
                 _tpl["progress"] = round(min(100.0, int(done[-1]) / int(tot.group(1)) * 100), 1)
             if not (i2.get("State") or {}).get("Running"):
+                if "NOSPACE" in lg:
+                    raise docker_api.DockerError("Zu wenig Platz auf der internen Platte für die CS-Vorlage (mind. 10 GB Reserve)")
                 m = re.search(r"DONE (\d+)", lg)
                 if not m:
                     raise docker_api.DockerError(lg.strip()[-200:] or "abgebrochen")
