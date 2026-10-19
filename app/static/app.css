@@ -460,7 +460,7 @@ a.btn.tvbtn{background:var(--panel2);color:var(--text);border:1px solid var(--li
 .pill.reach.lan{color:var(--warn,#d9b44a);border-color:#6a5a1e}
 .pill.reach.direct{color:var(--muted,#9aa)}
 
-.fldrow{display:grid;grid-template-columns:minmax(160px,1.4fr) 1fr 80px auto auto;gap:10px;align-items:center;padding:4px 0;border-bottom:1px solid var(--line);font-size:13px}
+.fldrow{display:grid;grid-template-columns:minmax(160px,1.4fr) minmax(80px,1fr) 80px minmax(0,240px) 74px;gap:10px;align-items:center;padding:4px 0;border-bottom:1px solid var(--line);font-size:13px}
 .fldrow.sub span.mono{padding-left:16px;opacity:.85}
 .fldrow .bar{height:6px}
 @media (max-width:640px){.fldrow{grid-template-columns:1fr 70px auto}.fldrow .bar{display:none}}
@@ -549,3 +549,12 @@ aside .head .logo{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space
 .hl-row .bar i{transition:width .9s cubic-bezier(.4,0,.2,1);border-radius:3px}
 .hl-row .bar .pk{position:absolute;top:-2px;bottom:-2px;width:2px;border-radius:1px;background:var(--text);opacity:.75;transition:left .9s cubic-bezier(.4,0,.2,1)}
 .loadrow .bar i{transition:width .9s cubic-bezier(.4,0,.2,1)}
+
+/* Speicher: Tabellen bleiben im Panel */
+.dktable{table-layout:fixed;width:100%}
+.dktable td{white-space:normal;overflow-wrap:anywhere;vertical-align:middle}
+.dktable td:last-child{text-align:right}
+.dklist{overflow-wrap:anywhere;max-height:220px;overflow:auto;margin-top:4px}
+.fldrow>*{min-width:0}
+.fldrow .pill{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;justify-self:end}
+.fldrow>button,.fldrow>span:last-child{justify-self:end}

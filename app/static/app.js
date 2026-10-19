@@ -3213,15 +3213,16 @@ async function loadDocker(){
   const row = (label, bytes, info, btn) => `<tr><td>${label}</td><td class="mono">${fmtBytes(bytes || 0)}</td><td class="hint">${info || ""}</td><td>${btn || ""}</td></tr>`;
   const b = (what, txt, danger) => `<button class="small${danger ? " danger" : ""}" data-prune="${what}">${txt}</button>`;
   $("#dkBody").innerHTML = `${k.total ? `<div class="bar" style="margin:4px 0 10px"><i style="width:${Math.round(k.used / k.total * 100)}%;background:${k.free < 30e9 ? "var(--bad)" : "var(--ct)"}"></i></div>` : ""}
-    <table class="cachetable"><thead><tr><th>Was</th><th>Größe</th><th></th><th></th></tr></thead><tbody>
+    <table class="cachetable dktable"><colgroup><col style="width:190px"><col style="width:90px"><col><col style="width:170px"></colgroup><thead><tr><th>Was</th><th>Größe</th><th></th><th></th></tr></thead><tbody>
     ${row("Images gesamt", d.images.bytes, `${d.images.count} Images`)}
     ${row("&nbsp;· davon unbenutzt", d.images.unused_bytes, `${d.images.unused_count} Images ohne Container – z. B. alte Versionen nach Updates`, b("images", "Unbenutzte löschen", true))}
     ${row("&nbsp;· davon ohne Namen (Reste)", d.images.dangling_bytes, `${d.images.dangling_count} alte Schichten`, b("dangling", "Reste löschen"))}
     ${row("Gestoppte Container", d.containers.stopped_bytes, `${d.containers.stopped} von ${d.containers.count}${d.containers.stopped_list.some(c => c.helper) ? " · Hilfs-Container des Tools werden gelöscht, Spielserver nicht" : ""}`, b("helpers", "Hilfs-Container löschen"))}
-    ${row("Volumes", d.volumes.bytes, `${d.volumes.count} Volumes${d.volumes.unused.length ? " · unbenutzt: " + esc(d.volumes.unused.map(v => v.name.slice(0, 20) + " " + fmtBytes(v.bytes)).join(", ")) : ""}`, d.volumes.unused.length ? b("anon_volumes", "Unbenannte löschen", true) : "")}
+    ${row("Volumes", d.volumes.bytes, `${d.volumes.count} Volumes${d.volumes.unused.length ? ` · ${d.volumes.unused.length} unbenutzt (${fmtBytes(d.volumes.unused.reduce((x, v) => x + (v.bytes || 0), 0))}) – Liste unten` : ""}`, d.volumes.unused.length ? b("anon_volumes", "Unbenannte löschen", true) : "")}
     ${row("Build-Cache", d.build_cache.bytes, `${d.build_cache.count} Einträge`, d.build_cache.bytes ? b("buildcache", "Leeren") : "")}
     </tbody></table>
-    ${d.images.unused_list.length ? `<details style="margin-top:8px"><summary class="hint">Unbenutzte Images anzeigen</summary><div class="hint mono">${d.images.unused_list.map(i => esc(i.name) + " · " + fmtBytes(i.bytes)).join("<br>")}</div></details>` : ""}
+    ${d.images.unused_list.length ? `<details style="margin-top:8px"><summary class="hint">Unbenutzte Images anzeigen</summary><div class="hint mono dklist">${d.images.unused_list.map(i => esc(i.name) + " · " + fmtBytes(i.bytes)).join("<br>")}</div></details>` : ""}
+    ${d.volumes.unused.length ? `<details style="margin-top:6px"><summary class="hint">Unbenutzte Volumes anzeigen</summary><div class="hint mono dklist">${d.volumes.unused.map(v => esc(v.name) + " · " + fmtBytes(v.bytes)).join("<br>")}</div></details>` : ""}
     <h3 class="pdsec" style="margin-top:14px">Systemplatte außerhalb von Docker <button class="small" id="btnSysScan">messen</button></h3><div id="sysDisk" class="hint">…</div>
     <div class="hint" style="margin-top:8px">Nicht von hier messbar: Container-Logs und Dateien außerhalb von Docker (z. B. Home-Verzeichnis). Auf dem Server prüfen mit <span class="mono">sudo du -xh / --max-depth=2 | sort -h | tail -20</span>.</div>`;
   $$("[data-prune]").forEach(btn => btn.onclick = async () => {
