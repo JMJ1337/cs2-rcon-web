@@ -443,7 +443,7 @@ async function refreshHost(){
     (g.containers ? `<br>Spielserver: ${g.running}/${g.containers} laufen · ${g.cpu_host} % CPU · ${fmtMem(g.mem_mb)}` +
       "" : "") +
     (h.local_disk ? `<br><span title="Interne Platte des Servers (Docker)">💽 Interne Platte: <b>${fmtBytes(h.local_disk.free)}</b> frei von ${fmtBytes(h.local_disk.total)}</span>` : "") +
-    (h.cs2_template ? `<br><span title="Lokale Kopie von ${esc(h.cs2_template.src_name || "CS #1")} – neue CS-Server kopieren von hier">CS-Vorlage: ${h.cs2_template.busy ? "wird aktualisiert" + (h.cs2_template.progress != null ? " " + h.cs2_template.progress + " %" : " …") : h.cs2_template.last ? fmtBytes(h.cs2_template.bytes || 0) + " · Stand " + new Date(h.cs2_template.last * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"}) : "noch keine"}${h.cs2_template.error ? " · ⚠ " + esc(h.cs2_template.error.slice(0, 60)) : ""}</span>` : "");
+    (h.cs2_template ? `<br><span title="Lokale Kopie von ${esc(h.cs2_template.src_name || "CS #1")} – neue CS-Server kopieren von hier">CS-Vorlage: ${h.cs2_template.busy ? "wird aktualisiert" + (h.cs2_template.progress != null ? " " + h.cs2_template.progress + " %" : " …") : h.cs2_template.last ? fmtBytes(h.cs2_template.bytes || 0) + " · Stand " + new Date(h.cs2_template.last * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"}) : "noch keine"}${h.cs2_template.error ? " · ⚠ " + esc(h.cs2_template.error.slice(0, 60)) : ""}</span>${!h.cs2_template.busy && me && me.role === "admin" ? ` · <a href="#" onclick="tplRefresh();return false" title="CS-Dateien von ${esc(h.cs2_template.src_name || "CS #1")} jetzt auf die interne Platte kopieren (sonst automatisch um 05:00)">${h.cs2_template.last ? "aktualisieren" : "jetzt erstellen"}</a>` : ""}` : "");
 }
 function problemsHtml(list){
   if (!list || !list.length) return "";
@@ -621,6 +621,10 @@ function storageCard(st, disk){
     <div class="k">Cache-Ordner${lim ? " (Limit " + esc(st.limit_raw || fmtBytes(lim)) + ")" : ""}</div><div class="v">${val != null ? (measured ? "" : "≈ ") + fmtBytes(val) : "–"}</div>
     ${pct != null ? `<div class="bar" style="margin-top:6px"><i class="${lvl(pct)}" style="width:${pct}%"></i></div>` : ""}
     <div class="s">${pct != null ? pct + " % vom Limit · " : ""}Logs ${fmtBytes(logs)} · ${st.busy ? "wird gemessen …" : `<a href="#" onclick="measureCache();return false" title="Zählt den Ordner einmal genau – mit niedrigster I/O-Priorität, dauert bei vielen TB lange">genau messen</a>`}</div></div>`;
+}
+async function tplRefresh(){
+  if (!confirm("CS2-Vorlage jetzt auf die interne Platte kopieren? Dauert je nach Größe einige Minuten (ca. 60 GB).")) return;
+  try { await api("/api/cs2-template/refresh", {method: "POST"}); toast("Vorlage wird erstellt – Fortschritt steht links unter „CS-Vorlage“"); } catch (e) { toast(e.message, true); }
 }
 async function measureCache(){
   try { await api("/api/cache/measure", {method: "POST"}); toast("Messung läuft im Hintergrund (niedrige Priorität)"); } catch (e) { toast(e.message, true); }
