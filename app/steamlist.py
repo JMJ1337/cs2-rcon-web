@@ -46,6 +46,10 @@ async def listed(ip: str | None) -> dict:
 
 def reach(game: str, server: dict, state: dict, steam: dict, wan: str | None) -> dict:
     """{"kind": "online"|"lan"|"direct", "label", "detail"}"""
+    if game == "wreckfest":
+        return {"kind": "direct", "label": "eigene Serverliste",
+                "detail": "Wreckfest meldet sich nicht in Steams öffentlicher Liste, sondern beim eigenen Dienst – "
+                          "Online-Status hier nicht prüfbar. Erreichbar, wenn UDP 27015, 27016, 27017 und 33540 weitergeleitet sind."}
     if game in NOT_STEAM:
         return {"kind": "direct", "label": "IP-Verbindung",
                 "detail": "Kein Steam-Listing – aus dem Internet erreichbar, wenn die Ports weitergeleitet sind"}

@@ -3628,6 +3628,66 @@ async def docker_mounts(request: Request):
     return sorted(out, key=lambda x: (x["source"] or "", x["container"]))
 
 
+# ---------------------------------------------------------------- Docker-Reste aufräumen (interne Platte)
+@app.get("/api/storage/docker", dependencies=auth)
+async def docker_usage(request: Request):
+    """Was belegt Docker auf der internen Platte? (Images, Container, Volumes, Build-Cache) + freier Platz."""
+    _need_admin(request)
+    d = (await docker_api._req("GET", "/system/df", timeout=120)).json()
+    imgs = d.get("Images") or []
+    used_imgs = {c.get("ImageID") for c in d.get("Containers") or []}
+    unused = [i for i in imgs if i.get("Id") not in used_imgs and not i.get("Containers")]
+    dangling = [i for i in unused if not [x for x in (i.get("RepoTags") or []) if x != "<none>:<none>"]]
+    cons = d.get("Containers") or []
+    stopped = [c for c in cons if c.get("State") != "running"]
+    vols = d.get("Volumes") or []
+    vol_unused = [v for v in vols if (v.get("UsageData") or {}).get("RefCount") == 0]
+    bc = d.get("BuildCache") or []
+    size = lambda lst, k="Size": sum(max(0, x.get(k) or 0) for x in lst)  # noqa: E731
+    return {
+        "disk": await _tpl_disk(),
+        "images": {"count": len(imgs), "bytes": d.get("LayersSize") or size(imgs), "unused_count": len(unused),
+                   "unused_bytes": size(unused), "dangling_count": len(dangling), "dangling_bytes": size(dangling),
+                   "unused_list": sorted(({"name": (i.get("RepoTags") or ["<ohne Namen>"])[0], "bytes": i.get("Size") or 0} for i in unused),
+                                         key=lambda x: -x["bytes"])[:30]},
+        "containers": {"count": len(cons), "stopped": len(stopped), "stopped_bytes": size(stopped, "SizeRw"),
+                       "stopped_list": [{"name": (c.get("Names") or ["?"])[0].lstrip("/"), "bytes": c.get("SizeRw") or 0,
+                                         "helper": (c.get("Labels") or {}).get("gsm.helper")} for c in stopped][:30]},
+        "volumes": {"count": len(vols), "bytes": sum(max(0, (v.get("UsageData") or {}).get("Size") or 0) for v in vols),
+                    "unused": [{"name": v.get("Name"), "bytes": (v.get("UsageData") or {}).get("Size") or 0} for v in vol_unused]},
+        "build_cache": {"count": len(bc), "bytes": size(bc)},
+    }
+
+
+class PruneIn(BaseModel):
+    what: str
+
+
+@app.post("/api/storage/docker/prune", dependencies=auth)
+async def docker_prune(data: PruneIn, request: Request):
+    """Aufräumen: ungenutzte Images, gestoppte Hilfs-Container, Build-Cache (Volumes mit Daten nie automatisch)."""
+    _need_admin(request)
+    try:
+        if data.what == "images":
+            r = (await docker_api._req("POST", "/images/prune", params={"filters": json.dumps({"dangling": ["false"]})}, timeout=600)).json()
+            return {"freed": r.get("SpaceReclaimed") or 0, "count": len(r.get("ImagesDeleted") or [])}
+        if data.what == "dangling":
+            r = (await docker_api._req("POST", "/images/prune", params={"filters": json.dumps({"dangling": ["true"]})}, timeout=600)).json()
+            return {"freed": r.get("SpaceReclaimed") or 0, "count": len(r.get("ImagesDeleted") or [])}
+        if data.what == "helpers":       # nur gestoppte Hilfs-Container des Tools, keine Spielserver
+            r = (await docker_api._req("POST", "/containers/prune", params={"filters": json.dumps({"label": ["gsm.helper"]})}, timeout=300)).json()
+            return {"freed": r.get("SpaceReclaimed") or 0, "count": len(r.get("ContainersDeleted") or [])}
+        if data.what == "buildcache":
+            r = (await docker_api._req("POST", "/build/prune", params={"all": "true"}, timeout=600)).json()
+            return {"freed": r.get("SpaceReclaimed") or 0, "count": len(r.get("CachesDeleted") or [])}
+        if data.what == "anon_volumes":  # nur anonyme, nicht benutzte Volumes (keine benannten Spieldaten)
+            r = (await docker_api._req("POST", "/volumes/prune", timeout=600)).json()
+            return {"freed": r.get("SpaceReclaimed") or 0, "count": len(r.get("VolumesDeleted") or [])}
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    raise HTTPException(400, "Unbekannt")
+
+
 @app.get("/api/docker/image-check", dependencies=auth)
 async def image_check(images: str = ""):
     """Prüft, ob Images in der Registry existieren (ohne Download) – für den Spielekatalog."""

@@ -334,7 +334,7 @@ function showView(v){
   if (v === "auto"){ renderAuto(); loadGslt(); loadNotify(); loadBackup(); }
   if (v === "cache"){ loadCacheLive(); loadCacheHistory(); loadDnsCheck(); }
   if (v === "prefill"){ pfLoaded = false; showPfSvc(pfSvc); }
-  if (v === "storage"){ loadStorage(true); loadFolders(); }
+  if (v === "storage"){ loadStorage(true); loadFolders(); loadDocker(); }
   if (v === "game") renderGameView();
 }
 
@@ -3136,3 +3136,35 @@ async function loadDashMatches(){
   $("#dashMatchList").innerHTML = ms.map(matchHtml).join("");
 }
 setInterval(loadDashMatches, 5000);
+
+/* ================= Interne Platte & Docker-Reste ================= */
+async function loadDocker(){
+  $("#dkBody").innerHTML = `<span class="hint">wird gemessen … (kann etwas dauern)</span>`;
+  let d; try { d = await api("/api/storage/docker"); } catch (e){ $("#dkBody").innerHTML = `<span class="hint">${esc(e.message)}</span>`; return; }
+  const k = d.disk || {};
+  $("#dkSub").textContent = k.total ? `${fmtBytes(k.free)} frei von ${fmtBytes(k.total)} (${Math.round(k.used / k.total * 100)} % belegt)` : "";
+  const row = (label, bytes, info, btn) => `<tr><td>${label}</td><td class="mono">${fmtBytes(bytes || 0)}</td><td class="hint">${info || ""}</td><td>${btn || ""}</td></tr>`;
+  const b = (what, txt, danger) => `<button class="small${danger ? " danger" : ""}" data-prune="${what}">${txt}</button>`;
+  $("#dkBody").innerHTML = `${k.total ? `<div class="bar" style="margin:4px 0 10px"><i style="width:${Math.round(k.used / k.total * 100)}%;background:${k.free < 30e9 ? "var(--bad)" : "var(--ct)"}"></i></div>` : ""}
+    <table class="cachetable"><thead><tr><th>Was</th><th>Größe</th><th></th><th></th></tr></thead><tbody>
+    ${row("Images gesamt", d.images.bytes, `${d.images.count} Images`)}
+    ${row("&nbsp;· davon unbenutzt", d.images.unused_bytes, `${d.images.unused_count} Images ohne Container – z. B. alte Versionen nach Updates`, b("images", "Unbenutzte löschen", true))}
+    ${row("&nbsp;· davon ohne Namen (Reste)", d.images.dangling_bytes, `${d.images.dangling_count} alte Schichten`, b("dangling", "Reste löschen"))}
+    ${row("Gestoppte Container", d.containers.stopped_bytes, `${d.containers.stopped} von ${d.containers.count}${d.containers.stopped_list.some(c => c.helper) ? " · Hilfs-Container des Tools werden gelöscht, Spielserver nicht" : ""}`, b("helpers", "Hilfs-Container löschen"))}
+    ${row("Volumes", d.volumes.bytes, `${d.volumes.count} Volumes${d.volumes.unused.length ? " · unbenutzt: " + esc(d.volumes.unused.map(v => v.name.slice(0, 20) + " " + fmtBytes(v.bytes)).join(", ")) : ""}`, d.volumes.unused.length ? b("anon_volumes", "Unbenannte löschen", true) : "")}
+    ${row("Build-Cache", d.build_cache.bytes, `${d.build_cache.count} Einträge`, d.build_cache.bytes ? b("buildcache", "Leeren") : "")}
+    </tbody></table>
+    ${d.images.unused_list.length ? `<details style="margin-top:8px"><summary class="hint">Unbenutzte Images anzeigen</summary><div class="hint mono">${d.images.unused_list.map(i => esc(i.name) + " · " + fmtBytes(i.bytes)).join("<br>")}</div></details>` : ""}
+    <div class="hint" style="margin-top:8px">Nicht von hier messbar: Container-Logs und Dateien außerhalb von Docker (z. B. Home-Verzeichnis). Auf dem Server prüfen mit <span class="mono">sudo du -xh / --max-depth=2 | sort -h | tail -20</span>.</div>`;
+  $$("[data-prune]").forEach(btn => btn.onclick = async () => {
+    const what = btn.dataset.prune;
+    const msg = {images: "Alle Images löschen, die gerade kein Container nutzt? Werden bei Bedarf neu geladen (über den Lancache).", dangling: "Image-Reste löschen?",
+      helpers: "Gestoppte Hilfs-Container des Tools löschen?", buildcache: "Build-Cache leeren?", anon_volumes: "Unbenannte, unbenutzte Volumes löschen? Benannte Volumes (Spieldaten) bleiben."}[what];
+    if (!confirm(msg)) return;
+    btn.disabled = true; btn.textContent = "läuft …";
+    try { const r = await api("/api/storage/docker/prune", {body: {what}}); toast(`${fmtBytes(r.freed)} freigegeben (${r.count} entfernt)`); }
+    catch (e){ toast(e.message, true); }
+    loadDocker();
+  });
+}
+$("#btnDkRefresh").onclick = loadDocker;
