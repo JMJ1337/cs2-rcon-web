@@ -2236,7 +2236,9 @@ async def cache_history_api(range: str = "30d"):
     out["games"] = _enrich_games(depots.games(out.pop("depots", {}) or {})[:30])
     try:
         mdl = cache_model.model()
-        out["model"] = {"total": round(mdl["total"]), "limit": mdl["limit"], "evictions": cache_model.evictions(30)}
+        out["model"] = {"total": round(mdl["total"]), "limit": mdl["limit"], "evictions": cache_model.evictions(30),
+                        "offset": round(mdl["offset"]), "measured": mdl["measured"], "measured_at": mdl["measured_at"],
+                        "max_age": mdl["max_age"]}
     except Exception:  # noqa: BLE001
         log.exception("Cache-Modell")
         out["model"] = None
