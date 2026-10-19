@@ -2709,6 +2709,10 @@ async def monitor_loop():
     await asyncio.sleep(90)                 # erst Status sammeln lassen
     while True:
         try:
+            await _image_auto_update()
+        except Exception:  # noqa: BLE001
+            log.exception("Image-Update")
+        try:
             await _monitor_once()
         except Exception:  # noqa: BLE001
             log.exception("Überwachung")
@@ -3647,6 +3651,61 @@ async def container_info(sid: str):
         raise HTTPException(502, str(e))
 
 
+# ---------------------------------------------------------------- Image aktualisieren (neueste Version des Spiels)
+AUTO_UPDATE_GAMES = {"factorio"}          # Version steckt im Image -> beim Neustart/ nachts neues Image holen
+
+
+async def _image_update(s: dict, force_recreate: bool = False) -> str:
+    """Neuestes Image holen; ist es neuer als das laufende, Container damit neu erstellen (Daten/Einstellungen bleiben)."""
+    c = s["container"]
+    info = await docker_api.inspect(c)
+    ref = (info.get("Config") or {}).get("Image") or ""
+    if not ref or ref.startswith("sha256:"):
+        raise docker_api.DockerError("Container hat kein Image mit Namen – Update nicht möglich")
+    await docker_api.pull(ref)
+    new_id = ((await docker_api._req("GET", f"/images/{ref}/json")).json() or {}).get("Id")
+    if new_id and new_id == info.get("Image") and not force_recreate:
+        return "schon aktuell"
+    await docker_api.recreate(c, lambda cfg, hc: None)
+    drop_client(s["id"])
+    return f"auf neuestes {ref} aktualisiert"
+
+
+@app.post("/api/servers/{sid}/image-update", dependencies=auth)
+async def image_update(sid: str):
+    s = get_server(sid)
+    if not s.get("container"):
+        raise HTTPException(400, "Kein Container")
+    try:
+        return {"ok": True, "result": await _image_update(s)}
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+
+
+_img_day = {"d": ""}
+
+
+async def _image_auto_update() -> None:
+    """Nachts (ab 06:00, nur leere Server): Spiele mit Version im Image auf die neueste Version bringen."""
+    today = time.strftime("%Y-%m-%d")
+    if _img_day["d"] == today or time.strftime("%H:%M") < "06:00":
+        return
+    _img_day["d"] = today
+    for s in load_servers():
+        if not s.get("container") or not s.get("auto_update", game_of(s) in AUTO_UPDATE_GAMES):
+            continue
+        st = _state.get(s["id"]) or {}
+        if st.get("humans"):
+            continue
+        try:
+            r = await _image_update(s)
+            if r != "schon aktuell":
+                log.info("%s: %s", s.get("name"), r)
+                notify.fire(f"⬆️ {s.get('name')}: {r}", event="install_done", key=f"img-{s['id']}-{today}")
+        except docker_api.DockerError as e:
+            log.warning("Image-Update %s: %s", s.get("name"), e)
+
+
 @app.post("/api/servers/{sid}/container/{act}", dependencies=auth)
 async def container_action(sid: str, act: str):
     name = _container_of(sid)
@@ -3654,6 +3713,15 @@ async def container_action(sid: str, act: str):
         _manual_stop[sid] = time.time()
     elif act in ("start", "unpause", "restart"):
         _manual_stop.pop(sid, None)
+    s_ = get_server(sid)
+    if act in ("restart", "start") and s_.get("auto_update", game_of(s_) in AUTO_UPDATE_GAMES):
+        try:                         # immer mit der neuesten Version starten
+            r = await _image_update(s_)
+            if r != "schon aktuell":
+                drop_client(sid)
+                return {"ok": True, "updated": r}
+        except docker_api.DockerError as e:
+            log.warning("Image-Update vor Neustart (%s): %s", s_.get("name"), e)
     try:
         await docker_api.action(name, act)
     except docker_api.DockerError as e:
@@ -4557,12 +4625,14 @@ async def _tpl_refresh(src: dict | None = None) -> None:
         log.info("CS2-Vorlage aktualisiert von %s (%s)", src.get("name"), fmt_gb(_tpl["bytes"] or 0))
     except docker_api.DockerError as e:
         _tpl["error"] = str(e)[:300]
+        _tpl_watch["day"] = time.strftime("%Y-%m-%d")
+        d_ = store.load("cs2_template.json", {}); d_["tried"] = _tpl_watch["day"]; store.save("cs2_template.json", d_)
         log.warning("CS2-Vorlage: %s", e)
     finally:
         _tpl.update(busy=False, progress=None)
 
 
-_tpl_watch = {"inst": False, "day": ""}
+_tpl_watch = {"inst": False, "day": time.strftime("%Y-%m-%d") if store.load("cs2_template.json", {}).get("tried") == time.strftime("%Y-%m-%d") else ""}
 
 
 async def _tpl_tick() -> None:
@@ -4578,8 +4648,8 @@ async def _tpl_tick() -> None:
         asyncio.create_task(_tpl_refresh(src))
         return
     _tpl_watch["inst"] = inst or _tpl_watch["inst"]
-    if not _tpl.get("last") or (time.strftime("%H:%M") >= "05:00" and _tpl_watch["day"] != today
-                                 and time.time() - (_tpl.get("last") or 0) > 20 * 3600):
+    if _tpl_watch["day"] != today and (not _tpl.get("last") or (time.strftime("%H:%M") >= "05:00"
+                                                                 and time.time() - (_tpl.get("last") or 0) > 20 * 3600)):
         _tpl_watch["day"] = today
         if st.get("online") and not inst:
             asyncio.create_task(_tpl_refresh(src))
@@ -4590,6 +4660,22 @@ async def cs2_template():
     src = _tpl_source()
     return {**{k: v for k, v in _tpl.items() if k not in ("disk_t",)}, "disk": await _tpl_disk(),
             "source_id": src["id"] if src else None, "source_name": src.get("name") if src else None}
+
+
+@app.delete("/api/cs2-template", dependencies=auth)
+async def cs2_template_delete(request: Request):
+    """Lokale Vorlage löschen (gibt den Platz auf der internen Platte frei)."""
+    _need_admin(request)
+    if _tpl["busy"]:
+        raise HTTPException(409, "Vorlage wird gerade aktualisiert")
+    try:
+        await docker_api.remove_volume(LOCAL_TPL_VOL)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    _tpl.update(last=None, bytes=None, src=None, src_name=None, disk_t=0, error=None)
+    _tpl_save()
+    _tpl_watch["day"] = time.strftime("%Y-%m-%d")
+    return {"ok": True}
 
 
 @app.post("/api/cs2-template/refresh", dependencies=auth)

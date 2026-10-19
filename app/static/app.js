@@ -2927,6 +2927,12 @@ $("#btnPorts").onclick = async () => {
   try { const r = await api(`/api/servers/${current.id}/ports`, {body}); toast("Ports geändert: " + Object.entries(r).filter(([k]) => k !== "ok").map(([k, x]) => `${k} ${x}`).join(", ")); await loadServers(); }
   catch (e){ toast(e.message, true); }
 };
+$("#btnImgUpdate").onclick = async () => {
+  if (!confirm("Neueste Version (Image) holen und Server damit neu starten? Spieldaten und Einstellungen bleiben.")) return;
+  toast("Lade neuestes Image …");
+  try { const r = await api(`/api/servers/${current.id}/image-update`, {method: "POST"}); toast(r.result); }
+  catch (e){ toast(e.message, true); }
+};
 $("#btnTvOn").onclick = () => setTv(true);
 $("#btnTvOff").onclick = () => setTv(false);
 
