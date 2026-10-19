@@ -156,3 +156,17 @@ def iscsi_disks() -> list[dict]:
     except OSError:
         pass
     return out
+
+
+def mount_of(path: str) -> dict:
+    """Auf welchem Host-Mount liegt dieser Pfad? (längster passender Mountpunkt)"""
+    best = {"path": "/", "device": None, "fstype": None}
+    try:
+        with open(f"{HOST_PROC1}/mounts") as f:
+            for line in f:
+                p = line.split()
+                if len(p) >= 3 and (path == p[1] or path.startswith(p[1].rstrip("/") + "/")) and len(p[1]) >= len(best["path"]):
+                    best = {"path": p[1], "device": p[0], "fstype": p[2]}
+    except OSError:
+        return {"path": None, "error": "Host-/proc nicht eingebunden"}
+    return best

@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 import ipaddress
 import hashlib
 import hmac
@@ -2806,8 +2807,86 @@ async def _monitor_once() -> None:
         ld = livestats.data.get(lc) or {}
         if ld and not ld.get("running", True) and now - ld.get("t", 0) < 30:
             notify.fire("🛑 Lancache-Container läuft nicht – Downloads gehen direkt ins Internet.", event="cache_down", key="cache-down")
+        if not (ld and ld.get("running") and now - ld.get("t", 0) < 30):
+            await _cache_autostart(lc)
     for k in [k for k, v in _manual_stop.items() if now - v > 7 * 86400]:
         _manual_stop.pop(k, None)
+
+
+async def _cache_diag(lc: str, tail: int = 60) -> dict:
+    """Warum läuft der Lancache nicht? Status, Exit-Code, Neustart-Regel, Mounts (eingehängt?), letzte Logzeilen."""
+    info = await docker_api.inspect(lc)
+    st, hc = info.get("State") or {}, info.get("HostConfig") or {}
+    mounts = []
+    for m in info.get("Mounts") or []:
+        if m.get("Type") != "bind":
+            continue
+        src = m.get("Source") or ""
+        mo = hoststorage.mount_of(src)
+        # liegt der Ordner unter /mnt, aber nur auf der Systemplatte („/“), ist die LUN/Freigabe nicht eingehängt
+        missing = src.startswith("/mnt/") and mo.get("path") in ("/", None) and not mo.get("error")
+        mounts.append({"source": src, "target": m.get("Destination"), "on": mo.get("path"), "device": mo.get("device"),
+                       "fstype": mo.get("fstype"), "missing_mount": missing})
+    try:
+        lg = await docker_api.logs(lc, tail)
+    except docker_api.DockerError:
+        lg = ""
+    return {"container": lc, "status": st.get("Status"), "running": st.get("Running"), "exit_code": st.get("ExitCode"),
+            "error": st.get("Error") or None, "oom": st.get("OOMKilled"), "started": st.get("StartedAt"), "finished": st.get("FinishedAt"),
+            "restart_policy": (hc.get("RestartPolicy") or {}).get("Name") or "no", "restart_count": info.get("RestartCount"),
+            "mounts": mounts, "log": lg[-6000:]}
+
+
+@app.get("/api/cache/container", dependencies=auth)
+async def cache_container_diag():
+    lc = cache_stats.state.get("container")
+    if not lc:
+        raise HTTPException(404, "Kein Lancache-Container gefunden")
+    try:
+        return await _cache_diag(lc) | {"autostart": _cache_heal}
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+
+
+_cache_heal: dict = {"tries": [], "last": None, "last_error": None}
+
+
+async def _cache_autostart(lc: str) -> None:
+    """Lancache nach Neustart des Rechners nicht hochgekommen -> starten, sobald seine Ordner eingehängt sind
+    (iSCSI/NFS hängen sich beim Booten oft erst nach Docker ein). Höchstens 6 Versuche pro Stunde."""
+    now = time.time()
+    if lc in _manual_stop:
+        return
+    _cache_heal["tries"] = [t for t in _cache_heal["tries"] if now - t < 3600]
+    if len(_cache_heal["tries"]) >= 6 or (_cache_heal["tries"] and now - _cache_heal["tries"][-1] < 120):
+        return
+    try:
+        d = await _cache_diag(lc, 5)
+    except docker_api.DockerError:
+        return
+    if d["running"] or d["status"] not in ("exited", "created", "dead"):
+        return
+    # nur, wenn ihn der Neustart des Rechners erwischt hat – nicht, wenn ihn jemand bewusst gestoppt hat
+    try:
+        boot = now - float(open("/proc/uptime").read().split()[0])
+        ts = lambda x: datetime.fromisoformat(x[:19] + "+00:00").timestamp() if x and not x.startswith("0001") else 0.0  # noqa: E731
+        started, finished = ts(d["started"]), ts(d["finished"])
+    except (OSError, ValueError):
+        return
+    if started > boot or not (finished >= boot - 900):
+        _cache_heal["last_error"] = "nicht automatisch gestartet: wurde vor dem Neustart bewusst gestoppt"
+        return
+    if any(m["missing_mount"] for m in d["mounts"]):
+        _cache_heal["last_error"] = "wartet: " + ", ".join(m["source"] for m in d["mounts"] if m["missing_mount"]) + " noch nicht eingehängt"
+        return
+    _cache_heal["tries"].append(now)
+    try:
+        await docker_api._req("POST", f"/containers/{lc}/start", timeout=60)
+        _cache_heal.update(last=now, last_error=None)
+        log.info("Lancache %s automatisch gestartet (war %s, Exit %s)", lc, d["status"], d["exit_code"])
+        notify.fire(f"🔄 Lancache war nicht gestartet (Exit {d['exit_code']}) – automatisch gestartet.", event="cache_down", key="cache-heal")
+    except docker_api.DockerError as e:
+        _cache_heal["last_error"] = str(e)[:200]
 
 
 async def monitor_loop():
