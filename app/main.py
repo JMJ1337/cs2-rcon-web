@@ -6218,10 +6218,33 @@ class PrefillSettings(BaseModel):
     skip_cached: bool = True
     schedule: str = Field("", max_length=5)
     flags: dict
+
+
+
+class PrefillSpeed(BaseModel):
     yield_: bool = Field(True, alias="yield")
     yield_mbs: float = Field(2.0, ge=0.1, le=1000)
     throttle_mbs: float = Field(5.0, ge=0.5, le=1000)
     max_mbs: float = Field(0, ge=0, le=10000)
+
+
+@app.put("/api/prefill/speed", dependencies=auth)
+async def prefill_speed(data: PrefillSpeed):
+    """Geschwindigkeit für ALLE Prefills (Steam, Battle.net, Epic) – wird sofort angewendet."""
+    prefill.save_settings({"yield": data.yield_, "yield_mbs": data.yield_mbs, "throttle_mbs": data.throttle_mbs, "max_mbs": data.max_mbs})
+    a = prefill.auto
+    mx = data.max_mbs * 1e6
+    try:
+        if a.get("throttled"):
+            thr = min(data.throttle_mbs * 1e6, mx) if mx else data.throttle_mbs * 1e6
+            await prefill.set_rate(thr)
+            a["rate"] = thr
+        else:
+            await prefill.set_rate(mx)
+            a["rate"] = mx or None
+    except docker_api.DockerError:
+        pass
+    return {"ok": True, "throttle_ok": prefill.throttle_ok}
 
 
 @app.put("/api/prefill/settings", dependencies=auth)
@@ -6232,8 +6255,7 @@ async def prefill_settings(data: PrefillSettings):
     flags = {"recent": bool(f.get("recent")), "recently_purchased": bool(f.get("recently_purchased")),
              "top": max(0, min(100, int(f.get("top") or 0))), "all": bool(f.get("all")), "force": bool(f.get("force")),
              "verbose": bool(f.get("verbose")), "os": f.get("os") if f.get("os") in ("windows", "linux", "macos") else "windows"}
-    out = prefill.save_settings({"schedule": data.schedule, "flags": flags, "yield": data.yield_, "yield_mbs": data.yield_mbs,
-                                 "throttle_mbs": data.throttle_mbs, "max_mbs": data.max_mbs,
+    out = prefill.save_settings({"schedule": data.schedule, "flags": flags, 
                                  "server_games": data.server_games, "skip_cached": data.skip_cached})
     if data.server_games:
         try:

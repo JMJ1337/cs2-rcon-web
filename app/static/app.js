@@ -2666,8 +2666,7 @@ async function loadPrefill(){
     pfLoaded = true; pfApps = (s.apps || []).slice();
     $$("[data-pf]").forEach(el => { const v = s.flags[el.dataset.pf]; if (el.type === "checkbox") el.checked = !!v; else el.value = v ?? ""; });
     $("#pfSchedule").value = s.schedule || "";
-    $("#pfYield").checked = s.yield !== false; $("#pfYieldMbs").value = s.yield_mbs ?? 2;
-    $("#pfThrottleMbs").value = s.throttle_mbs ?? 5; $("#pfMaxMbs").value = s.max_mbs ?? 0;
+    loadPfSpeed(s);
     $("#pfServerGames").checked = s.server_games !== false;
     $("#pfSkipCached").checked = s.skip_cached !== false;
     renderPfApps();
@@ -2735,6 +2734,21 @@ $("#pfSearch").addEventListener("input", () => {
     });
   }, 350);
 });
+// Geschwindigkeit: gemeinsam für alle Prefills
+let pfSpeedLoaded = false;
+function loadPfSpeed(s){
+  if (pfSpeedLoaded && document.activeElement && $("#pfSpeed").contains(document.activeElement)) return;   // nicht beim Tippen überschreiben
+  pfSpeedLoaded = true;
+  $("#pfYield").checked = s.yield !== false; $("#pfYieldMbs").value = s.yield_mbs ?? 2;
+  $("#pfThrottleMbs").value = s.throttle_mbs ?? 5; $("#pfMaxMbs").value = s.max_mbs ?? 0;
+}
+$("#pfSpeedSave").onclick = async () => {
+  try {
+    await api("/api/prefill/speed", {method: "PUT", body: {yield: $("#pfYield").checked, yield_mbs: +$("#pfYieldMbs").value || 2,
+      throttle_mbs: +$("#pfThrottleMbs").value || 5, max_mbs: Math.max(0, +$("#pfMaxMbs").value || 0)}});
+    toast("Geschwindigkeit gespeichert – gilt sofort für alle laufenden Prefills");
+  } catch (e) { toast(e.message, true); }
+};
 $("#pfRun").onclick = async () => {
   await loadTimings(true);
   const d = durText("prefill", "steam", "Letzter Steam-Prefill");
@@ -2760,7 +2774,7 @@ $("#pfInput").addEventListener("keydown", e => { if (e.key === "Enter") pfSend()
 $("#pfSaveOpts").onclick = async () => {
   const flags = {};
   $$("[data-pf]").forEach(el => flags[el.dataset.pf] = el.type === "checkbox" ? el.checked : el.type === "number" ? (+el.value || 0) : el.value);
-  try { await api("/api/prefill/settings", {method: "PUT", body: {schedule: $("#pfSchedule").value, flags, server_games: $("#pfServerGames").checked, skip_cached: $("#pfSkipCached").checked, yield: $("#pfYield").checked, yield_mbs: +$("#pfYieldMbs").value || 2, throttle_mbs: +$("#pfThrottleMbs").value || 5, max_mbs: Math.max(0, +$("#pfMaxMbs").value || 0)}}); toast("Gespeichert"); loadPrefill(); }
+  try { await api("/api/prefill/settings", {method: "PUT", body: {schedule: $("#pfSchedule").value, flags, server_games: $("#pfServerGames").checked, skip_cached: $("#pfSkipCached").checked}}); toast("Gespeichert"); loadPrefill(); }
   catch (e) { toast(e.message, true); }
 };
 setInterval(() => { if (view === "prefill" && !document.hidden) loadPrefill(); }, 2000);
