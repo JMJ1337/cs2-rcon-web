@@ -205,7 +205,7 @@ def build(game: str, v: dict, data_dir: str) -> dict:
                f"CS2_MAXPLAYERS={int(v.get('slots') or 20)}", f"CS2_PORT={port}", f"TV_PORT={tv}",
                f"CS2_RCONPW={v['rcon_pw']}", f"CS2_PW={v.get('server_pw') or ''}", "CS2_MAPGROUP=mg_active",
                "CS2_BOT_QUOTA=0", "STEAMAPPVALIDATE=0", "CS2_CHEATS=0", "CS2_SERVER_HIBERNATE=0", "CS2_LAN=0",
-               "TV_ENABLE=1", "TV_DELAY=30", "CS2_LOG=on", f"CS2_ADDITIONAL_ARGS=+game_type {gt} +game_mode {gm}"]
+               "TV_ENABLE=1", "TV_DELAY=30", "TV_PW=", "CS2_LOG=on", f"CS2_ADDITIONAL_ARGS=+game_type {gt} +game_mode {gm}"]
         pub(port, "tcp"); pub(port, "udp"); pub(tv, "udp")
         host["Binds"].append(f"{data_dir}:/home/steam/cs2-dedicated/")
         if v.get("dns"):

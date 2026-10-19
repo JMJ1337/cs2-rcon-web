@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import time
+import urllib.parse
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -1010,6 +1011,7 @@ def _mode_hostname(s: dict, hostname: str | None, mode_label: str, settings: dic
 
 
 _mzlog_set: dict[str, float] = {}
+_tvpw_set: dict[str, float] = {}
 TOOL_PORT = int(os.getenv("TOOL_PORT", "8090"))
 
 
@@ -1139,6 +1141,12 @@ async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = 
             await c.execute(f'matchzy_remote_log_url "{url}"; matchzy_remote_log_header_key "X-GSM-Key"; '
                             f'matchzy_remote_log_header_value "{matchlog.secret(s["id"], SECRET)}"')
             _mzlog_set[s["id"]] = time.time()
+        except RconError:
+            pass
+    if str(cv.get("tv_enable") or "").strip() in ("1", "1.000000") and time.time() - _tvpw_set.get(s["id"], 0) > 600:
+        try:   # Zuschauer brauchen kein Passwort (Image-Standard „changeme“ überschreiben)
+            await c.execute('tv_password ""')
+            _tvpw_set[s["id"]] = time.time()
         except RconError:
             pass
     ws = _last_workshop.get(s["id"])
@@ -4239,15 +4247,17 @@ async def cstv_toggle(sid: str, data: TvIn):
             pass
     if managed:
         def mutate(cfg, hc):
-            env = [e for e in (cfg.get("Env") or []) if not e.startswith(("TV_ENABLE=", "TV_DELAY="))]
-            cfg["Env"] = env + [f"TV_ENABLE={1 if data.on else 0}", f"TV_DELAY={data.delay}"]
+            env = [e for e in (cfg.get("Env") or []) if not e.startswith(("TV_ENABLE=", "TV_DELAY=", "TV_PW="))]
+            pw = next((e.split("=", 1)[1] for e in env if e.startswith("CS2_PW=")), "")
+            # Zuschauer ohne Passwort (Image-Standard wäre „changeme“; zusätzlich per RCON tv_password "")
+            cfg["Env"] = env + [f"TV_ENABLE={1 if data.on else 0}", f"TV_DELAY={data.delay}", "TV_PW="]
         try:
             await docker_api.recreate(s["container"], mutate)
         except docker_api.DockerError as e:
             raise HTTPException(502, str(e))
         drop_client(sid)
         return {"ok": True, "how": "Container neu erstellt – CSTV ist nach dem Start aktiv"}
-    await run(s, f"tv_enable {1 if data.on else 0}; tv_delay {data.delay}")
+    await run(s, f"tv_enable {1 if data.on else 0}; tv_delay {data.delay}; tv_password \"\"")
     return {"ok": True, "how": "Per RCON gesetzt – wirkt ab dem nächsten Mapwechsel. Dauerhaft: im Portainer-Stack TV_ENABLE auf \"1\" stellen."}
 
 
