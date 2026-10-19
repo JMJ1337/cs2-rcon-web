@@ -295,7 +295,7 @@ DU_SH = (
     "cd /data/cache/cache 2>/dev/null || cd /data/cache || exit 1; "
     "set -- */; echo \"TOTAL $#\"; T=0; "
     "P=''; command -v ionice >/dev/null && P='ionice -c2 -n7'; "
-    "for d in \"$@\"; do b=$($P nice -n19 du -sb \"$d\" 2>/dev/null | cut -f1); T=$((T+${b:-0})); echo \"D $T\"; done; "
+    "for d in \"$@\"; do echo \"S $d $(date +%s)\"; b=$($P nice -n19 du -sb \"$d\" 2>/dev/null | cut -f1); T=$((T+${b:-0})); echo \"D $T\"; done; "
     "F=$(find . -maxdepth 1 -type f -printf '%s\\n' 2>/dev/null | awk '{s+=$1} END {print s+0}'); "
     "echo \"END $((T+F))\""
 )
@@ -404,9 +404,13 @@ async def du_status(name: str | None = None) -> dict | None:
     changed = prev.get("changed") or time.time()
     if len(ds) != prev.get("done"):
         changed = time.time()
+    cur = next((ln.split()[1:] for ln in reversed(lines) if ln.startswith("S ")), None)
     storage["du"] = {"active": True, "done": len(ds), "total": total, "bytes": ds[-1] if ds else 0,
                      "started": prev.get("started") or time.time(), "changed": changed,
-                     "stalled": time.time() - changed > 1800}
+                     "stalled": time.time() - changed > 1800,
+                     "current": cur[0] if cur else None,
+                     "current_since": int(cur[1]) if cur and len(cur) > 1 and cur[1].isdigit() else None,
+                     "tail": lines[-3:]}
     return storage["du"]
 
 
