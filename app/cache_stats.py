@@ -7,7 +7,7 @@ from datetime import datetime
 
 import asyncio
 
-from . import cache_history, docker_api
+from . import cache_history, docker_api, store, timings
 
 LOG = "/data/logs/access.log"
 MAX_READ = 20_000_000          # max. Bytes pro Abruf
@@ -288,9 +288,34 @@ def _size(txt: str) -> int | None:
     return int(float(m.group(1)) * {"": 1, "k": 1e3, "m": 1e6, "g": 1e9, "t": 1e12, "p": 1e15}[m.group(2)])
 
 
+DU_OUT = "/tmp/gsm_cache_du.out"
+# Läuft losgelöst IM Lancache-Container weiter (auch wenn das Tool neu startet) und schreibt Fortschritt in DU_OUT:
+# TOTAL <Ordner> · D <Bytes bisher> je fertigem Ordner · END <Bytes>
+DU_SH = (
+    "cd /data/cache/cache 2>/dev/null || cd /data/cache || exit 1; "
+    "set -- */; echo \"TOTAL $#\"; T=0; "
+    "P=''; command -v ionice >/dev/null && P='ionice -c3'; "
+    "for d in \"$@\"; do b=$($P nice -n19 du -sb \"$d\" 2>/dev/null | cut -f1); T=$((T+${b:-0})); echo \"D $T\"; done; "
+    "F=$(find . -maxdepth 1 -type f -printf '%s\\n' 2>/dev/null | awk '{s+=$1} END {print s+0}'); "
+    "echo \"END $((T+F))\""
+)
+
+
+def _load_saved() -> None:
+    d = store.load("cache_storage.json", {})
+    for k in ("measured", "cache_bytes", "method", "fs"):
+        if d.get(k) is not None and storage.get(k) is None:
+            storage[k] = d[k]
+
+
+def _save_measure() -> None:
+    store.save("cache_storage.json", {k: storage.get(k) for k in ("measured", "cache_bytes", "method", "fs")})
+
+
 async def poll_storage(full: bool = False) -> None:
-    """Log-Dateien (billig) messen; den Cache-Ordner nur auf Wunsch (full) – du über viele TB belastet das NAS stark.
-    Sonst wird die Cache-Größe aus den Logs geschätzt (alles aus dem Internet Geholte, begrenzt auf das Limit)."""
+    """Log-Dateien messen und die Belegung des Cache-Dateisystems (df, sofort). full = zusätzlich genau zählen (du,
+    losgelöst im Lancache-Container mit Fortschritt – kann bei vielen Dateien lange dauern)."""
+    _load_saved()
     name = state["container"]
     if not name or storage["running"]:
         return
@@ -301,22 +326,25 @@ async def poll_storage(full: bool = False) -> None:
         storage["limit"] = _size(env.get("CACHE_DISK_SIZE", "")) if env.get("CACHE_DISK_SIZE") else None
         storage["limit_raw"] = env.get("CACHE_DISK_SIZE")
         storage["max_age"] = env.get("CACHE_MAX_AGE")
-        cmd = "for f in /data/logs/*; do [ -f \"$f\" ] && echo \"$(stat -c %s \"$f\")\t$f\"; done; echo '#CACHE'; "
-        if full:
-            # niedrigste I/O- und CPU-Priorität, damit Downloads nicht leiden
-            cmd += "(command -v ionice >/dev/null && ionice -c3 nice -n19 du -sb /data/cache || nice -n19 du -sb /data/cache) 2>/dev/null | tail -1"
-        out = await docker_api.exec_cmd(name, ["sh", "-c", cmd], timeout=3600 if full else 30)
-        logs_part, _, cache_part = out.partition("#CACHE")
+        cmd = ("for f in /data/logs/*; do [ -f \"$f\" ] && echo \"$(stat -c %s \"$f\")\t$f\"; done; echo '#DF'; "
+               "df -B1 -P /data/cache 2>/dev/null | tail -1")
+        out = await docker_api.exec_cmd(name, ["sh", "-c", cmd], timeout=30)
+        logs_part, _, df_part = out.partition("#DF")
         logs = []
         for line in logs_part.splitlines():
             p = line.split("\t", 1)
             if len(p) == 2 and p[0].strip().isdigit():
                 logs.append({"name": p[1].strip().rsplit("/", 1)[-1], "bytes": int(p[0])})
         storage["logs"] = sorted(logs, key=lambda x: -x["bytes"])
-        m = re.match(r"^\s*(\d+)", cache_part.strip())
-        if m:
-            storage["cache_bytes"] = int(m.group(1))
-            storage["measured"] = time.time()
+        f = df_part.split()
+        if len(f) >= 6 and f[2].isdigit():
+            storage["fs"] = {"total": int(f[1]), "used": int(f[2]), "free": int(f[3]), "mount": f[5], "t": time.time()}
+            if full or storage.get("method") != "du":
+                # eigenes Dateisystem für den Cache (z. B. iSCSI-LUN) -> „belegt“ ist praktisch die Cache-Größe
+                storage.update(cache_bytes=int(f[2]), measured=time.time(), method="df")
+                _save_measure()
+        if full:
+            await du_start(name)
         storage["updated"] = time.time()
         storage["error"] = None
     except (docker_api.DockerError, ValueError) as e:
@@ -324,6 +352,57 @@ async def poll_storage(full: bool = False) -> None:
         storage["updated"] = time.time()
     finally:
         storage["running"] = False
+
+
+async def du_start(name: str) -> None:
+    """Genaues Zählen losgelöst starten (läuft im Lancache-Container weiter)."""
+    st = await du_status(name)
+    if st and st.get("active"):
+        return
+    body = {"Cmd": ["sh", "-c", f"( {DU_SH} ) > {DU_OUT}.tmp 2>&1; mv {DU_OUT}.tmp {DU_OUT}"], "AttachStdout": False, "AttachStderr": False}
+    e = (await docker_api._req("POST", f"/containers/{name}/exec", json=body)).json()
+    await docker_api._req("POST", f"/exec/{e['Id']}/start", json={"Detach": True, "Tty": False})
+    storage["du"] = {"active": True, "done": 0, "total": None, "bytes": 0, "started": time.time(), "changed": time.time()}
+
+
+async def du_status(name: str | None = None) -> dict | None:
+    """Fortschritt des genauen Zählens lesen; ist es fertig, Ergebnis übernehmen."""
+    name = name or state["container"]
+    if not name:
+        return None
+    try:
+        out = await docker_api.exec_cmd(name, ["sh", "-c", f"cat {DU_OUT}.tmp 2>/dev/null || (echo '#FINAL'; cat {DU_OUT} 2>/dev/null)"], timeout=15)
+    except docker_api.DockerError:
+        return storage.get("du")
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    final = bool(lines) and lines[0] == "#FINAL"
+    total = next((int(ln.split()[1]) for ln in lines if ln.startswith("TOTAL ") and ln.split()[1].isdigit()), None)
+    ds = [int(ln.split()[1]) for ln in lines if ln.startswith("D ") and ln.split()[1].isdigit()]
+    end = next((int(ln.split()[1]) for ln in lines if ln.startswith("END ") and ln.split()[1].isdigit()), None)
+    prev = storage.get("du") or {}
+    if final:
+        if end is not None:
+            done_t = prev.get("finished") or time.time()
+            if prev.get("active") or storage.get("method") != "du" or not storage.get("measured"):
+                storage.update(cache_bytes=end, measured=done_t, method="du")
+                _save_measure()
+                if prev.get("active") and prev.get("started"):
+                    timings.record("cache_measure", "full", done_t - prev["started"])
+            storage["du"] = {"active": False, "done": total, "total": total, "bytes": end, "finished": done_t,
+                             "started": prev.get("started")}
+        else:
+            storage["du"] = {**prev, "active": False}
+        return storage["du"]
+    if total is None and not ds:
+        storage["du"] = {**prev, "active": False} if not lines else prev
+        return storage["du"]
+    changed = prev.get("changed") or time.time()
+    if len(ds) != prev.get("done"):
+        changed = time.time()
+    storage["du"] = {"active": True, "done": len(ds), "total": total, "bytes": ds[-1] if ds else 0,
+                     "started": prev.get("started") or time.time(), "changed": changed,
+                     "stalled": time.time() - changed > 1800}
+    return storage["du"]
 
 
 _dbf_running = False

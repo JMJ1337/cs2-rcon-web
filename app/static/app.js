@@ -624,10 +624,20 @@ function storageCard(st, disk){
   const measured = st.cache_bytes != null && st.measured;
   const val = measured ? st.cache_bytes : st.estimate;
   const lim = st.limit, pct = lim && val != null ? Math.min(100, Math.round(val / lim * 100)) : null;
-  return `<div class="card" title="${measured ? "Gemessen " + new Date(st.measured * 1000).toLocaleString("de-DE") : "Geschätzt aus den Logs (alles, was in den Cache geladen wurde) – ohne Festplattenzugriff"}">
+  const du = st.du || {};
+  const how = st.method === "du" ? "genau gezählt" : st.method === "df" ? "Belegung des Cache-Dateisystems" : "";
+  const when = measured ? new Date(st.measured * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"}) : "";
+  const duBar = du.active ? (() => {
+    const p = du.total ? Math.min(100, du.done / du.total * 100) : 0;
+    return `<div class="dubar" title="Zählt Ordner für Ordner (${du.done}/${du.total || "?"}) mit niedrigster Priorität${du.stalled ? " – seit über 30 min kein Fortschritt" : ""}">
+      <div class="bar"><i style="width:${p.toFixed(1)}%;background:${du.stalled ? "var(--accent)" : "var(--ct)"}"></i></div>
+      <div class="hint">wird genau gezählt … ${p.toFixed(0)} % · bisher ${fmtBytes(du.bytes)}${du.started ? " · seit " + new Date(du.started * 1000).toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit"}) : ""}${du.stalled ? " · ⚠ hängt?" : ""}</div></div>`;
+  })() : "";
+  return `<div class="card" title="${measured ? `${how}, ${when}` : "Geschätzt aus den Logs (alles, was in den Cache geladen wurde) – ohne Festplattenzugriff"}">
     <div class="k">Cache-Ordner${lim ? " (Limit " + esc(st.limit_raw || fmtBytes(lim)) + ")" : ""}</div><div class="v">${val != null ? (measured ? "" : "≈ ") + fmtBytes(val) : "–"}</div>
     ${pct != null ? `<div class="bar" style="margin-top:6px"><i class="${lvl(pct)}" style="width:${pct}%"></i></div>` : ""}
-    <div class="s">${pct != null ? pct + " % vom Limit · " : ""}Logs ${fmtBytes(logs)} · ${st.busy ? "wird gemessen …" : `<a href="#" onclick="measureCache();return false" title="Zählt den Ordner einmal genau – mit niedrigster I/O-Priorität, dauert bei vielen TB lange">genau messen</a>`}</div></div>`;
+    <div class="s">${pct != null ? pct + " % vom Limit · " : ""}${measured ? `${how} ${when} · ` : ""}Logs ${fmtBytes(logs)} · ${st.busy ? "misst …" : du.active ? "" : `<a href="#" onclick="measureCache();return false" title="Sofort: Belegung des Cache-Dateisystems. Dazu genaues Zählen aller Dateien mit niedrigster Priorität (läuft im Hintergrund weiter)">messen</a>`}</div>
+    ${duBar}</div>`;
 }
 /* ---- Dauer früherer Läufe (vor dem Start anzeigen) ---- */
 let TIMINGS = {}, timingsAt = 0;
@@ -652,9 +662,20 @@ async function tplRefresh(){
 }
 async function measureCache(){
   await loadTimings(true);
-  const d = durText("cache_measure", "full", "Letzte Messung");
+  const d = durText("cache_measure", "full", "Letztes genaues Zählen");
   if (d && !confirm(d + "\nJetzt messen?")) return;
-  try { await api("/api/cache/measure", {method: "POST"}); toast("Messung läuft im Hintergrund (niedrige Priorität)"); } catch (e) { toast(e.message, true); }
+  try {
+    const r = await api("/api/cache/measure", {method: "POST"});
+    const st = r.storage || {};
+    toast(`Cache belegt ${fmtBytes(st.cache_bytes)} (Dateisystem) – genaues Zählen läuft im Hintergrund weiter`);
+  } catch (e) { toast(e.message, true); }
+  refreshCache(); if (view === "cache") loadCacheHistory();
+  clearInterval(window._duTimer);
+  window._duTimer = setInterval(async () => {          // Fortschritt nachziehen, bis fertig
+    if (view === "cache") await loadCacheHistory();
+    const c = cacheData && cacheData.storage;
+    if (!c || !(c.du && c.du.active)) { clearInterval(window._duTimer); if (view === "cache") loadCacheHistory(); }
+  }, 15000);
 }
 async function loadGameIcons(extra = []){
   try { const r = await api("/api/gameicons?apps=" + extra.join(",")); ICONS_URL.apps = {...ICONS_URL.apps, ...r.apps}; ICONS_URL.games = r.games; } catch {}

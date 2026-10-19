@@ -64,6 +64,7 @@ async def lifespan(_app):
              asyncio.create_task(player_loop()), asyncio.create_task(monitor_loop()),
              asyncio.create_task(gslt_loop()), asyncio.create_task(backup_loop()),
              asyncio.create_task(_names_loop())] if WATCH_ENABLED else []
+    _cache_du_watch()
     try:
         _resume_jobs()
     except Exception:  # noqa: BLE001
@@ -2334,14 +2335,36 @@ def _storage_view() -> dict:
 
 @app.post("/api/cache/measure", dependencies=auth)
 async def cache_measure():
-    """Cache-Ordner einmal genau messen (du, niedrige I/O-Priorität – dauert bei vielen TB lange)."""
-    if cache_stats.storage["running"]:
-        return {"ok": True, "busy": True}
-    async def _measure():
-        with timings.Timer("cache_measure", "full"):
-            await cache_stats.poll_storage(full=True)
-    asyncio.create_task(_measure())
-    return {"ok": True}
+    """Cache messen: sofort die Belegung des Cache-Dateisystems (df), dazu genaues Zählen (du) losgelöst
+    im Lancache-Container mit Fortschritt – läuft auch weiter, wenn das Tool neu startet."""
+    await cache_stats.poll_storage(full=True)
+    if cache_stats.storage.get("error"):
+        raise HTTPException(502, cache_stats.storage["error"])
+    _cache_du_watch()
+    return {"ok": True, "storage": _storage_view()}
+
+
+_du_task: asyncio.Task | None = None
+
+
+def _cache_du_watch() -> None:
+    """Fortschritt des genauen Zählens alle 10 s abholen, bis es fertig ist."""
+    global _du_task
+    if _du_task and not _du_task.done():
+        return
+
+    async def run():
+        await asyncio.sleep(3)
+        for _ in range(6 * 60 * 12):           # höchstens 12 h
+            try:
+                st = await cache_stats.du_status()
+            except Exception:  # noqa: BLE001
+                st = None
+            if not st or not st.get("active"):
+                cache_model._cache["t"] = 0      # Schätzung mit dem neuen Messwert neu rechnen
+                return
+            await asyncio.sleep(10)
+    _du_task = asyncio.create_task(run())
 
 
 def _enrich_games(games: list[dict]) -> list[dict]:

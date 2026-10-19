@@ -558,3 +558,4 @@ aside .head .logo{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space
 .fldrow>*{min-width:0}
 .fldrow .pill{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;justify-self:end}
 .fldrow>button,.fldrow>span:last-child{justify-self:end}
+.dubar{margin-top:6px}.dubar .bar{height:5px}.dubar .hint{font-size:11px;margin-top:2px}
