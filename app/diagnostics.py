@@ -49,7 +49,7 @@ RULES = [
     (("satisfactory",), r"(Failed to bind to|LogNet: Error)",
      "Satisfactory-Netzwerkfehler", "Ports 7777 TCP+UDP und 8888 TCP prüfen (nicht doppelt belegt) und Container neu starten."),
 ]
-IGNORE = re.compile(r"(exclusive lock on .*Bad file descriptor|GU resource .* version mismatch|\[S_API FAIL\]|flock /sys/devices|SteamAPI_Init|breakpad|ConVarRef|Unknown command)", re.I)
+IGNORE = re.compile(r"(Failed to initialize SSL state|exclusive lock on .*Bad file descriptor|GU resource .* version mismatch|\[S_API FAIL\]|flock /sys/devices|SteamAPI_Init|breakpad|ConVarRef|Unknown command)", re.I)
 _COMPILED = [(g, re.compile(p, re.I), t, s) for g, p, t, s in RULES]
 
 state: dict[str, dict] = {}     # Container -> {"problems": [...], "checked": t}
