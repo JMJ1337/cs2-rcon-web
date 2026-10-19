@@ -13,6 +13,7 @@ _h: dict[int, dict] = {}          # Stunde -> {hb, mb, hr, mr, svc:{name:[h,m]}}
 _ips: dict[int, dict] = {}        # Tag -> {ip: bytes}
 _disk: dict[int, dict] = {}       # Tag -> {used,total}
 _ipdep: dict[int, dict] = {}      # Tag -> {ip: {depot/spiel: bytes}}  (was hat welcher Client geladen)
+_ipname: dict[int, dict] = {}     # Tag -> {ip: Rechnername an dem Tag} (DHCP vergibt IPs neu)
 meta = {"watermark": 0.0, "bf_cut": None, "bf_done": False, "bf_pos": 0, "bf_size": 0, "bf_lines": 0,
         "bf_error": None, "since": None}
 _loaded = False
@@ -33,6 +34,8 @@ def load():
         _disk[int(k)] = v
     for k, v in (raw.get("ipdep") or {}).items():
         _ipdep[int(k)] = v
+    for k, v in (raw.get("ipname") or {}).items():
+        _ipname[int(k)] = v
     meta.update(raw.get("meta") or {})
     _loaded = True
 
@@ -170,6 +173,8 @@ def prune():
         del _disk[k]
     for k in [k for k in _ipdep if k < (now_h - KEEP_H) // 24]:
         del _ipdep[k]
+    for k in [k for k in _ipname if k < (now_h - KEEP_H) // 24]:
+        del _ipname[k]
     # Client-Listen pro Tag klein halten
     for day, d in _ips.items():
         if len(d) > IP_CAP * 4 and day < now_h // 24:
@@ -184,9 +189,26 @@ def maybe_save(force=False):
         prune()
         store.save(FILE, {"hours": {str(k): v for k, v in _h.items()}, "ips": {str(k): v for k, v in _ips.items()},
                           "disk": {str(k): v for k, v in _disk.items()},
-                          "ipdep": {str(k): v for k, v in _ipdep.items()}, "meta": meta})
+                          "ipdep": {str(k): v for k, v in _ipdep.items()},
+                          "ipname": {str(k): v for k, v in _ipname.items()}, "meta": meta})
         _last_save = time.time()
         _dirty = False
+
+
+def ips_today() -> list[str]:
+    load()
+    return list((_ips.get(int(time.time() // 86400)) or {}).keys())
+
+
+def note_names(names: dict) -> None:
+    """Heutige Rechnernamen festhalten (nur gefundene Namen)."""
+    global _dirty
+    day = int(time.time() // 86400)
+    d = _ipname.setdefault(day, {})
+    for ip, nm in names.items():
+        if nm and d.get(ip) != nm:
+            d[ip] = nm
+            _dirty = True
 
 
 RANGES = {"24h": (24, 1), "7d": (7 * 24, 6), "30d": (30 * 24, 24), "90d": (90 * 24, 24), "365d": (365 * 24, 24 * 7)}
@@ -229,17 +251,20 @@ def series(rng: str) -> dict:
     for x in range(first, now_h + 1):
         for dpt, (a, m) in ((_h.get(x) or {}).get("dep") or {}).items():
             deps[dpt][0] += a; deps[dpt][1] += m
+    # Client = (IP, Name an dem Tag): eine IP, die per DHCP den Rechner gewechselt hat, wird getrennt gezählt
     ips = defaultdict(int)
+    ipdep: dict = defaultdict(lambda: defaultdict(int))
     for day, d in _ips.items():
         if day * 24 + 23 >= first:
+            nm = _ipname.get(day) or {}
             for ip, v in d.items():
-                ips[ip] += v
-    ipdep: dict = defaultdict(lambda: defaultdict(int))
+                ips[(ip, nm.get(ip))] += v
     for day, d in _ipdep.items():
         if day * 24 + 23 >= first:
+            nm = _ipname.get(day) or {}
             for ip, idep in d.items():
                 for dp, v in idep.items():
-                    ipdep[ip][dp] += v
+                    ipdep[(ip, nm.get(ip))][dp] += v
     disk = [{"t": d * 86400, **v} for d, v in sorted(_disk.items()) if d * 24 + 23 >= first]
     total = tot["hit"] + tot["miss"]
     days = max(1, hours / 24)
@@ -251,7 +276,8 @@ def series(rng: str) -> dict:
         "peak": {"t": peak_h * 3600 if peak_h is not None else None, "bytes": peak_v, "bps": round(peak_v / 3600)},
         "services": sorted(({"name": s, "hit": a, "miss": m} for s, (a, m) in svc.items()),
                            key=lambda x: -(x["hit"] + x["miss"]))[:15],
-        "clients": sorted(({"ip": ip, "bytes": v, "deps": dict(ipdep.get(ip) or {})} for ip, v in ips.items()), key=lambda x: -x["bytes"])[:25],
+        "clients": sorted(({"ip": ip, "name_then": nm, "bytes": v, "deps": dict(ipdep.get((ip, nm)) or {})}
+                           for (ip, nm), v in ips.items()), key=lambda x: -x["bytes"])[:40],
         "depots": {d: v for d, v in deps.items()},
         "disk": disk,
         "since": meta.get("since"),

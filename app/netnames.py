@@ -9,7 +9,7 @@ import time
 from . import docker_api
 
 _cache: dict[str, tuple[float, str | None]] = {}
-TTL_OK, TTL_FAIL = 3600, 600
+TTL_OK, TTL_FAIL = 900, 300
 
 
 def _nbstat_packet() -> bytes:
@@ -69,6 +69,45 @@ async def rdns(ip: str, timeout=1.0) -> str | None:
     return name
 
 
+async def forward(name: str, timeout=1.0) -> list[str]:
+    loop = asyncio.get_running_loop()
+    try:
+        infos = await asyncio.wait_for(loop.run_in_executor(None, socket.getaddrinfo, name, None, socket.AF_INET), timeout)
+    except (OSError, asyncio.TimeoutError):
+        return []
+    return sorted({i[4][0] for i in infos})
+
+
+def _short(name: str) -> str:
+    return name if name.replace(".", "").isdigit() else name.split(".")[0]
+
+
+async def check(ip: str) -> dict:
+    """Diagnose: was liefern DNS (PTR + Gegenprobe) und NetBIOS für diese IP?"""
+    ptr, nb = await asyncio.gather(rdns(ip), netbios(ip))
+    fwd = await forward(ptr) if ptr else []
+    return {"ip": ip, "ptr": ptr, "ptr_forward": fwd, "ptr_confirmed": ip in fwd, "netbios": nb,
+            "chosen": await _resolve(ip, force=True)}
+
+
+async def _resolve(ip: str, force: bool = False) -> str | None:
+    """Name ermitteln. Privat: NetBIOS (der Rechner antwortet selbst) vor DNS. DNS-Namen nur, wenn
+    die Gegenprobe (Name -> IP) dieselbe IP liefert – sonst ist der PTR-Eintrag veraltet (DHCP hat die IP neu vergeben)."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return None
+    if addr.is_private:
+        ptr, nb = await asyncio.gather(rdns(ip), netbios(ip))
+    else:
+        ptr, nb = await rdns(ip), None
+    if nb:
+        return nb.strip()
+    if ptr and ip in await forward(ptr):
+        return _short(ptr)
+    return None
+
+
 _containers: dict[str, str] = {}
 _containers_at = 0.0
 
@@ -105,15 +144,7 @@ async def name_of(ip: str, host_ips: set[str] | None = None) -> str | None:
     hit = _cache.get(ip)
     if hit and time.time() - hit[0] < (TTL_OK if hit[1] else TTL_FAIL):
         return hit[1]
-    try:
-        addr = ipaddress.ip_address(ip)
-    except ValueError:
-        return None
-    name = await rdns(ip)
-    if name:
-        name = name.split(".")[0] if not name.replace(".", "").isdigit() else name
-    elif addr.is_private:
-        name = await netbios(ip)
+    name = await _resolve(ip)
     _cache[ip] = (time.time(), name)
     return name
 

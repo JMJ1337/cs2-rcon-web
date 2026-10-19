@@ -60,7 +60,8 @@ async def lifespan(_app):
     tasks = [asyncio.create_task(watcher()), asyncio.create_task(scan_loop()),
              asyncio.create_task(load_loop()), asyncio.create_task(live_loop()),
              asyncio.create_task(player_loop()), asyncio.create_task(monitor_loop()),
-             asyncio.create_task(gslt_loop()), asyncio.create_task(backup_loop())] if WATCH_ENABLED else []
+             asyncio.create_task(gslt_loop()), asyncio.create_task(backup_loop()),
+             asyncio.create_task(_names_loop())] if WATCH_ENABLED else []
     try:
         _resume_jobs()
     except Exception:  # noqa: BLE001
@@ -2184,8 +2185,48 @@ async def cache_history_api(range: str = "30d"):
     out["storage"] = _storage_view()
     out["games"] = _enrich_games(depots.games(out.pop("depots", {}) or {})[:30])
     asyncio.create_task(depots.run())
-    out["clients"] = _merge_clients(await netnames.annotate(out["clients"], {x["host"] for x in load_servers()}))
+    out["clients"] = _merge_clients(await _hist_names(out["clients"]))
     return out
+
+
+async def _names_loop():
+    """Alle 5 Minuten: Rechnernamen der heutigen Cache-Clients festhalten (DHCP vergibt IPs später neu)."""
+    await asyncio.sleep(30)
+    while True:
+        try:
+            ips = cache_history.ips_today()
+            if ips:
+                ann = await netnames.annotate([{"ip": i} for i in ips], {x["host"] for x in load_servers()})
+                cache_history.note_names({a["ip"]: a["name"] for a in ann})
+        except Exception:  # noqa: BLE001
+            log.exception("Rechnernamen")
+        await asyncio.sleep(300)
+
+
+async def _hist_names(clients: list[dict]) -> list[dict]:
+    """Name vom jeweiligen Tag; ohne gespeicherten Namen den heutigen nur, wenn die IP heute aktiv war."""
+    today = set(cache_history.ips_today())
+    need = [c for c in clients if not c.get("name_then")]
+    ann = {a["ip"]: a["name"] for a in await netnames.annotate([{"ip": c["ip"]} for c in need], {x["host"] for x in load_servers()})}
+    out = []
+    for c in clients:
+        nm = c.get("name_then")
+        if not nm:
+            cur = ann.get(c["ip"])
+            nm = cur if (cur and (c["ip"] in today or cur.startswith(("Docker", "Container")))) else None
+        out.append({**c, "name": nm})
+    return out
+
+
+@app.get("/api/netnames/check", dependencies=auth)
+async def netnames_check(ip: str = ""):
+    """Diagnose der Namensauflösung (PTR, Gegenprobe, NetBIOS) – ohne IP: alle heutigen Cache-Clients."""
+    ips = [ip] if ip else cache_history.ips_today()[:40]
+    try:
+        resolv = open("/etc/resolv.conf").read()
+    except OSError:
+        resolv = ""
+    return {"resolv": resolv, "results": await asyncio.gather(*(netnames.check(i) for i in ips))}
 
 
 def _merge_clients(clients: list[dict]) -> list[dict]:
