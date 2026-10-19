@@ -13,7 +13,7 @@ dem Verlauf (pro Stunde, pro Depot: aus dem Cache / aus dem Internet) nachgerech
 import re
 import time
 
-from . import cache_history, cache_stats, depots
+from . import cache_history, cache_stats, depots, store
 
 OLD = "_alt"          # Daten von vor Beginn der Aufzeichnung (aus der Messung abgeleitet)
 BURST_H = 6          # Lücke in Stunden, ab der ein neuer Download-Durchgang beginnt
@@ -36,7 +36,7 @@ def _age_h(txt) -> int | None:
     return max(1, int(n * {"s": 1 / 3600, "m": 1 / 60, "h": 1, "d": 24, "w": 168, "M": 720, "y": 8760}[u]))
 
 
-def _sim(limit, max_age_h, offset: float = 0.0, until: int | None = None) -> dict:
+def _sim(limit, max_age_h, offset: float = 0.0, until: int | None = None, inv: dict | None = None) -> dict:
     stored: dict[str, float] = {}
     last: dict[str, int] = {}
     hours = sorted(h for h in cache_history._h if (cache_history._h[h] or {}).get("dep"))
@@ -56,9 +56,26 @@ def _sim(limit, max_age_h, offset: float = 0.0, until: int | None = None) -> dic
         ev_sum[k] = ev_sum.get(k, 0) + take
         evicted.append({"t": hour * 3600, "key": k, "bytes": take, "why": why})
 
+    inv_h = int(inv["t"] // 3600) if inv else None
     for hour in hours + [int(time.time() // 3600)]:
         if until is not None and hour > until:
             break
+        if inv_h is not None and hour >= inv_h:
+            # Abgleich mit dem echten Cache-Inhalt (Stichprobe): ab hier zählt, was wirklich drin liegt
+            real: dict[str, float] = {}
+            for d, v in (inv.get("depots") or {}).items():
+                real[_key(d)] = real.get(_key(d), 0) + v
+            for k in list(stored):
+                if k not in real and stored[k] > 0:
+                    drop(k, stored[k], inv_h, "nicht mehr im Cache")
+            stored.clear()
+            stored.update(real)
+            if inv.get("unknown"):
+                stored[OLD] = inv["unknown"]
+                last[OLD] = (hours[0] - 1) if hours else inv_h - 1
+            for k in real:
+                last.setdefault(k, (hours[0] - 1) if hours else inv_h - 1)
+            inv_h = None
         dep = (cache_history._h.get(hour) or {}).get("dep") or {}
         per: dict[str, list] = {}
         for d, (h, m) in dep.items():
@@ -107,14 +124,18 @@ def model(force: bool = False) -> dict:
     max_age_h = _age_h(cache_stats.storage.get("max_age"))
     meas, mt = cache_stats.storage.get("cache_bytes"), cache_stats.storage.get("measured")
     offset = 0.0
-    if meas and mt:
+    inv = store.load("cache_inventory.json", {}) or None
+    if inv and not inv.get("depots"):
+        inv = None
+    if meas and mt and not (inv and inv["t"] >= mt - 3600):
         # Abgleich mit der echten Messung: was der Verlauf nicht kennt, ist ältere Daten von vor der Aufzeichnung
         at = _sim(limit, max_age_h, 0.0, int(mt // 3600))
         offset = max(0.0, meas - sum(at["stored"].values()))
-    r = _sim(limit, max_age_h, offset)
+    r = _sim(limit, max_age_h, offset, inv=inv)
     data = {"stored": r["stored"], "last": {k: v * 3600 for k, v in r["last"].items()}, "full": r["full"], "limit": limit,
             "max_age": cache_stats.storage.get("max_age"), "total": sum(r["stored"].values()), "offset": offset,
-            "measured": meas, "measured_at": mt, "evicted": r["evicted"][-300:], "evicted_sum": r["evicted_sum"]}
+            "measured": meas, "measured_at": mt, "inventory_at": inv["t"] if inv else None,
+            "inventory_sample": f"{inv['sample_dirs']}/{inv['dirs']}" if inv else None, "evicted": r["evicted"][-300:], "evicted_sum": r["evicted_sum"]}
     _cache.update(t=time.time(), data=data)
     return data
 

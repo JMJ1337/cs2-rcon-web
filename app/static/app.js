@@ -624,7 +624,7 @@ function storageCard(st, disk){
   const measured = st.cache_bytes != null && st.measured;
   const val = measured ? st.cache_bytes : st.estimate;
   const lim = st.limit, pct = lim && val != null ? Math.min(100, Math.round(val / lim * 100)) : null;
-  const du = st.du || {};
+  const du = st.du || {}, iv = st.inventory || {};
   const how = st.method === "du" ? "genau gezählt" : st.method === "df" ? "gemessen" : "";
   const when = measured ? new Date(st.measured * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"}) : "";
   const duBar = du.active ? (() => {
@@ -637,7 +637,10 @@ function storageCard(st, disk){
     <div class="k">Cache-Ordner${lim ? " (Limit " + esc(st.limit_raw || fmtBytes(lim)) + ")" : ""}</div><div class="v">${val != null ? (measured ? "" : "≈ ") + fmtBytes(val) : "–"}</div>
     ${pct != null ? `<div class="bar" style="margin-top:6px"><i class="${lvl(pct)}" style="width:${pct}%"></i></div>` : ""}
     <div class="s">${pct != null ? pct + " % vom Limit · " : ""}${measured ? `${how} ${when} · ` : ""}Logs ${fmtBytes(logs)} · ${st.busy ? "misst …" : du.active ? "" : `<a href="#" onclick="measureCache();return false" title="Belegung des Cache-Datenträgers messen (dauert eine Sekunde – der Cache liegt auf eigenem Datenträger)">messen</a>`}</div>
-    ${duBar}</div>`;
+    ${duBar}${iv.running ? `<div class="dubar" title="Liest eine gleichmäßig verteilte Stichprobe der Cache-Dateien (1/256) und erkennt daran, welche Spiele wirklich im Cache liegen">
+      <div class="bar"><i style="width:${(iv.done / (iv.total || 256) * 100).toFixed(1)}%;background:var(--ct)"></i></div>
+      <div class="hint">Inhalt wird abgeglichen … ${iv.done}/${iv.total || 256} Ordner</div></div>`
+      : iv.last ? `<div class="hint" style="font-size:11px;margin-top:4px">Inhalt abgeglichen ${new Date(iv.last * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"})} (Stichprobe ${esc(iv.sample || "")}, ${iv.files || 0} Dateien)${iv.error ? " · ⚠ " + esc(iv.error) : ""}</div>` : ""}</div>`;
 }
 /* ---- Dauer früherer Läufe (vor dem Start anzeigen) ---- */
 let TIMINGS = {}, timingsAt = 0;
@@ -666,14 +669,15 @@ async function measureCache(){
   try {
     const r = await api("/api/cache/measure", {method: "POST"});
     const st = r.storage || {};
-    toast(`Cache belegt ${fmtBytes(st.cache_bytes)} (gemessen am Cache-Datenträger)`);
+    toast(`Cache belegt ${fmtBytes(st.cache_bytes)} – Inhalt wird jetzt per Stichprobe abgeglichen (einige Minuten)`);
   } catch (e) { toast(e.message, true); }
   refreshCache(); if (view === "cache") loadCacheHistory();
   clearInterval(window._duTimer);
   window._duTimer = setInterval(async () => {          // Fortschritt nachziehen, bis fertig
     if (view === "cache") await loadCacheHistory();
+    await refreshCache();
     const c = cacheData && cacheData.storage;
-    if (!c || !(c.du && c.du.active)) { clearInterval(window._duTimer); if (view === "cache") loadCacheHistory(); }
+    if (!c || !(c.inventory && c.inventory.running)) { clearInterval(window._duTimer); if (view === "cache") loadCacheHistory(); }
   }, 15000);
 }
 async function loadGameIcons(extra = []){
@@ -705,9 +709,9 @@ function gamesTable(list, label){
 function evictHtml(m){
   if (!m) return "";
   const lim = m.limit, ev = m.evictions || [];
-  return `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:6px">Was hat der Cache gelöscht? <span class="hint">Schätzung · belegt ≈ ${fmtBytes(m.total)}${lim ? " von " + fmtBytes(lim) : ""}${m.measured ? ` · gemessen ${fmtBytes(m.measured)} am ${new Date(m.measured_at * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"})}` : " · noch nicht genau gemessen"}${m.offset > 1e9 ? ` · davon ${fmtBytes(m.offset)} ältere Daten von vor der Aufzeichnung` : ""}</span></h2>
+  return `<div class="panel" style="padding:12px 16px;margin-bottom:14px"><h2 style="margin-bottom:6px">Was hat der Cache gelöscht? <span class="hint">Schätzung · belegt ≈ ${fmtBytes(m.total)}${lim ? " von " + fmtBytes(lim) : ""}${m.measured ? ` · gemessen ${fmtBytes(m.measured)} am ${new Date(m.measured_at * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"})}` : " · noch nicht genau gemessen"}${m.offset > 1e9 ? ` · davon ${fmtBytes(m.offset)} ältere Daten von vor der Aufzeichnung` : ""}${m.inventory_at ? ` · Inhalt abgeglichen ${new Date(m.inventory_at * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"})}` : ""}</span></h2>
     <div class="hint" style="margin-bottom:8px">Der Lancache löscht still (ohne Logeintrag), sobald das Limit erreicht ist – und zwar die Daten, die am längsten <b>nicht mehr benutzt</b> wurden (LRU), nicht einfach die ältesten. Jedes Laden aus dem Cache zählt als Benutzung. ${m.max_age ? `Außerdem fliegt alles, was ${esc(m.max_age)} lang nicht benutzt wurde. ` : ""}Hier wird das aus dem Verlauf nachgerechnet und mit der genauen Messung abgeglichen (Daten, die der Verlauf nicht kennt, gelten als die ältesten).</div>
-    ${ev.length ? `<table class="cachetable"><thead><tr><th>Spiel</th><th>gelöscht</th><th>Grund</th><th>wann (etwa)</th></tr></thead><tbody>${ev.map(e => `<tr><td><div class="row" style="gap:8px;flex-wrap:nowrap">${e.app ? appIcon(e.app, 20) : ""}<b>${esc(e.name)}</b></div></td><td class="mono">${fmtBytes(e.bytes)}</td><td class="hint">${e.why === "abgelaufen" ? "zu lange unbenutzt" : "Cache voll"}</td><td class="hint">${new Date(e.t * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"})}</td></tr>`).join("")}</tbody></table>`
+    ${ev.length ? `<table class="cachetable"><thead><tr><th>Spiel</th><th>gelöscht</th><th>Grund</th><th>wann (etwa)</th></tr></thead><tbody>${ev.map(e => `<tr><td><div class="row" style="gap:8px;flex-wrap:nowrap">${e.app ? appIcon(e.app, 20) : ""}<b>${esc(e.name)}</b></div></td><td class="mono">${fmtBytes(e.bytes)}</td><td class="hint">${e.why === "abgelaufen" ? "zu lange unbenutzt" : e.why === "nicht mehr im Cache" ? "beim Abgleich nicht gefunden" : "Cache voll"}</td><td class="hint">${new Date(e.t * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"})}</td></tr>`).join("")}</tbody></table>`
       : `<div class="hint">Bisher nichts – ${lim && m.total < lim ? `es sind noch ≈ ${fmtBytes(lim - m.total)} frei` : "der Cache war laut Verlauf noch nicht voll"}.</div>`}</div>`;
 }
 function savedCard(bytes, label){

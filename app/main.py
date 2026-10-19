@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import mapimages, gslt, matchlog, steamlist, playerdb, notify, prefill_more
-from . import cache_model, timings
+from . import cache_model, cache_inventory, timings
 from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
@@ -64,6 +64,7 @@ async def lifespan(_app):
              asyncio.create_task(player_loop()), asyncio.create_task(monitor_loop()),
              asyncio.create_task(gslt_loop()), asyncio.create_task(backup_loop()),
              asyncio.create_task(_names_loop())] if WATCH_ENABLED else []
+    _inv_watch()
     try:
         _resume_jobs()
     except Exception:  # noqa: BLE001
@@ -1503,6 +1504,11 @@ async def load_loop():
                 await _prefill_queue_tick()
                 if n % 12 == 0:
                     await _record_prefill_times()
+                    inv_t = cache_inventory.saved().get("t") or 0
+                    if time.strftime("%H") == "04" and time.time() - inv_t > 20 * 3600 and not cache_inventory.state.get("running"):
+                        await cache_stats.poll_storage(full=True)      # nachts: Belegung messen + Inhalt abgleichen
+                        await cache_inventory.start()
+                        _inv_watch()
                     await _tpl_tick()
             except docker_api.DockerError:
                 pass
@@ -2329,6 +2335,9 @@ def _storage_view() -> dict:
     if est is not None and st.get("limit"):
         est = min(est, st["limit"])
     st["estimate"] = est
+    inv = cache_inventory.saved()
+    st["inventory"] = {**cache_inventory.state, "last": inv.get("t"), "sample": f"{inv.get('sample_dirs')}/{inv.get('dirs')}" if inv else None,
+                       "files": inv.get("files")}
     return st
 
 
@@ -2339,7 +2348,37 @@ async def cache_measure():
     await cache_stats.poll_storage(full=True)
     if cache_stats.storage.get("error"):
         raise HTTPException(502, cache_stats.storage["error"])
+    if not cache_inventory.state.get("running"):
+        try:
+            await cache_inventory.start()
+        except docker_api.DockerError as e:
+            cache_inventory.state["error"] = str(e)[:200]
+    _inv_watch()
     return {"ok": True, "storage": _storage_view()}
+
+
+_inv_task: asyncio.Task | None = None
+
+
+def _inv_watch() -> None:
+    """Stichprobe des Cache-Inhalts verfolgen, bis sie fertig ist (läuft im Lancache-Container)."""
+    global _inv_task
+    if _inv_task and not _inv_task.done():
+        return
+
+    async def run():
+        t0 = time.time()
+        await asyncio.sleep(5)
+        while time.time() - t0 < 6 * 3600:
+            st = await cache_inventory.poll()
+            if not st.get("running"):
+                cache_model._cache["t"] = 0
+                _cg_cache["t"] = 0
+                if not st.get("error"):
+                    timings.record("cache_inventory", "sample", time.time() - (st.get("started") or t0))
+                return
+            await asyncio.sleep(15)
+    _inv_task = asyncio.create_task(run())
 
 
 _du_task: asyncio.Task | None = None
