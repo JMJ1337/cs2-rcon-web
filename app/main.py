@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import mapimages, gslt, matchlog, steamlist, playerdb, notify, prefill_more
-from . import cache_model
+from . import cache_model, timings
 from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
@@ -1502,6 +1502,7 @@ async def load_loop():
                 await prefill.yield_check(cd.get("tx_bps"), prx, dls, _lan_client_tx(lh))
                 await _prefill_queue_tick()
                 if n % 12 == 0:
+                    await _record_prefill_times()
                     await _tpl_tick()
             except docker_api.DockerError:
                 pass
@@ -2326,7 +2327,10 @@ async def cache_measure():
     """Cache-Ordner einmal genau messen (du, niedrige I/O-Priorität – dauert bei vielen TB lange)."""
     if cache_stats.storage["running"]:
         return {"ok": True, "busy": True}
-    asyncio.create_task(cache_stats.poll_storage(full=True))
+    async def _measure():
+        with timings.Timer("cache_measure", "full"):
+            await cache_stats.poll_storage(full=True)
+    asyncio.create_task(_measure())
     return {"ok": True}
 
 
@@ -2855,6 +2859,32 @@ async def _cache_diag(lc: str, tail: int = 60) -> dict:
             "mounts": mounts, "log": lg[-6000:]}
 
 
+@app.get("/api/timings", dependencies=auth)
+async def timings_api():
+    return timings.summary()
+
+
+async def _record_prefill_times() -> None:
+    """Abgeschlossene Prefill-Läufe (Steam, Battle.net, Epic) mit Dauer festhalten (je Lauf einmal)."""
+    def ts(x):
+        return datetime.fromisoformat(re.sub(r"(\.\d{6})\d*", r"\1", x).replace("Z", "+00:00")).timestamp()
+    seen = store.load("timings_prefill_seen.json", {}) or {}
+    sts = [("steam", await prefill.container_state())] + [(k, await prefill_more.state(k)) for k in prefill_more.SERVICES]
+    changed = False
+    for svc, st in sts:
+        if not st or st.get("running") or not st.get("started") or not st.get("finished") or st["finished"].startswith("0001"):
+            continue
+        if seen.get(svc) == st["started"]:
+            continue
+        seen[svc], changed = st["started"], True
+        try:
+            timings.record("prefill", svc, ts(st["finished"]) - ts(st["started"]), ok=(st.get("exit") in (0, None)))
+        except ValueError:
+            pass
+    if changed:
+        store.save("timings_prefill_seen.json", seen)
+
+
 @app.get("/api/cache/container", dependencies=auth)
 async def cache_container_diag():
     lc = cache_stats.state.get("container")
@@ -3097,7 +3127,8 @@ async def _run_backups(only: str | None = None) -> dict:
             if (only and s["id"] != only) or (not only and s["id"] in (d.get("skip") or [])):
                 continue
             try:
-                r = await _backup_server(s, d["dir"], int(d.get("keep") or 7))
+                with timings.Timer("backup", game_of(s)):
+                    r = await _backup_server(s, d["dir"], int(d.get("keep") or 7))
             except docker_api.DockerError as e:
                 r = {"ok": False, "msg": str(e)[:300]}
             if r.get("ok") is None:
@@ -4003,6 +4034,11 @@ AUTO_UPDATE_GAMES = {"factorio"}          # Version steckt im Image -> beim Neus
 
 
 async def _image_update(s: dict, force_recreate: bool = False, tag: str | None = None) -> str:
+    with timings.Timer("image_update", game_of(s)):
+        return await _image_update_inner(s, force_recreate, tag)
+
+
+async def _image_update_inner(s: dict, force_recreate: bool = False, tag: str | None = None) -> str:
     """Neuestes Image holen; ist es neuer als das laufende, Container damit neu erstellen (Daten/Einstellungen bleiben).
     tag: anderes Image-Tag (z. B. Factorio „latest“ = experimentell, „stable“)."""
     c = s["container"]
@@ -4940,6 +4976,7 @@ async def _tpl_refresh(src: dict | None = None) -> None:
         _tpl["error"] = "kein CS2-Server als Vorlage gefunden"
         return
     _tpl.update(busy=True, error=None, progress=None)
+    t_start, first = time.time(), not _tpl.get("last")
     try:
         info = await docker_api.inspect(src["container"])
         sp = next((m.get("Source") for m in info.get("Mounts") or [] if (m.get("Destination") or "").rstrip("/") == CS2_DIR), None)
@@ -4987,6 +5024,7 @@ async def _tpl_refresh(src: dict | None = None) -> None:
             pass
         _tpl.update(last=time.time(), src=src["id"], src_name=src.get("name"), disk_t=0)
         _tpl_save()
+        timings.record("tpl", "first" if first else "update", time.time() - t_start, info=fmt_gb(_tpl.get("bytes") or 0))
         log.info("CS2-Vorlage aktualisiert von %s (%s)", src.get("name"), fmt_gb(_tpl["bytes"] or 0))
     except docker_api.DockerError as e:
         _tpl["error"] = str(e)[:300]
@@ -5069,9 +5107,15 @@ async def _create_job(job: dict, data: CreateIn, host: str):
         job["step"] = "wartet – vorheriger Server wird noch angelegt"
         _job_log(job, job["step"])
     async with _create_lock:
+        t0 = time.time()
         await _create_job_inner(job, data, host)
         if not job.get("error") and job.get("server_id"):
+            t1 = time.time()
             await _wait_installed(job, job["server_id"])
+            if job.get("installed_ok"):
+                cp = (data.values.get("_copy_from") or "").strip() if data.game == "cs2" else ""
+                timings.record("install", data.game, time.time() - t1, info="nach Kopie" if cp else "Download")
+                timings.record("create", data.game, time.time() - t0, info=("mit Kopie (" + ("Vorlage" if cp == "_local" else "Server") + ")") if cp else "ohne Kopie")
 
 
 async def _wait_installed(job: dict, sid: str, timeout: float = 4 * 3600) -> None:
@@ -5089,6 +5133,7 @@ async def _wait_installed(job: dict, sid: str, timeout: float = 4 * 3600) -> Non
             prog = (install_watch.state.get(s.get("container") or "") or {}).get("progress")
             if st.get("online") and not prog:
                 _job_log(job, "Server ist installiert und online")
+                job["installed_ok"] = True
                 return
             await asyncio.sleep(10)
         _job_log(job, "Installation dauert sehr lange – nächster Server startet trotzdem")
@@ -5122,7 +5167,8 @@ async def _create_job_inner(job: dict, data: CreateIn, host: str):
         src_id = (data.values.get("_copy_from") or "").strip() if data.game == "cs2" else ""
         if src_id and job.get("stage") not in ("copied", "created"):
             job["stage"] = "copy"
-            await _copy_game_files(job, b, src_id)
+            with timings.Timer("copy", data.game, "lokale Vorlage" if src_id == "_local" else "von anderem Server"):
+                await _copy_game_files(job, b, src_id)
             job["stage"] = "copied"
             _save_jobs(True)
         dns = await lancache_dns()

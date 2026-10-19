@@ -443,7 +443,7 @@ async function refreshHost(){
     (g.containers ? `<br>Spielserver: ${g.running}/${g.containers} laufen · ${g.cpu_host} % CPU · ${fmtMem(g.mem_mb)}` +
       "" : "") +
     (h.local_disk ? `<br><span title="Interne Platte des Servers (Docker)">💽 Interne Platte: <b>${fmtBytes(h.local_disk.free)}</b> frei von ${fmtBytes(h.local_disk.total)}</span>` : "") +
-    (h.cs2_template ? `<br><span title="Lokale Kopie von ${esc(h.cs2_template.src_name || "CS #1")} – neue CS-Server kopieren von hier">CS-Vorlage: ${h.cs2_template.busy ? "wird aktualisiert" + (h.cs2_template.progress != null ? " " + h.cs2_template.progress + " %" : " …") : h.cs2_template.last ? fmtBytes(h.cs2_template.bytes || 0) + " · Stand " + new Date(h.cs2_template.last * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"}) : "noch keine"}${h.cs2_template.error ? " · ⚠ " + esc(h.cs2_template.error.slice(0, 60)) : ""}</span>${!h.cs2_template.busy && me && me.role === "admin" ? ` · <a href="#" onclick="tplRefresh();return false" title="CS-Dateien von ${esc(h.cs2_template.src_name || "CS #1")} jetzt auf die interne Platte kopieren (sonst automatisch um 05:00)">${h.cs2_template.last ? "aktualisieren" : "jetzt erstellen"}</a>` : ""}` : "");
+    (h.cs2_template ? `<br><span title="Lokale Kopie von ${esc(h.cs2_template.src_name || "CS #1")} – neue CS-Server kopieren von hier">CS-Vorlage: ${h.cs2_template.busy ? "wird aktualisiert" + (h.cs2_template.progress != null ? " " + h.cs2_template.progress + " %" : " …") : h.cs2_template.last ? fmtBytes(h.cs2_template.bytes || 0) + " · Stand " + new Date(h.cs2_template.last * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"}) : "noch keine"}${h.cs2_template.error ? " · ⚠ " + esc(h.cs2_template.error.slice(0, 60)) : ""}</span>${!h.cs2_template.busy && me && me.role === "admin" ? ` · <a href="#" onclick="tplRefresh();return false" title="CS-Dateien von ${esc(h.cs2_template.src_name || "CS #1")} jetzt auf die interne Platte kopieren (sonst automatisch um 05:00)${esc(durText("tpl", h.cs2_template.last ? "update" : "first") ? "\n" + durText("tpl", h.cs2_template.last ? "update" : "first") : "")}">${h.cs2_template.last ? "aktualisieren" : "jetzt erstellen"}</a>` : ""}` : "");
 }
 function problemsHtml(list){
   if (!list || !list.length) return "";
@@ -629,11 +629,31 @@ function storageCard(st, disk){
     ${pct != null ? `<div class="bar" style="margin-top:6px"><i class="${lvl(pct)}" style="width:${pct}%"></i></div>` : ""}
     <div class="s">${pct != null ? pct + " % vom Limit · " : ""}Logs ${fmtBytes(logs)} · ${st.busy ? "wird gemessen …" : `<a href="#" onclick="measureCache();return false" title="Zählt den Ordner einmal genau – mit niedrigster I/O-Priorität, dauert bei vielen TB lange">genau messen</a>`}</div></div>`;
 }
+/* ---- Dauer früherer Läufe (vor dem Start anzeigen) ---- */
+let TIMINGS = {}, timingsAt = 0;
+async function loadTimings(force){
+  if (!force && Date.now() - timingsAt < 60000) return TIMINGS;
+  try { TIMINGS = await api("/api/timings"); timingsAt = Date.now(); } catch {}
+  return TIMINGS;
+}
+const fmtDur = s => s == null ? "–" : s < 90 ? Math.round(s) + " s" : s < 5400 ? Math.round(s / 60) + " min" : (s / 3600).toFixed(1).replace(".", ",") + " h";
+// „dauerte zuletzt 12 min (Ø 15 min aus 3 Läufen)“ – leer, wenn noch nie gemessen
+function durText(op, key, label){
+  const t = TIMINGS[`${op}:${key || "-"}`];
+  if (!t) return "";
+  return `${label ? label + " " : ""}dauerte zuletzt ${fmtDur(t.last)}${t.n > 1 ? ` (Ø ${fmtDur(t.avg)} aus ${t.n} Läufen)` : ""}${t.info ? " – " + t.info : ""}, am ${new Date(t.when * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"})}`;
+}
+loadTimings();
 async function tplRefresh(){
-  if (!confirm("CS2-Vorlage jetzt auf die interne Platte kopieren? Dauert je nach Größe einige Minuten (ca. 60 GB).")) return;
+  await loadTimings(true);
+  const d = durText("tpl", "update", "Letzte Aktualisierung") || durText("tpl", "first", "Erste Erstellung");
+  if (!confirm("CS2-Vorlage jetzt auf die interne Platte kopieren?\n" + (d || "Noch nie gemessen – erste Erstellung kopiert ca. 60 GB, das dauert einige Minuten."))) return;
   try { await api("/api/cs2-template/refresh", {method: "POST"}); toast("Vorlage wird erstellt – Fortschritt steht links unter „CS-Vorlage“"); } catch (e) { toast(e.message, true); }
 }
 async function measureCache(){
+  await loadTimings(true);
+  const d = durText("cache_measure", "full", "Letzte Messung");
+  if (d && !confirm(d + "\nJetzt messen?")) return;
   try { await api("/api/cache/measure", {method: "POST"}); toast("Messung läuft im Hintergrund (niedrige Priorität)"); } catch (e) { toast(e.message, true); }
 }
 async function loadGameIcons(extra = []){
@@ -2127,6 +2147,11 @@ async function initCreate(){
   const common = lanHosts.sort((a, b) => lanHosts.filter(x => x === b).length - lanHosts.filter(x => x === a).length)[0];
   $("#createHost").value = (settings.public_url || "").replace(/^https?:\/\//, "").split(/[:/]/)[0] || (isPriv(location.hostname) ? location.hostname : common || location.hostname);
   $("#createHint").textContent = `Image: ${t.image} · Der Ordner wird auf dem Docker-Host angelegt und für UID ${t.uid} beschreibbar gemacht. Ports: automatisch die nächsten freien gewählt (${sug.used.length} Ports sind bereits belegt) – vor dem Anlegen wird nochmals auf Überschneidungen geprüft.`;
+  await loadTimings(true);
+  const dtx = [durText("create", createGame, "Anlegen bis spielbereit"), durText("copy", createGame, "Spieldateien kopieren"),
+               durText("install", createGame, "Installation")].filter(Boolean);
+  if (dtx.length) $("#createHint").textContent = "⏱ " + dtx.join(" · ") + " · " + $("#createHint").textContent;
+  else $("#createHint").textContent = "⏱ Für dieses Spiel gibt es noch keine Messung – die Dauer wird beim ersten Anlegen festgehalten. · " + $("#createHint").textContent;
   const pr = sug.port_range;
   if (pr && pr.range){
     const msg = !pr.movable ? `⚠ ${t.label} lässt sich nicht in den freigegebenen Bereich ${pr.range} legen (Ports stehen fest in der Spielkonfiguration bzw. werden sonst falsch gemeldet) – Standardports, aus dem Internet nur mit eigener Weiterleitung erreichbar, im LAN problemlos.`
@@ -2709,6 +2734,9 @@ $("#pfSearch").addEventListener("input", () => {
   }, 350);
 });
 $("#pfRun").onclick = async () => {
+  await loadTimings(true);
+  const d = durText("prefill", "steam", "Letzter Steam-Prefill");
+  if (d && !confirm(d + "\nJetzt starten?")) return;
   $("#pfRun").disabled = true;
   try { await api("/api/prefill/run", {body: {mode: "prefill"}}); toast("SteamPrefill gestartet"); } catch (e) { toast(e.message, true); }
   loadPrefill();
@@ -3023,7 +3051,9 @@ $("#btnPorts").onclick = async () => {
   catch (e){ toast(e.message, true); }
 };
 $("#btnImgUpdate").onclick = async () => {
-  if (!confirm("Neueste Version (Image) holen und Server damit neu starten? Spieldaten und Einstellungen bleiben.")) return;
+  await loadTimings(true);
+  const d = durText("image_update", gameOf(current), "Letztes Update");
+  if (!confirm("Neueste Version (Image) holen und Server damit neu starten? Spieldaten und Einstellungen bleiben." + (d ? "\n" + d : ""))) return;
   toast("Lade neuestes Image …");
   try { const r = await api(`/api/servers/${current.id}/image-update`, {method: "POST"}); toast(r.result); }
   catch (e){ toast(e.message, true); }
@@ -3155,6 +3185,7 @@ $("#btnBkSave").onclick = async () => {
   try { await api("/api/backup", {method: "PUT", body: {enabled: $("#bkEnabled").checked, time: $("#bkTime").value.trim(), keep: parseInt($("#bkKeep").value, 10) || 7, dir: $("#bkDir").value.trim(), skip}}); toast("Sicherung gespeichert"); loadBackup(); }
   catch (e){ toast(e.message, true); }
 };
+$("#btnBkRun").onmouseenter = async () => { await loadTimings(); $("#btnBkRun").title = Object.entries(TIMINGS).filter(([k]) => k.startsWith("backup:")).map(([k, t]) => `${GAMES[k.slice(7)]?.label || k.slice(7)}: zuletzt ${fmtDur(t.last)}`).join("\n") || "Noch keine Sicherung gemessen"; };
 $("#btnBkRun").onclick = async () => { try { await api("/api/backup/run", {method: "POST"}); toast("Sicherung aller Server läuft"); setTimeout(loadBackup, 8000); } catch (e){ toast(e.message, true); } };
 $("#btnGsltMaintain").onclick = async () => { try { const r = await api("/api/gslt/maintain", {method: "POST"}); toast(`Erneuert: ${r.renewed.length + r.manual.length}${r.manual.length ? " (von Hand eintragen: " + r.manual.join(", ") + ")" : ""}${r.errors.length ? " · Fehler: " + r.errors.join("; ") : ""}`, !!r.errors.length); loadGslt(); } catch (e){ toast(e.message, true); } };
 $("#btnGsltCleanup").onclick = async () => { if (!confirm("Abgelaufene Tokens, die kein Server benutzt, bei Steam und hier löschen?")) return; try { const r = await api("/api/gslt/cleanup", {method: "POST"}); toast(`Gelöscht: ${r.removed.length ? r.removed.join(", ") : "keine"}`); loadGslt(); } catch (e){ toast(e.message, true); } };
@@ -3199,6 +3230,7 @@ async function loadPf2(full){
       <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center">
         <button class="primary" id="pf2Run">▶ Vorladen</button><button id="pf2Force" title="alles neu laden, auch was schon im Cache ist">Erzwingen</button><button class="danger" id="pf2Stop">✕ Abbrechen</button>
         <label class="hint" style="margin-left:12px">täglich um</label><input id="pf2Sched" value="${esc(s.schedule || "")}" placeholder="z. B. 03:00" style="max-width:90px"><button class="small" id="pf2SchedSave">Zeitplan speichern</button></div>
+      ${durText("prefill", svc, "Letzter Lauf") ? `<div class="hint" style="margin-top:6px">⏱ ${esc(durText("prefill", svc, "Letzter Lauf"))}</div>` : ""}
       <div id="pf2Prompt"></div>
       <pre class="out" id="pf2Log" style="max-height:360px;overflow:auto;margin-top:10px"></pre></div>`;
     const collect = () => svc === "battlenet"
