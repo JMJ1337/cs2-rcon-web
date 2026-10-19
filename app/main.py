@@ -1418,6 +1418,7 @@ async def live_loop():
     while True:
         try:
             hoststats.sample()
+            livestats.cache_name = cache_stats.state.get("container")
             livestats.sample_host()
             if n % 2 == 0:
                 livestats.sample_io()
@@ -1733,6 +1734,26 @@ async def app_icon(appid: int):
                         headers={"Cache-Control": "public, max-age=2592000, immutable"})
 
 
+@app.get("/api/applogo/{appid}")
+async def app_logo(appid: int):
+    """Breites Spielbild (Steam-Header) aus dem lokalen Speicher."""
+    f = await depots.logo_file(appid)
+    if not f:
+        raise HTTPException(404, "kein Bild")
+    return FileResponse(f, media_type="image/png" if f.read_bytes()[:4] == b"\x89PNG" else "image/jpeg",
+                        headers={"Cache-Control": "public, max-age=2592000, immutable"})
+
+
+@app.get("/api/cache/games", dependencies=auth)
+async def cache_games():
+    """Spiele, die im Lancache liegen (alles je aus dem Internet geholt, 1 Jahr) – für die Logo-Leiste der Übersicht."""
+    gl = [g for g in depots.games(cache_history.series("365d").get("depots") or {}) if (g.get("miss") or 0) > 200 * 2**20]
+    gl = _enrich_games(gl[:40])
+    return [{"app": g.get("app"), "name": g["name"], "service": g.get("service"), "stored": g.get("stored") or g.get("miss"),
+             "size": g.get("size"), "cached_pct": g.get("cached_pct")} for g in gl
+            if g.get("app") or not g["name"].startswith(("Depot ", "Epic-Spiel"))]
+
+
 LOGO_URLS = {"teamspeak": "https://icons.duckduckgo.com/ip3/teamspeak.com.ico",
              "minecraft": "https://icons.duckduckgo.com/ip3/minecraft.net.ico"}
 
@@ -1976,7 +1997,7 @@ async def live_values():
     lc = cache_stats.state.get("container")
     cd = livestats.data.get(lc or "") or {}
     return {"t": now, "cpu": h.get("cpu"), "mem_used_mb": h.get("mem_used_mb"), "mem_total_mb": h.get("mem_total_mb"),
-            "net": {k: livestats.host.get(k) for k in ("rx_bps", "tx_bps", "source")},
+            "net": {k: livestats.host.get(k) for k in ("rx_bps", "tx_bps", "source", "nic_rx_bps", "nic_tx_bps", "inet")},
             "cache": {"rx_bps": cd.get("rx_bps"), "tx_bps": cd.get("tx_bps")} if cd else None, "servers": srv,
             "io": livestats.io}
 

@@ -521,7 +521,8 @@ async function liveTick(){
     if (n.rx_bps != null){
       $("#hlNetDownBar").style.width = bw(n.rx_bps) + "%"; $("#hlNetUpBar").style.width = bw(n.tx_bps) + "%";
       tween($("#hlNetDown"), n.rx_bps, v => fmtRate(v)); tween($("#hlNetUp"), n.tx_bps, v => fmtRate(v));
-      $("#hlNetTotRow").title = n.source === "host" ? "Netzwerkkarten des Docker-Hosts" : "Summe der Container (Host-Netz nicht eingebunden)";
+      const tt = `Internet-Durchsatz (geschätzt): ↓ was Lancache und Spielserver empfangen, ↑ was die Spielserver senden – ohne LAN-Verkehr (Cache → Clients, NAS)` + (n.nic_rx_bps != null ? `\nNetzwerkkarte gesamt inkl. LAN: ↓ ${fmtRate(n.nic_rx_bps)} · ↑ ${fmtRate(n.nic_tx_bps)}` : "");
+      $("#hlNetTotRow").title = tt; $("#hlNetTotRow").nextElementSibling.title = tt;
     }
     latencyRow(L.io);
     if (L.cache && L.cache.tx_bps != null && !$("#hlNetRow").classList.contains("hidden")){
@@ -536,7 +537,7 @@ setInterval(async () => {
   if (document.hidden || view !== "dash" || metricsRange > 10) return;
   await loadMetrics(true);
   $("#hostPanel").innerHTML = hostPanelHtml();
-  $$("[data-mw]").forEach(el => { const sid = el.dataset.mw, s = servers.find(x => x.id === sid); el.innerHTML = metricsHtml(sid, GAMES[gameOf(s)]?.color || "var(--accent)"); });
+  $$("[data-mwl]").forEach(el => { el.innerHTML = metricsLine(el.dataset.mwl); });
 }, 2000);
 
 /* ================= Lancache ================= */
@@ -613,10 +614,8 @@ async function loadGameIcons(extra = []){
   try { const r = await api("/api/gameicons?apps=" + extra.join(",")); ICONS_URL.apps = {...ICONS_URL.apps, ...r.apps}; ICONS_URL.games = r.games; } catch {}
 }
 function appIcon(app, size = 28){
-  const ic = app && ICONS_URL.apps[String(app)];
-  const fb = app ? `https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/${app}/capsule_sm_120.jpg` : "";
-  if (ic) return `<img class="gicon" src="${ic}" width="${size}" height="${size}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.outerHTML='${svcIconOwn("steam", size - 10).replace(/'/g, "&#39;").replace(/"/g, "&quot;")}'">`;
-  if (app) return `<img class="gcap" src="https://cdn.cloudflare.steamstatic.com/steam/apps/${app}/capsule_sm_120.jpg" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="if(!this.dataset.f){this.dataset.f=1;this.src='${fb}'}else{this.outerHTML='${svcIconOwn("steam", size - 10).replace(/'/g, "&#39;").replace(/"/g, "&quot;")}'}">`;
+  const fb = svcIconOwn("steam", size - 10).replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+  if (app) return `<img class="gicon" src="/api/appicon/${app}" width="${size}" height="${size}" style="object-fit:cover" alt="" loading="lazy" onerror="this.outerHTML='${fb}'">`;
   return svcIconOwn("steam", size - 10);
 }
 function gamesTable(list, label){
@@ -669,10 +668,9 @@ async function refreshCache(){
       <div class="card"><div class="k">Durchsatz jetzt</div><div class="v">↑ ${fmtRate(live)}</div><div class="s">${cn.rx_bps != null ? `↓ ${fmtRate(cn.rx_bps)} aus dem Internet · ` : ""}letzte Std. ${fmtBytes((h.hit_bytes||0)+(h.miss_bytes||0))}</div></div>
       ${storageCard(c.storage, c.disk)}
     </div>
-    ${svc ? `<div class="panel" style="padding:12px 16px"><h2 style="margin-bottom:6px">Was wurde ausgeliefert? <span class="hint">(letzte ${rl}, nach Dienst)</span> <a href="#" class="hint" style="float:right" onclick="showView('cache');return false">Verlauf bis 1 Jahr →</a></h2>
+    ${svc ? `<div class="panel" style="padding:12px 16px"><h2 style="margin-bottom:6px">Was wurde ausgeliefert? <span class="hint">(letzte ${rl}, nach Dienst)</span> <a href="#" class="hint" style="float:right" onclick="showView('cache');return false">Lancache →</a></h2>
       <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Dienst</th><th>aus dem Cache</th><th>aus dem Internet</th><th>gesamt</th><th>Trefferquote</th><th></th></tr></thead><tbody>${svc}</tbody></table></div></div>`
       : `<div class="hint" style="margin-bottom:14px">In den letzten 24 Stunden wurde nichts über den Lancache geladen.</div>`}
-    ${gamesTable(c.games_24h, "letzte 24 h")}
   </div>`;
 }
 
@@ -760,7 +758,7 @@ function hostPanelHtml(){
     <div class="panel"><div class="hostpanel">
       <div><div class="mlab"><span>CPU</span><b>Ø ${avg(cpuN)} % · max ${mx(cpuN)} %</b></div>${spark(m.cpu, "var(--ct)", {min: 100, h: 64, fmt: AX.pct})}</div>
       <div><div class="mlab"><span>RAM belegt</span><b>jetzt ${memN.length ? memN[memN.length-1] : "–"} % · max ${mx(memN)} %</b></div>${spark(m.mem, "#a78bfa", {min: 100, h: 64, fmt: AX.pct})}</div>
-      ${netPanelCell(m, "Netzwerk gesamt")}
+      ${netPanelCell(m, "Internet")}
       ${metricsData._cache && metricsData._cache.samples ? netPanelCell(metricsData._cache, "Lancache") : ""}
       ${ioCells()}
     </div>${ioTable()}${sizesHtml()}</div></div>`;
@@ -861,10 +859,40 @@ function metricsHtml(sid, color){
 }
 
 /* ================= Dashboard ================= */
+// Sortierung nach Last: Ø CPU im gewählten Zeitraum (ruhiger als der Sekundenwert), dann Spieler; offline ans Ende
+function dashScore(o){
+  if (!o.online) return -1;
+  const m = metricsData[o.server.id], cpu = m && m.cpu ? m.cpu.filter(v => v != null) : [];
+  const avg = cpu.length ? cpu.reduce((a, b) => a + b, 0) / cpu.length : ((o.load || {}).cpu_host || 0);
+  return Math.round(avg * 2) / 2 + (o.humans || 0) * 0.01;
+}
+function metricsLine(sid){
+  const m = metricsData[sid];
+  if (!m || !m.samples) return "";
+  return `Verfügbarkeit 24 h <b>${m.uptime_24h != null ? m.uptime_24h + " %" : "–"}</b>${m.ping != null ? ` · Ping Ø <b>${m.ping} ms</b>` : ""} · Spieler-Peak 24 h <b>${m.peak_24h}</b>`;
+}
+// Logo-Leiste: Spiele, die im Lancache liegen
+let cacheGamesList = null, cacheGamesAt = 0;
+async function loadCacheGames(){
+  if (Date.now() - cacheGamesAt < 300000 && cacheGamesList) return;
+  cacheGamesAt = Date.now();
+  try { cacheGamesList = await api("/api/cache/games"); } catch {}
+}
+function cacheGamesHtml(){
+  const l = cacheGamesList || [];
+  if (!l.length) return "";
+  return `<div class="cgstrip" title="Spiele im Lancache – laden im LAN mit voller Geschwindigkeit">${l.map(g => {
+    const tip = `${g.name} – ${fmtBytes(g.stored)} im Cache${g.cached_pct != null ? ` (${Math.round(g.cached_pct)} % des Spiels)` : ""}`;
+    const pct = g.cached_pct != null ? g.cached_pct : null;
+    const img = g.app ? `<img src="/api/applogo/${g.app}" alt="${esc(g.name)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'cgname',textContent:this.alt}))">`
+      : `<span class="cgsvc">${svcIcon(g.service, 22)}<span class="cgname">${esc(g.name)}</span></span>`;
+    return `<a class="cg" href="#" onclick="showView('cache');return false" title="${esc(tip)}">${img}${pct != null ? `<i style="width:${pct}%"></i>` : ""}</a>`;
+  }).join("")}</div>`;
+}
 async function refreshDash(){
   try { overview = await api("/api/overview"); } catch { return; }
-  await Promise.all([loadMetrics(), loadSizes()]);
-  if (view === "dash") $("#hostPanel").innerHTML = hostPanelHtml();
+  await Promise.all([loadMetrics(), loadSizes(), loadCacheGames()]);
+  if (view === "dash") { $("#hostPanel").innerHTML = hostPanelHtml(); $("#cacheGames").innerHTML = cacheGamesHtml(); }
   renderServerList();
   if (view !== "dash") return;
   $("#dashEmpty").classList.toggle("hidden", overview.length > 0);
@@ -872,9 +900,8 @@ async function refreshDash(){
   const pl = overview.reduce((a,o) => a + (o.online ? (o.humans||0) : 0), 0);
   $("#dashSub").textContent = `${on} von ${overview.length} online · ${pl} Spieler gesamt · aktualisiert ${new Date().toLocaleTimeString("de-DE")}`;
   $$("#rangeSeg [data-range]").forEach(b => b.classList.toggle("active", +b.dataset.range === metricsRange));
-  const order = Object.keys(GAMES);
-  const byGame = order.map(g => [g, overview.filter(o => gameOf(o.server) === g)]).filter(([, l]) => l.length);
-  $("#dashGrid").innerHTML = byGame.map(([g, items]) => `<div class="dsect"><h3 class="dhead">${gameTile(g, 16)}${esc(GAMES[g].label)} <span class="hint">${items.filter(o => o.online).length}/${items.length} online</span></h3><div class="dash">` + items.map(o => {
+  const items = [...overview].sort((a, b) => dashScore(b) - dashScore(a) || String(a.server.name).localeCompare(String(b.server.name)));
+  $("#dashGrid").innerHTML = `<div class="dsect"><h3 class="dhead"><span class="gtile" style="background:#8aa4c8">${gicon("_", 16)}</span>Server <span class="hint">nach Last sortiert · ${on}/${overview.length} online</span></h3><div class="dash">` + items.map(o => {
     const s = o.server, slots = o.visible_players > 0 ? o.visible_players : (o.max_players || 0);
     const pct = slots ? Math.min(100, Math.round((o.humans||0) / slots * 100)) : 0;
     const mz = o.matchzy && o.matchzy.match ? `${esc(o.matchzy.match.team1||"")} vs ${esc(o.matchzy.match.team2||"")} · ${esc(o.matchzy.match.state||"")}` : (o.matchzy && o.matchzy.unloaded ? "aus (Freizeitmodus)" : o.matchzy && o.matchzy.installed ? "kein Match geladen" : "–");
@@ -897,12 +924,12 @@ async function refreshDash(){
       ${problemsHtml(o.problems)}
       <div class="ldwrap" data-ld="${esc(s.id)}">${loadHtml(o.load && lastLive && lastLive.servers[s.id] ? {...o.load, ...lastLive.servers[s.id]} : o.load)}</div>
       ${installHtml(o.install)}
-      <div class="mwrap" data-mw="${esc(s.id)}">${metricsHtml(s.id, GAMES[gameOf(s)]?.color || "var(--accent)")}</div>
+      <div class="hint mstats" data-mwl="${esc(s.id)}">${metricsLine(s.id)}</div>
       ${o.auto && o.auto.capped ? `<span class="pill warn">Slots begrenzt auf ${o.max_players} – SLOTS im Stack erhöhen</span>` : ""}
       ${o.unclaimed ? `<span class="pill warn">Satisfactory: noch nicht beansprucht</span>` : ""}`
-      : `${ledOf(o).cls === "warn" ? `<div class="pill warn" style="justify-self:start">Container läuft – Spiel startet oder aktualisiert noch</div>` : ""}<div class="hint">${esc(o.error || (o.online === false ? "offline" : "noch nicht abgefragt"))}</div>${problemsHtml(o.problems)}<div class="ldwrap" data-ld="${esc(s.id)}">${loadHtml(o.load)}</div>${installHtml(o.install)}<div class="mwrap" data-mw="${esc(s.id)}">${metricsHtml(s.id, GAMES[gameOf(s)]?.color || "var(--accent)")}</div>`}
+      : `${ledOf(o).cls === "warn" ? `<div class="pill warn" style="justify-self:start">Container läuft – Spiel startet oder aktualisiert noch</div>` : ""}<div class="hint">${esc(o.error || (o.online === false ? "offline" : "noch nicht abgefragt"))}</div>${problemsHtml(o.problems)}<div class="ldwrap" data-ld="${esc(s.id)}">${loadHtml(o.load)}</div>${installHtml(o.install)}`}
     </div>`;
-  }).join("") + `</div></div>`).join("");
+  }).join("") + `</div></div>`;
   $$(".dcard").forEach(el => el.onclick = e => {
     if (e.target.closest("[data-stop]")) return;
     const c = e.target.closest("[data-copy]");

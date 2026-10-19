@@ -120,7 +120,7 @@ pre.out{background:#0a0c0f;border:1px solid var(--line);border-radius:7px;paddin
 .card .s{font-size:12px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .card.thumb{display:flex;gap:10px;align-items:center}
 .card.thumb img{width:64px;height:36px;object-fit:cover;border-radius:4px;flex:none;background:var(--bg)}
-.dash{display:grid;grid-template-columns:repeat(auto-fill,minmax(365px,1fr));gap:18px}
+.dash{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px}
 .dcard{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;cursor:pointer;display:grid;gap:8px}
 .dcard:hover{border-color:#3a4150}
 .dcard .top{display:flex;align-items:center;gap:8px}
@@ -185,7 +185,7 @@ body.perm-lt2 .opsonly,body.perm-lt3 .mgronly,body.perm-lt4 .delonly,body.no-cre
 .hl-row b{font-family:var(--mono);font-weight:500;text-align:right;font-size:12px}
 .hl-sub{font-size:11px;color:var(--muted);line-height:1.4}
 .bar i.warn{background:var(--accent)} .bar i.crit{background:var(--bad)} .bar i.ok{background:var(--ok)}
-.loadrow{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;font-size:12px;color:var(--muted)}
+.loadrow{display:grid;grid-template-columns:34px minmax(40px,1fr) auto;gap:8px;align-items:center;font-size:12px;color:var(--muted)}
 .loadrow b{font-family:var(--mono);font-weight:500;color:var(--text)}
 .loadrow .bar{height:5px}
 
@@ -512,3 +512,22 @@ aside .head .logo{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space
 @media (max-width:600px){.ldrow{grid-template-columns:22px minmax(0,1fr) 80px}.ldhit{display:none}}
 
 .pleditbox{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;padding:10px;background:var(--panel2);border-radius:8px}
+
+/* Kacheln: Inhalt bleibt in der Kachel */
+.dcard,.dcard>*,.dbody>*,.card,.panel,.dsect{min-width:0}
+.dcard{overflow:hidden}
+.dbody{grid-template-columns:auto minmax(0,1fr)}
+.loadrow>span:last-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}
+.dcard .top{flex-wrap:wrap;row-gap:6px}
+.dcard .top b{min-width:120px}
+.mstats b{color:var(--text)}
+.cards .card .s{overflow:hidden;text-overflow:ellipsis}
+/* Logo-Leiste der Spiele im Cache */
+.cgstrip{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+.cg{position:relative;display:block;width:120px;height:56px;border-radius:6px;overflow:hidden;background:var(--panel);border:1px solid var(--line);text-decoration:none}
+.cg:hover{border-color:var(--accent)}
+.cg img{width:100%;height:100%;object-fit:cover;display:block}
+.cg i{position:absolute;left:0;bottom:0;height:3px;background:var(--ok)}
+.cg .cgsvc{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:2px;padding:0 4px}
+.cg .cgname{display:flex;align-items:center;justify-content:center;height:100%;font-size:11px;color:var(--text);text-align:center;padding:0 6px;overflow:hidden}
+.cg .cgsvc .cgname{height:auto;white-space:nowrap;text-overflow:ellipsis;max-width:100%;display:block}

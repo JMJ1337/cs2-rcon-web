@@ -259,7 +259,7 @@ async def icon_file(appid: int):
         await icons([int(appid)])
         url = (_load().get("_icons") or {}).get(str(appid))
     if not url:
-        return None
+        return await logo_file(appid)          # kein Community-Icon (z. B. Battlefield 6) -> Spielbild
     try:
         async with httpx.AsyncClient(timeout=10, headers={"User-Agent": "Spielservermanager"}) as cl:
             r = await cl.get(url)
@@ -268,6 +268,47 @@ async def icon_file(appid: int):
             return f
     except httpx.HTTPError:
         pass
+    return await logo_file(appid)
+
+
+async def _fetch_img(cl: httpx.AsyncClient, url: str) -> bytes | None:
+    try:
+        r = await cl.get(url, follow_redirects=True)
+    except httpx.HTTPError:
+        return None
+    if r.status_code == 200 and (r.content[:3] == b"\xff\xd8\xff" or r.content[:4] == b"\x89PNG") and len(r.content) > 500:
+        return r.content
+    return None
+
+
+async def logo_file(appid: int):
+    """Breites Spielbild (Steam-Header, 460x215) – für Logos/Kacheln. Reihenfolge: Store-API (auch neue Spiele
+    mit Hash-Pfad wie Battlefield 6), dann die festen CDN-Pfade. Einmal geholt, danach lokal."""
+    ICON_DIR.mkdir(parents=True, exist_ok=True)
+    f = ICON_DIR / f"{int(appid)}_logo.jpg"
+    if f.exists() and f.stat().st_size > 0:
+        return f
+    miss = ICON_DIR / f"{int(appid)}_logo.miss"
+    if miss.exists() and time.time() - miss.stat().st_mtime < 6 * 3600:
+        return None
+    src = ICON_ALIAS.get(int(appid), int(appid))
+    async with httpx.AsyncClient(timeout=10, headers={"User-Agent": "Spielservermanager"}) as cl:
+        urls = []
+        try:
+            r = await cl.get("https://store.steampowered.com/api/appdetails", params={"appids": src, "filters": "basic"})
+            data = ((r.json() or {}).get(str(src)) or {}).get("data") or {}
+            urls += [u for u in (data.get("header_image"), data.get("capsule_image")) if u]
+        except (httpx.HTTPError, ValueError):
+            pass
+        urls += [f"https://cdn.cloudflare.steamstatic.com/steam/apps/{src}/header.jpg",
+                 f"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{src}/header.jpg",
+                 f"https://cdn.akamai.steamstatic.com/steam/apps/{src}/header.jpg"]
+        for u in urls:
+            data = await _fetch_img(cl, u)
+            if data:
+                f.write_bytes(data)
+                return f
+    miss.write_bytes(b"")
     return None
 
 

@@ -23,7 +23,9 @@ data: dict[str, dict] = {}            # Container -> letzter Wert
 rings: dict[str, deque] = {}          # Container / "_host" -> (t, cpu, mem, rx, tx)
 _tasks: dict[str, asyncio.Task] = {}
 _host_prev: tuple[float, int, int] | None = None
-host: dict = {"rx_bps": None, "tx_bps": None, "source": None, "ifaces": []}
+host: dict = {"rx_bps": None, "tx_bps": None, "source": None, "ifaces": [], "nic_rx_bps": None, "nic_tx_bps": None}
+cache_name: str | None = None          # Lancache-Container: sein Upload geht an die LAN-Clients, nicht ins Internet
+LAN_ONLY = {"steamprefill", "bnetprefill", "epicprefill"}   # Prefill lädt vom Lancache (LAN)
 
 
 def _ts(s: str) -> float | None:
@@ -156,7 +158,15 @@ def sample_host() -> None:
         if vals:
             rx_bps, tx_bps = sum(d["rx_bps"] for d in vals), sum(d["tx_bps"] for d in vals)
         host.update(source="container", ifaces=[])
-    host.update(rx_bps=rx_bps, tx_bps=tx_bps, t=now)
+    # Internet-Durchsatz statt Netzwerkkarte: die Karte zählt auch das LAN (Cache -> Clients, NAS).
+    # ↓ = alles, was die Container empfangen (Cache holt fehlende Daten aus dem Internet, Spielserver von Spielern)
+    # ↑ = was die Spielserver senden (ohne Lancache, der liefert ins LAN)
+    vals = {n: d for n, d in data.items() if d.get("running") and d.get("rx_bps") is not None and now - d["t"] < 5 and n not in LAN_ONLY}
+    nic_rx, nic_tx = rx_bps, tx_bps
+    if vals:
+        rx_bps = sum(d["rx_bps"] for d in vals.values())
+        tx_bps = sum(d["tx_bps"] or 0 for n, d in vals.items() if n != cache_name)
+    host.update(rx_bps=rx_bps, tx_bps=tx_bps, nic_rx_bps=nic_rx, nic_tx_bps=nic_tx, t=now, inet=bool(vals))
     mem_pct = round(h["mem_used_mb"] / h["mem_total_mb"] * 100, 1) if h.get("mem_total_mb") else None
     _ring("_host").append((now, h.get("cpu"), mem_pct, rx_bps, tx_bps))
 
