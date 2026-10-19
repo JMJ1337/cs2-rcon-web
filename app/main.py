@@ -3659,6 +3659,79 @@ async def docker_usage(request: Request):
     }
 
 
+_sysdisk: dict = {"t": 0.0, "data": None, "busy": False}
+
+
+async def _sysdisk_scan() -> None:
+    """Größte Brocken auf der Systemplatte außerhalb von Docker: alter Lancache-Ordner, Home-Verzeichnisse (nur lesen)."""
+    if _sysdisk["busy"]:
+        return
+    _sysdisk["busy"] = True
+    try:
+        old = os.path.normpath(hoststorage.settings().get("old_path") or "/mnt/cachenew")
+        binds, items = [], []
+        if old.startswith("/mnt/") and old != os.path.normpath(hoststorage.settings().get("mountpoint") or "/mnt/lancache"):
+            binds.append(f"{old}:/old:ro")
+        binds.append("/home:/home:ro")
+        script = ('[ -d /old ] && echo "OLD $(du -sk -x /old 2>/dev/null | cut -f1)"; '
+                  'for d in /home/* /home/*/*; do [ -d "$d" ] && echo "DIR $(du -sk -x "$d" 2>/dev/null | cut -f1) $d"; done')
+        out = await docker_api.run_helper(binds, ["sh", "-c", script], timeout=3600)
+        others = await docker_api.all_mounts()
+        used_src = [os.path.normpath(m["source"]) for ms in others.values() for m in ms if m.get("source")]
+        for ln in out.splitlines():
+            if ln.startswith("OLD "):
+                kb = ln.split()[1] if len(ln.split()) > 1 else ""
+                inuse = any(u == old or u.startswith(old + "/") for u in used_src)
+                items.append({"path": old, "bytes": int(kb) * 1024 if kb.isdigit() else None, "kind": "old_cache", "in_use": inuse,
+                              "hint": "alter Lancache-Cache vor dem Umzug auf die iSCSI-LUN" + (" – wird noch benutzt!" if inuse else " – wird nicht mehr benutzt")})
+            elif ln.startswith("DIR "):
+                parts = ln.split(" ", 2)
+                if len(parts) == 3 and parts[1].isdigit():
+                    p_ = parts[2]
+                    inuse = [n for n, ms in others.items() for m in ms if m.get("source") and
+                             (os.path.normpath(m["source"]) == p_ or os.path.normpath(m["source"]).startswith(p_ + "/"))]
+                    items.append({"path": p_, "bytes": int(parts[1]) * 1024, "kind": "home", "in_use": bool(inuse), "used_by": inuse[:3]})
+        items.sort(key=lambda x: -(x.get("bytes") or 0))
+        _sysdisk["data"] = items[:40]
+        _sysdisk["t"] = time.time()
+    except docker_api.DockerError as e:
+        _sysdisk["data"] = [{"path": "Fehler", "bytes": None, "hint": str(e)[:200]}]
+    finally:
+        _sysdisk["busy"] = False
+
+
+@app.get("/api/storage/systemdisk", dependencies=auth)
+async def systemdisk(request: Request, refresh: bool = False):
+    _need_admin(request)
+    if refresh or (not _sysdisk["busy"] and time.time() - _sysdisk["t"] > 1800):
+        asyncio.create_task(_sysdisk_scan())
+    return {"items": _sysdisk["data"], "busy": _sysdisk["busy"], "updated": _sysdisk["t"] or None}
+
+
+@app.post("/api/storage/systemdisk/delete-old-cache", dependencies=auth)
+async def delete_old_cache(request: Request):
+    """Alten Lancache-Ordner (vor dem Umzug) löschen – nur wenn ihn kein Container mehr nutzt."""
+    _need_admin(request)
+    old = os.path.normpath(hoststorage.settings().get("old_path") or "")
+    if not old.startswith("/mnt/") or old == os.path.normpath(hoststorage.settings().get("mountpoint") or "/mnt/lancache") \
+            or len(old.strip("/").split("/")) < 2:
+        raise HTTPException(400, "Kein alter Cache-Ordner eingestellt")
+    used_src = [os.path.normpath(m["source"]) for ms in (await docker_api.all_mounts()).values() for m in ms if m.get("source")]
+    if any(u == old or u.startswith(old + "/") or old.startswith(u + "/") for u in used_src):
+        raise HTTPException(409, "Ordner wird noch von einem Container genutzt")
+
+    async def go():
+        try:
+            await docker_api.run_helper([f"{old}:/old"], ["sh", "-c", "find /old -mindepth 1 -delete; echo ok"], timeout=4 * 3600)
+            log.info("Alter Cache %s geleert", old)
+        except docker_api.DockerError as e:
+            log.warning("Alten Cache löschen: %s", e)
+        _sysdisk["t"] = 0
+        _tpl["disk_t"] = 0
+    asyncio.create_task(go())
+    return {"ok": True}
+
+
 class PruneIn(BaseModel):
     what: str
 

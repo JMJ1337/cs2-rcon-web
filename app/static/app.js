@@ -334,7 +334,7 @@ function showView(v){
   if (v === "auto"){ renderAuto(); loadGslt(); loadNotify(); loadBackup(); }
   if (v === "cache"){ loadCacheLive(); loadCacheHistory(); loadDnsCheck(); }
   if (v === "prefill"){ pfLoaded = false; showPfSvc(pfSvc); }
-  if (v === "storage"){ loadStorage(true); loadFolders(); loadDocker(); }
+  if (v === "storage"){ loadStorage(true); loadFolders(); loadDocker().then(() => loadSysDisk()); }
   if (v === "game") renderGameView();
 }
 
@@ -3155,6 +3155,7 @@ async function loadDocker(){
     ${row("Build-Cache", d.build_cache.bytes, `${d.build_cache.count} Einträge`, d.build_cache.bytes ? b("buildcache", "Leeren") : "")}
     </tbody></table>
     ${d.images.unused_list.length ? `<details style="margin-top:8px"><summary class="hint">Unbenutzte Images anzeigen</summary><div class="hint mono">${d.images.unused_list.map(i => esc(i.name) + " · " + fmtBytes(i.bytes)).join("<br>")}</div></details>` : ""}
+    <h3 class="pdsec" style="margin-top:14px">Systemplatte außerhalb von Docker <button class="small" id="btnSysScan">messen</button></h3><div id="sysDisk" class="hint">…</div>
     <div class="hint" style="margin-top:8px">Nicht von hier messbar: Container-Logs und Dateien außerhalb von Docker (z. B. Home-Verzeichnis). Auf dem Server prüfen mit <span class="mono">sudo du -xh / --max-depth=2 | sort -h | tail -20</span>.</div>`;
   $$("[data-prune]").forEach(btn => btn.onclick = async () => {
     const what = btn.dataset.prune;
@@ -3168,3 +3169,20 @@ async function loadDocker(){
   });
 }
 $("#btnDkRefresh").onclick = loadDocker;
+let sysTimer = null;
+async function loadSysDisk(refresh){
+  clearTimeout(sysTimer);
+  let r; try { r = await api("/api/storage/systemdisk" + (refresh ? "?refresh=1" : "")); } catch (e){ if ($("#sysDisk")) $("#sysDisk").textContent = e.message; return; }
+  if (!$("#sysDisk")) return;
+  $("#sysDisk").innerHTML = (r.items || []).length ? `<table class="cachetable"><tbody>${r.items.map(x => `<tr><td class="mono">${esc(x.path)}</td><td class="mono">${x.bytes != null ? fmtBytes(x.bytes) : "?"}</td>
+      <td class="hint">${x.kind === "home" ? (x.in_use ? "🔒 genutzt von " + esc((x.used_by || []).join(", ")) : "nicht von Containern genutzt") : esc(x.hint || "")}</td>
+      <td>${x.kind === "old_cache" && !x.in_use && x.bytes ? `<button class="small danger" id="btnOldCache">Alten Cache löschen</button>` : ""}</td></tr>`).join("")}</tbody></table>
+      <div class="hint">Home-Ordner löschst du selbst per SSH (z. B. <span class="mono">rm -r ~/steam-content</span>) – genutzte (🔒) bitte behalten.</div>`
+    : (r.busy ? "wird gemessen … (bei großen Ordnern einige Minuten)" : "noch nicht gemessen");
+  if ($("#btnOldCache")) $("#btnOldCache").onclick = async () => {
+    if (!confirm("Alten Lancache-Ordner komplett leeren? Der aktuelle Cache liegt auf der iSCSI-LUN und bleibt.")) return;
+    try { await api("/api/storage/systemdisk/delete-old-cache", {method: "POST"}); toast("Wird im Hintergrund gelöscht"); } catch (e){ toast(e.message, true); }
+  };
+  if (r.busy && view === "storage") sysTimer = setTimeout(() => loadSysDisk(), 10000);
+}
+document.addEventListener("click", e => { if (e.target && e.target.id === "btnSysScan"){ loadSysDisk(true); setTimeout(() => loadSysDisk(), 3000); } });
