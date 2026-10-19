@@ -1668,8 +1668,9 @@ async def activity():
             cur = pp["current"]
             d = livestats.data.get(prefill.NAME) or {}
             done = sum(1 for a in pp["apps"] if a["state"] in ("fertig", "aktuell"))
-            if prefill.auto.get("paused"):
-                cur = dict(cur or {"name": "", "pct": 0.0}); cur["name"] = (cur["name"] + " – pausiert").strip(" –")
+            if prefill.auto.get("paused") or prefill.auto.get("throttled"):
+                cur = dict(cur or {"name": "", "pct": 0.0})
+                cur["name"] = (cur["name"] + (" – pausiert" if prefill.auto.get("paused") else " – gedrosselt")).strip(" –")
             items.append({"server_id": None, "name": "SteamPrefill" + (f": {cur['name']}" if cur else ""), "game": "prefill",
                           "container": prefill.NAME, "errors": [], "prefill": True,
                           "progress": {"label": "Vorladen", "pct": cur["pct"] if cur else 0.0, "rate": d.get("rx_bps"),
@@ -5972,7 +5973,7 @@ async def prefill_state(tail: int = 300):
     pp = prefill.parse_progress(lg) if lg else {"apps": [], "current": None}
     asyncio.create_task(_prefill_autoadd([a["name"] for a in pp["apps"]]))
     who = []
-    if prefill.auto.get("paused") and not prefill.auto.get("manual"):
+    if (prefill.auto.get("paused") or prefill.auto.get("throttled")) and not prefill.auto.get("manual"):
         try:
             who = await netnames.annotate((cache_stats.summary().get("live_clients") or [])[:3], {x["host"] for x in load_servers()})
         except Exception:  # noqa: BLE001
@@ -6210,6 +6211,8 @@ class PrefillSettings(BaseModel):
     flags: dict
     yield_: bool = Field(True, alias="yield")
     yield_mbs: float = Field(2.0, ge=0.1, le=1000)
+    throttle_mbs: float = Field(5.0, ge=0.5, le=1000)
+    max_mbs: float = Field(0, ge=0, le=10000)
 
 
 @app.put("/api/prefill/settings", dependencies=auth)
@@ -6221,6 +6224,7 @@ async def prefill_settings(data: PrefillSettings):
              "top": max(0, min(100, int(f.get("top") or 0))), "all": bool(f.get("all")), "force": bool(f.get("force")),
              "verbose": bool(f.get("verbose")), "os": f.get("os") if f.get("os") in ("windows", "linux", "macos") else "windows"}
     out = prefill.save_settings({"schedule": data.schedule, "flags": flags, "yield": data.yield_, "yield_mbs": data.yield_mbs,
+                                 "throttle_mbs": data.throttle_mbs, "max_mbs": data.max_mbs,
                                  "server_games": data.server_games, "skip_cached": data.skip_cached})
     if data.server_games:
         try:
@@ -6275,7 +6279,7 @@ async def prefill2_get(svc: str):
             "login_url": prefill_more.login_url(text) if st and st.get("running") else None,
             "products": prefill_more.BNET_PRODUCTS if svc == "battlenet" else [],
             "queued": any(x.get("svc") == svc for x in prefill_more.queue()), "queue": [x.get("svc") for x in prefill_more.queue()],
-            "paused": prefill.auto.get("paused"), "pause_reason": prefill.auto.get("reason"),
+            "paused": prefill.auto.get("paused"), "throttled": prefill.auto.get("throttled"), "pause_reason": prefill.auto.get("reason"),
             "rate": (livestats.data.get(prefill_more.SERVICES[svc]["name"]) or {}).get("rx_bps")}
 
 

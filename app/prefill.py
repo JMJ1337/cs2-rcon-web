@@ -16,7 +16,7 @@ from . import automation, docker_api, store
 IMAGE = "tpill90/steam-lancache-prefill:latest"
 NAME = "steamprefill"
 SETTINGS = "prefill.json"
-DEFAULTS = {"server_games": True, "skip_cached": True, "last_full": None, "yield": True, "yield_mbs": 2.0, "schedule": "", "flags": {"recent": False, "recently_purchased": False, "top": 0, "all": False,
+DEFAULTS = {"server_games": True, "skip_cached": True, "last_full": None, "yield": True, "yield_mbs": 2.0, "throttle_mbs": 5.0, "max_mbs": 0, "schedule": "", "flags": {"recent": False, "recently_purchased": False, "top": 0, "all": False,
                                       "force": False, "verbose": False, "os": "windows"},
             "apps": [], "last_run": None, "last_scheduled": ""}
 
@@ -33,7 +33,8 @@ def settings() -> dict:
 
 def save_settings(data: dict) -> dict:
     s = settings()
-    for k in ("schedule", "flags", "apps", "last_run", "last_scheduled", "yield", "yield_mbs", "server_games", "skip_cached", "last_full"):
+    for k in ("schedule", "flags", "apps", "last_run", "last_scheduled", "yield", "yield_mbs", "throttle_mbs", "max_mbs",
+              "server_games", "skip_cached", "last_full"):
         if k in data:
             s[k] = data[k]
     store.save(SETTINGS, s)
@@ -298,9 +299,52 @@ async def pause(on: bool) -> None:
             pass
 
 
+# ---- Drosseln statt Pausieren: Download-Rate des Prefill-Containers per tc (Ingress-Policer) im eigenen Netz-Namespace ----
+_rate: dict[str, tuple] = {}          # Container -> (StartedAt, angewendete Rate in Bytes/s oder 0 = frei)
+throttle_ok: bool | None = None        # None = noch nicht probiert, False = geht nicht (dann wie früher pausieren)
+
+
+async def _apply_rate(name: str, bps: float) -> bool:
+    """bps = 0 -> keine Grenze. Hilfs-Container teilt sich das Netz mit dem Prefill (NET_ADMIN nur dort, nicht am Host)."""
+    global throttle_ok
+    if bps:
+        kbit = max(800, int(bps * 8 / 1000))
+        burst = max(256, int(bps / 10 / 1024))           # ~100 ms Puffer
+        tc = (f"tc qdisc add dev eth0 handle ffff: ingress && tc filter add dev eth0 parent ffff: protocol all prio 1 "
+              f"u32 match u32 0 0 police rate {kbit}kbit burst {burst}k drop flowid :1")
+    else:
+        tc = "true"
+    sh = (f"(command -v tc >/dev/null || apk add -q --no-cache iproute2 >/dev/null 2>&1) && "
+          f"(tc qdisc del dev eth0 ingress 2>/dev/null; true) && {tc} && echo ok")
+    try:
+        out = await docker_api.run_helper([], ["sh", "-c", sh], timeout=90,
+                                          host_extra={"NetworkMode": f"container:{name}", "CapAdd": ["NET_ADMIN"]})
+        throttle_ok = "ok" in out
+    except docker_api.DockerError:
+        throttle_ok = False
+    return bool(throttle_ok)
+
+
+async def set_rate(bps: float) -> bool:
+    ok = True
+    for n in await _running_names():
+        try:
+            started = ((await docker_api.inspect(n)).get("State") or {}).get("StartedAt")
+        except docker_api.DockerError:
+            continue
+        if _rate.get(n) == (started, bps):
+            continue
+        if await _apply_rate(n, bps):
+            _rate[n] = (started, bps)
+        else:
+            ok = False
+    return ok
+
+
 async def yield_check(cache_tx: float | None, prefill_rx: float | None, others_downloading: list[str],
                       lan_tx: float | None = None) -> None:
-    """Alle 5 s: Prefill pausieren, solange andere über den Cache laden (oder Server-Updates laufen), danach fortsetzen."""
+    """Alle 5 s: Prefill drosseln, solange andere über den Cache laden (oder Server-Updates laufen), danach wieder
+    auf volle (bzw. die eingestellte Höchst-)Geschwindigkeit. Geht Drosseln nicht, wird wie früher pausiert."""
     s = settings()
     names = await _running_names()
     running = bool(names)
@@ -312,33 +356,45 @@ async def yield_check(cache_tx: float | None, prefill_rx: float | None, others_d
         except docker_api.DockerError:
             pass
     if not running:
-        auto.update(paused=False, manual=False, since=None, reason=None, busy=0, quiet=0)
+        auto.update(paused=False, throttled=False, manual=False, since=None, reason=None, busy=0, quiet=0)
         return
     if auto.get("manual"):
         return
+    max_bps = float(s.get("max_mbs") or 0) * 1e6
+    thr_bps = float(s.get("throttle_mbs") or 5) * 1e6
+    if max_bps:
+        thr_bps = min(thr_bps, max_bps)
     if not s.get("yield"):
-        if is_paused and auto["paused"]:
+        if is_paused and auto.get("paused"):
             await pause(False)
-            auto.update(paused=False, since=None, reason=None)
+        auto.update(paused=False, throttled=False, since=None, reason=None)
+        await set_rate(max_bps)
         return
     limit = float(s.get("yield_mbs") or 2.0) * 1e6
     # Traffic an andere Clients = alles, was der Cache sendet, minus das, was Prefill selbst empfängt
     pr = 0 if is_paused else (prefill_rx or 0)
     others = max(0.0, (cache_tx or 0) - pr)
-    # Toleranz: Cache-Sendung und Prefill-Empfang werden nicht exakt gleichzeitig gemessen
     lan_busy = lan_tx is not None and lan_tx > limit
     busy = others > max(limit, 0.3 * pr) or bool(others_downloading) or lan_busy
     if busy:
         auto["busy"] += 1; auto["quiet"] = 0
     else:
         auto["quiet"] += 1; auto["busy"] = 0
-    # nur LAN-Upload (geschätzt, Plattenschreiben puffert stoßweise) -> erst nach 20 s pausieren
     need = 4 if lan_busy and not (others > max(limit, 0.3 * pr) or others_downloading) else 2
-    if not is_paused and auto["busy"] >= need:
-        await pause(True)
+    active = auto.get("paused") or auto.get("throttled")
+    if not active and auto["busy"] >= need:
         why = ("Server-Update: " + ", ".join(others_downloading)) if others_downloading else \
             (f"LAN-Clients laden {lan_tx / 1e6:.1f} MB/s" if lan_tx and lan_tx > limit else f"andere laden {others / 1e6:.1f} MB/s über den Cache")
-        auto.update(paused=True, since=time.time(), reason=why)
-    elif is_paused and auto["paused"] and auto["quiet"] >= 6:      # 30 s Ruhe
-        await pause(False)
-        auto.update(paused=False, since=None, reason=None)
+        if await set_rate(thr_bps):
+            auto.update(throttled=True, paused=False, since=time.time(), reason=why, rate=thr_bps)
+        else:                                   # Drosseln nicht möglich -> pausieren wie bisher
+            await pause(True)
+            auto.update(paused=True, throttled=False, since=time.time(), reason=why)
+    elif active and auto["quiet"] >= 6:         # 30 s Ruhe
+        if auto.get("paused") and is_paused:
+            await pause(False)
+        await set_rate(max_bps)
+        auto.update(paused=False, throttled=False, since=None, reason=None, rate=max_bps or None)
+    elif not active:
+        await set_rate(max_bps)                 # Höchstgeschwindigkeit (auch nach Neustart des Prefills) halten
+        auto["rate"] = max_bps or None

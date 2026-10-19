@@ -207,7 +207,8 @@
               <label><input type="checkbox" data-pf="verbose"> ausführliches Log</label>
               <label>Top-Spiele nach Spielerzahl <input type="number" min="0" max="100" data-pf="top" style="width:80px"> (0 = aus)</label>
               <label>Betriebssystem <select data-pf="os"><option value="windows">Windows</option><option value="linux">Linux</option><option value="macos">macOS</option></select></label>
-              <label><input type="checkbox" id="pfYield"> Pausieren, solange andere über den Cache laden (ab <input type="number" id="pfYieldMbs" min="0.1" step="0.5" style="width:70px"> MB/s) oder Server-Updates laufen</label>
+              <label><input type="checkbox" id="pfYield"> Drosseln auf <input type="number" id="pfThrottleMbs" min="0.5" step="1" style="width:70px"> MB/s, solange andere über den Cache laden (ab <input type="number" id="pfYieldMbs" min="0.1" step="0.5" style="width:70px"> MB/s) oder Server-Updates laufen</label>
+              <label>Höchstgeschwindigkeit des Prefills immer: <input type="number" id="pfMaxMbs" min="0" step="5" style="width:80px"> MB/s <span class="hint">(0 = unbegrenzt · gilt für Steam, Battle.net und Epic)</span></label>
               <label>Täglich automatisch um <input type="time" id="pfSchedule" style="width:120px"> (leer = aus)</label>
             </div>
             <div class="row" style="margin-top:10px"><button class="primary" id="pfSaveOpts">Speichern</button></div>
@@ -824,6 +825,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=118"></script>
+<script src="/static/app.js?v=119"></script>
 </body>
 </html>
