@@ -14,6 +14,9 @@ RE_IGNORE = re.compile(r"(0 errors|no error|error_log|ERROR_SUCCESS|errors: 0|Fa
                        r"Got EOF on stdin|Missing token|Matching server connection failed|"
                        r"\[S_API FAIL\]|SteamAPI_Init|ConVarRef|ignoring|deprecated)", re.I)
 
+# auch bei laufendem Server zeigen (alles andere nur, wenn er nicht läuft)
+RE_SERIOUS = re.compile(r"(No space left on device|Segmentation fault|Out of memory|OutOfMemoryError|Cannot allocate memory|panic:)", re.I)
+
 PHASES = {"downloading": "Lädt herunter", "verifying install": "Prüft Dateien", "verifying update": "Prüft Update",
           "preallocating": "Reserviert Speicher", "committing": "Installiert", "reconfiguring": "Konfiguriert",
           "staging": "Bereitet vor", "validating": "Prüft Dateien"}
@@ -58,11 +61,11 @@ def parse(text: str, container: str, started: float | None = None) -> dict:
         m = RE_STEAM_ERR.search(line)
         if m:
             errors.append({"t": t, "text": STEAM_STATES.get(m.group(2).lower(), "Steam-Update-Fehler")
-                           + f" ({m.group(2)})", "line": line[:300]})
+                           + f" ({m.group(2)})", "line": line[:300], "serious": m.group(2).lower() in ("0x202", "0x212")})
             progress = None
             continue
         if RE_ERROR.search(line) and not RE_IGNORE.search(line):
-            errors.append({"t": t, "text": line[:200], "line": line[:300]})
+            errors.append({"t": t, "text": line[:200], "line": line[:300], "serious": bool(RE_SERIOUS.search(line))})
     prev = state.get(container, {})
     now = time.time()
     rate = None

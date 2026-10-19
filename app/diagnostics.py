@@ -49,8 +49,24 @@ RULES = [
     (("satisfactory",), r"(Failed to bind to|LogNet: Error)",
      "Satisfactory-Netzwerkfehler", "Ports 7777 TCP+UDP und 8888 TCP prüfen (nicht doppelt belegt) und Container neu starten."),
 ]
+# Wie wichtig ist ein Fehler?  start = verhindert Start/Beitritt (nur zeigen, wenn der Server NICHT läuft)
+#                              online = auch bei laufendem Server wichtig · perf = bremst den Server (erst ab mehreren Treffern)
+SEVERITY = {
+    "Steam-Token wird schon benutzt": "online", "Steam-Token ungültig oder abgelaufen": "online",
+    "Speicherplatz voll": "online", "Zu wenig Arbeitsspeicher": "online",
+}
+PERF_RULES = [
+    (None, r"(Can't keep up!|server is overloaded|Server lagging|lagging behind|Hitch detected|took too long to (tick|update)|"
+           r"Server thread/WARN.*Running \d+ms or \d+ ticks behind|tick took \d{3,}ms|Server is running slow)",
+     "Server kommt nicht hinterher (Leistung)",
+     "Der Server schafft seine Rechenschritte nicht rechtzeitig – Spieler merken Ruckeln/Lags. CPU-Last prüfen, andere Server stoppen "
+     "oder weniger Spieler/kleinere Welt; bei NAS-Ordnern auch die NAS-Antwortzeit (Gesamtlast) beachten."),
+]
+PERF_MIN = 5          # so oft muss eine Leistungswarnung seit dem Start vorkommen, bevor sie angezeigt wird
+
 IGNORE = re.compile(r"(Failed to initialize SSL state|exclusive lock on .*Bad file descriptor|GU resource .* version mismatch|\[S_API FAIL\]|flock /sys/devices|SteamAPI_Init|breakpad|ConVarRef|Unknown command)", re.I)
 _COMPILED = [(g, re.compile(p, re.I), t, s) for g, p, t, s in RULES]
+_PERF = [(g, re.compile(p, re.I), t, s) for g, p, t, s in PERF_RULES]
 
 state: dict[str, dict] = {}     # Container -> {"problems": [...], "checked": t}
 
@@ -67,6 +83,7 @@ def _ts(line: str):
 
 def analyze(text: str, game: str, since: float | None = None) -> list[dict]:
     found: dict[str, dict] = {}
+    perf: dict[str, dict] = {}
     for raw in text.splitlines():
         t, line = _ts(raw)
         if since and t and t < since:
@@ -74,13 +91,33 @@ def analyze(text: str, game: str, since: float | None = None) -> list[dict]:
         line = re.sub(r"\x1b\[[0-9;]*m", "", line).strip()
         if not line or IGNORE.search(line):
             continue
+        hit = False
         for games, rx, title, sol in _COMPILED:
             if games and game not in games:
                 continue
             if rx.search(line):
-                found[title] = {"title": title, "solution": sol, "line": line[:240], "t": t}
+                found[title] = {"title": title, "solution": sol, "line": line[:240], "t": t, "sev": SEVERITY.get(title, "start")}
+                hit = True
                 break           # pro Zeile nur die genaueste Erklärung
+        if hit:
+            continue
+        for games, rx, title, sol in _PERF:
+            if (not games or game in games) and rx.search(line):
+                e = perf.setdefault(title, {"title": title, "solution": sol, "line": line[:240], "t": t, "sev": "perf", "count": 0})
+                e["count"] += 1
+                e["line"], e["t"] = line[:240], t
+    for title, e in perf.items():
+        if e["count"] >= PERF_MIN:
+            e["solution"] = f"{e['count']}× seit dem Start. " + e["solution"]
+            found[title] = e
     return sorted(found.values(), key=lambda x: -(x["t"] or 0))
+
+
+def relevant(problems: list[dict], online: bool) -> list[dict]:
+    """Nur zeigen, was zählt: läuft der Server, sind Startfehler (oft alte Fehlversuche/harmlose Zeilen) egal."""
+    if not online:
+        return problems
+    return [p for p in problems if p.get("sev") in ("online", "perf") or p.get("level") == "info"]
 
 
 def _hexip(h: str) -> str:
@@ -115,10 +152,10 @@ async def check(container: str, game: str, downloading: bool = False, cache_ips:
         restarts = info.get("RestartCount") or 0
         probs = analyze(text, game, None if restarts and st.get("Restarting") else (started - 5 if started else None))
         if st.get("OOMKilled"):
-            probs.insert(0, {"title": "Vom System wegen RAM beendet (OOM)", "line": "OOMKilled",
+            probs.insert(0, {"title": "Vom System wegen RAM beendet (OOM)", "line": "OOMKilled", "sev": "online",
                              "solution": "Mehr Arbeitsspeicher freigeben bzw. dem Server weniger RAM zuweisen (Minecraft: MEMORY).", "t": None})
         if st.get("Restarting") or (restarts >= 3 and started and time.time() - started < 600):
-            probs.append({"title": f"Container startet ständig neu ({restarts}×)", "line": st.get("Error") or "",
+            probs.append({"title": f"Container startet ständig neu ({restarts}×)", "line": st.get("Error") or "", "sev": "online",
                           "solution": "Siehe Fehler oben bzw. Log im Container-Tab – meist Port, Rechte oder Konfiguration.", "t": None})
         if downloading and cache_ips and st.get("Running"):
             try:

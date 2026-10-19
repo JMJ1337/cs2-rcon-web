@@ -1383,8 +1383,13 @@ async def overview(request: Request):
         if s.get("container"):
             ld = _loads.get(s["container"])
             item["load"] = {k: v for k, v in ld.items() if not k.startswith("_")} if ld else None
-            item["install"] = install_watch.state.get(s["container"])
-        probs = list((diagnostics.state.get(s.get("container") or "") or {}).get("problems") or [])
+            inst = install_watch.state.get(s["container"])
+            if inst and st.get("online") and inst.get("errors"):
+                # läuft der Server, sind einzelne „Error/Failed“-Zeilen im Log fast immer harmlos -> nicht anzeigen
+                inst = {**inst, "errors": [e for e in inst["errors"] if e.get("serious")]}
+            item["install"] = inst
+        probs = diagnostics.relevant(list((diagnostics.state.get(s.get("container") or "") or {}).get("problems") or []),
+                                     bool(st.get("online")))
         if st.get("online"):
             probs += diagnostics.status_hints(game_of(s), st)
         item["problems"] = probs
@@ -1649,9 +1654,12 @@ async def activity():
     for s in load_servers():
         c = s.get("container")
         st = install_watch.state.get(c) if c else None
-        if st and (st.get("progress") or st.get("errors")):
+        errs = (st or {}).get("errors") or []
+        if (_state.get(s["id"]) or {}).get("online"):
+            errs = [e for e in errs if e.get("serious")]      # läuft -> nur wirklich wichtige Logzeilen
+        if st and (st.get("progress") or errs):
             items.append({"server_id": s["id"], "name": s["name"], "game": game_of(s), "container": c,
-                          "progress": st.get("progress"), "errors": st.get("errors") or []})
+                          "progress": st.get("progress"), "errors": errs})
     try:
         pst = await prefill.container_state()
         if pst and pst.get("running"):
@@ -2787,7 +2795,8 @@ async def _monitor_once() -> None:
             m["inst"] = False
             notify.fire(f"✅ {name}: Installation/Update fertig, Server läuft.", event="install_done", key=f"inst-{sid}-{int(now // 600)}")
         # neue Fehler im Log
-        probs = {p.get("title") for p in ((diagnostics.state.get(c or "") or {}).get("problems") or [])} if c else set()
+        probs = {p.get("title") for p in diagnostics.relevant((diagnostics.state.get(c or "") or {}).get("problems") or [],
+                                                              bool(st.get("online")))} if c else set()
         for p in probs - m["probs"]:
             if p:
                 notify.fire(f"⚠️ {name}: {p}", event="problem", key=f"prob-{sid}-{p}")
