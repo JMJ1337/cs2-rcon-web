@@ -2256,7 +2256,9 @@ async def cache_history_api(range: str = "30d"):
         mdl = cache_model.model()
         out["model"] = {"total": round(mdl["total"]), "limit": mdl["limit"], "evictions": cache_model.evictions(30),
                         "offset": round(mdl["offset"]), "measured": mdl["measured"], "measured_at": mdl["measured_at"],
-                        "max_age": mdl["max_age"]}
+                        "max_age": mdl["max_age"], "inventory_at": mdl.get("inventory_at"),
+                        "inventory_sample": mdl.get("inventory_sample"),
+                        "unknown": round((cache_inventory.saved() or {}).get("unknown") or 0)}
     except Exception:  # noqa: BLE001
         log.exception("Cache-Modell")
         out["model"] = None
