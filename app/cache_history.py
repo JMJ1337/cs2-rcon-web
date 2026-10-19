@@ -12,6 +12,7 @@ IP_CAP = 30      # max. Clients je Tag
 _h: dict[int, dict] = {}          # Stunde -> {hb, mb, hr, mr, svc:{name:[h,m]}}
 _ips: dict[int, dict] = {}        # Tag -> {ip: bytes}
 _disk: dict[int, dict] = {}       # Tag -> {used,total}
+_ipdep: dict[int, dict] = {}      # Tag -> {ip: {depot/spiel: bytes}}  (was hat welcher Client geladen)
 meta = {"watermark": 0.0, "bf_cut": None, "bf_done": False, "bf_pos": 0, "bf_size": 0, "bf_lines": 0,
         "bf_error": None, "since": None}
 _loaded = False
@@ -30,6 +31,8 @@ def load():
         _ips[int(k)] = v
     for k, v in (raw.get("disk") or {}).items():
         _disk[int(k)] = v
+    for k, v in (raw.get("ipdep") or {}).items():
+        _ipdep[int(k)] = v
     meta.update(raw.get("meta") or {})
     _loaded = True
 
@@ -73,6 +76,10 @@ def add(svc: str, ip: str, ts: float, size: int, hit: bool, depot: str | None = 
     d = _ips.setdefault(day, {})
     if ip in d or len(d) < IP_CAP * 4:
         d[ip] = d.get(ip, 0) + size
+    if depot:
+        dd = _ipdep.setdefault(day, {}).setdefault(ip, {})
+        if depot in dd or len(dd) < 60:
+            dd[depot] = dd.get(depot, 0) + size
     if meta["since"] is None or ts < meta["since"]:
         meta["since"] = ts
     _dirty = True
@@ -161,6 +168,8 @@ def prune():
         del _ips[k]
     for k in [k for k in _disk if k < (now_h - KEEP_H) // 24]:
         del _disk[k]
+    for k in [k for k in _ipdep if k < (now_h - KEEP_H) // 24]:
+        del _ipdep[k]
     # Client-Listen pro Tag klein halten
     for day, d in _ips.items():
         if len(d) > IP_CAP * 4 and day < now_h // 24:
@@ -174,7 +183,8 @@ def maybe_save(force=False):
     if force or (_dirty and time.time() - _last_save > 300):
         prune()
         store.save(FILE, {"hours": {str(k): v for k, v in _h.items()}, "ips": {str(k): v for k, v in _ips.items()},
-                          "disk": {str(k): v for k, v in _disk.items()}, "meta": meta})
+                          "disk": {str(k): v for k, v in _disk.items()},
+                          "ipdep": {str(k): v for k, v in _ipdep.items()}, "meta": meta})
         _last_save = time.time()
         _dirty = False
 
@@ -224,6 +234,12 @@ def series(rng: str) -> dict:
         if day * 24 + 23 >= first:
             for ip, v in d.items():
                 ips[ip] += v
+    ipdep: dict = defaultdict(lambda: defaultdict(int))
+    for day, d in _ipdep.items():
+        if day * 24 + 23 >= first:
+            for ip, deps in d.items():
+                for dp, v in deps.items():
+                    ipdep[ip][dp] += v
     disk = [{"t": d * 86400, **v} for d, v in sorted(_disk.items()) if d * 24 + 23 >= first]
     total = tot["hit"] + tot["miss"]
     days = max(1, hours / 24)
@@ -235,7 +251,7 @@ def series(rng: str) -> dict:
         "peak": {"t": peak_h * 3600 if peak_h is not None else None, "bytes": peak_v, "bps": round(peak_v / 3600)},
         "services": sorted(({"name": s, "hit": a, "miss": m} for s, (a, m) in svc.items()),
                            key=lambda x: -(x["hit"] + x["miss"]))[:15],
-        "clients": sorted(({"ip": ip, "bytes": v} for ip, v in ips.items()), key=lambda x: -x["bytes"])[:10],
+        "clients": sorted(({"ip": ip, "bytes": v, "deps": dict(ipdep.get(ip) or {})} for ip, v in ips.items()), key=lambda x: -x["bytes"])[:25],
         "depots": {d: v for d, v in deps.items()},
         "disk": disk,
         "since": meta.get("since"),

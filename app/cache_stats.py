@@ -220,7 +220,7 @@ def summary() -> dict:
     hit_rate = sum(x[1] for x in win if x[2]) / 60
     return {"container": state["container"], "error": state["error"], "updated": state["updated"],
             "disk": state["disk"], "storage": {k: v for k, v in storage.items() if k != "running"} | {"busy": storage["running"]}, "rate_bps": round(rate), "hit_rate_bps": round(hit_rate), "live_clients": live_clients, "live_downloads": live_downloads,
-            "last_hour": agg(60), "last_day": agg(KEEP_MIN)}
+            "last_5m": agg(5), "last_hour": agg(60), "last_day": agg(KEEP_MIN)}
 
 
 BF_CHUNK = 16_000_000

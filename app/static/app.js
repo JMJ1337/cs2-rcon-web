@@ -643,7 +643,8 @@ function savedCard(bytes, label){
 }
 async function refreshCache(){
   try { cacheData = await api("/api/cache"); } catch { return; }
-  const c = cacheData, h = c.last_hour || {}, d = c.last_day || {};
+  const c = cacheData, h = c.last_hour || {}, liveRange = view === "dash" && metricsRange <= 5;
+  const d = (liveRange ? c.last_5m : c.last_day) || {}, rl = liveRange ? "5 Min." : "24 h";
   $("#hlCache").classList.toggle("hidden", !c.container);
   $("#hlNetRow").classList.toggle("hidden", !c.container);
   const cn = c.net || {}, live = cn.tx_bps != null ? cn.tx_bps : (c.rate_bps || 0);
@@ -651,7 +652,8 @@ async function refreshCache(){
     const pct = Math.min(100, live / LINK_BPS * 100);
     if (!lastLive) { tween($("#hlNet"), live, v => fmtRate(v)); $("#hlNetBar").style.width = Math.max(pct, live ? 2 : 0) + "%"; }
     $("#hlNetRow").title = `Lancache an Clients (Netzwerk des Containers, Balken = Anteil an 1 Gbit/s)` + (cn.rx_bps != null ? ` · aus dem Internet ${fmtRate(cn.rx_bps)}` : "");
-    $("#hlCache").innerHTML = `Lancache: ${d.hit_ratio != null ? d.hit_ratio + " % aus dem Cache (24 h)" : "noch keine Daten"}`;
+    const dd = c.last_day || {};
+    $("#hlCache").innerHTML = `Lancache: ${dd.hit_ratio != null ? dd.hit_ratio + " % aus dem Cache (24 h)" : "noch keine Daten"}`;
   }
   if (view !== "dash") return;
   if (!c.container){
@@ -662,12 +664,12 @@ async function refreshCache(){
   const svc = svcRows(d.services);
   $("#cachePanel").innerHTML = `<div class="dsect"><h3 class="dhead"><span class="gtile" style="background:#7fb3a6">${gicon("cache", 16)}</span>Lancache <span class="hint">${esc(c.container)}${c.error ? " · " + esc(c.error) : ""}</span></h3>
     <div class="cards cachecards">
-      <div class="card"><div class="k">Aus dem Cache (24 h)</div><div class="v" style="color:var(--ok)">${fmtBytes(d.hit_bytes)}</div><div class="s">${d.hit_ratio != null ? d.hit_ratio + " % Trefferquote" : "noch keine Downloads"}</div></div>
-      <div class="card"><div class="k">Aus dem Internet (24 h)</div><div class="v">${fmtBytes(d.miss_bytes)}</div><div class="s">${(d.requests || 0).toLocaleString("de-DE")} Anfragen</div></div>
+      <div class="card"><div class="k">Aus dem Cache (${rl})</div><div class="v" style="color:var(--ok)">${fmtBytes(d.hit_bytes)}</div><div class="s">${d.hit_ratio != null ? d.hit_ratio + " % Trefferquote" : "noch keine Downloads"}</div></div>
+      <div class="card"><div class="k">Aus dem Internet (${rl})</div><div class="v">${fmtBytes(d.miss_bytes)}</div><div class="s">${(d.requests || 0).toLocaleString("de-DE")} Anfragen</div></div>
       <div class="card"><div class="k">Durchsatz jetzt</div><div class="v">↑ ${fmtRate(live)}</div><div class="s">${cn.rx_bps != null ? `↓ ${fmtRate(cn.rx_bps)} aus dem Internet · ` : ""}letzte Std. ${fmtBytes((h.hit_bytes||0)+(h.miss_bytes||0))}</div></div>
       ${storageCard(c.storage, c.disk)}
     </div>
-    ${svc ? `<div class="panel" style="padding:12px 16px"><h2 style="margin-bottom:6px">Was wurde ausgeliefert? <span class="hint">(letzte 24 h, nach Dienst)</span> <a href="#" class="hint" style="float:right" onclick="showView('cache');return false">Verlauf bis 1 Jahr →</a></h2>
+    ${svc ? `<div class="panel" style="padding:12px 16px"><h2 style="margin-bottom:6px">Was wurde ausgeliefert? <span class="hint">(letzte ${rl}, nach Dienst)</span> <a href="#" class="hint" style="float:right" onclick="showView('cache');return false">Verlauf bis 1 Jahr →</a></h2>
       <div style="overflow:auto"><table class="cachetable"><thead><tr><th>Dienst</th><th>aus dem Cache</th><th>aus dem Internet</th><th>gesamt</th><th>Trefferquote</th><th></th></tr></thead><tbody>${svc}</tbody></table></div></div>`
       : `<div class="hint" style="margin-bottom:14px">In den letzten 24 Stunden wurde nichts über den Lancache geladen.</div>`}
     ${gamesTable(c.games_24h, "letzte 24 h")}
@@ -2423,7 +2425,8 @@ async function loadCacheHistory(){
   const dn = c.disk_now, dpct = dn ? Math.round(dn.used / dn.total * 100) : null;
   const diskVals = (c.disk || []).map(d => Math.round(d.used / d.total * 100));
   const cmax = Math.max(1, ...(c.clients || []).map(x => x.bytes));
-  const clients = (c.clients || []).map(x => `<tr><td><b>${esc(x.name || "unbekannt")}</b><div class="hint mono">${esc(x.ip)}</div></td>
+  const clients = (c.clients || []).map(x => `<tr><td><b>${esc(x.name || "unbekannt")}</b><div class="hint mono">${esc((x.ips || [x.ip]).join(", "))}</div>
+      ${(x.games || []).length ? `<div class="hint" style="margin-top:3px">${x.games.map(g => `${esc(g.name)} <span class="mono">${fmtBytes(g.bytes)}</span>`).join(" · ")}</div>` : ""}</td>
     <td style="min-width:120px;width:40%"><div class="cachebar"><i style="width:${(x.bytes / cmax * 100).toFixed(1)}%;background:#4f9dde"></i></div></td>
     <td class="mono">${fmtBytes(x.bytes)}</td></tr>`).join("");
   $("#cacheHist").innerHTML = `${bfHtml}
@@ -2462,8 +2465,8 @@ let cacheLiveMetrics = null, cacheLiveAt = 0;
 async function loadCacheLive(){
   let c, l;
   try { [c, l] = await Promise.all([api("/api/cache"), api("/api/cache/log?lines=60")]); } catch { return; }
-  if (Date.now() - cacheLiveAt > 30000){
-    try { cacheLiveMetrics = (await api("/api/metrics?minutes=60"))._cache; cacheLiveAt = Date.now(); } catch {}
+  if (Date.now() - cacheLiveAt > 10000){
+    try { cacheLiveMetrics = (await api("/api/metrics?minutes=5"))._cache; cacheLiveAt = Date.now(); } catch {}
   }
   if (view !== "cache") return;
   const rows = (l.log || "").trim().split("\n").reverse().map(line => {
@@ -2471,7 +2474,7 @@ async function loadCacheLive(){
     if (!m) return "";
     const hit = m[8] === "HIT";
     return `<tr><td class="mono hint">${esc(m[3].split(":").slice(1, 4).join(":").split(" ")[0])}</td><td><div class="row" style="gap:6px;flex-wrap:nowrap">${svcIcon(m[1], 13)}${esc(cacheName(m[1]))}</div></td>
-      <td class="mono">${esc(m[2])}</td><td class="mono">${fmtBytes(+m[7])}</td><td style="color:${hit ? "var(--ok)" : "var(--muted)"}">${hit ? "aus dem Cache" : esc(m[8] === "-" ? "–" : "aus dem Internet")}</td>
+      <td>${(l.names || {})[m[2]] ? `<b>${esc(l.names[m[2]])}</b><div class="hint mono" style="font-size:11px">${esc(m[2])}</div>` : `<span class="mono">${esc(m[2])}</span>`}</td><td class="mono">${fmtBytes(+m[7])}</td><td style="color:${hit ? "var(--ok)" : "var(--muted)"}">${hit ? "aus dem Cache" : esc(m[8] === "-" ? "–" : "aus dem Internet")}</td>
       <td class="mono hint" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(m[9] + m[5])}">${esc(m[9])}</td></tr>`;
   }).filter(Boolean).slice(0, 15).join("");
   $("#cacheLive").innerHTML = `<div class="panel" style="padding:12px 16px;margin-bottom:14px">

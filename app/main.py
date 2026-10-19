@@ -2041,7 +2041,10 @@ DNS_CHECK_SH = "getent hosts lancache.steamcontent.com 2>/dev/null | head -1 || 
 async def cache_log(lines: int = 40):
     """Letzte Zeilen des Lancache-access.log (Live-Ansicht)."""
     try:
-        return {"container": cache_stats.state["container"], "log": await cache_stats.tail(lines)}
+        text = await cache_stats.tail(lines)
+        ips = sorted(set(re.findall(r"^\[[^\]]*\] (\S+) ", text, re.M)))[:30]
+        ann = await netnames.annotate([{"ip": i} for i in ips], {x["host"] for x in load_servers()})
+        return {"container": cache_stats.state["container"], "log": text, "names": {a["ip"]: a.get("name") for a in ann}}
     except docker_api.DockerError as e:
         raise HTTPException(502, str(e))
 
@@ -2181,8 +2184,29 @@ async def cache_history_api(range: str = "30d"):
     out["storage"] = _storage_view()
     out["games"] = _enrich_games(depots.games(out.pop("depots", {}) or {})[:30])
     asyncio.create_task(depots.run())
-    out["clients"] = await netnames.annotate(out["clients"], {x["host"] for x in load_servers()})
+    out["clients"] = _merge_clients(await netnames.annotate(out["clients"], {x["host"] for x in load_servers()}))
     return out
+
+
+def _merge_clients(clients: list[dict]) -> list[dict]:
+    """Gleicher Rechnername (ohne Groß/Klein) = ein Client: Mengen addieren, IPs sammeln, geladene Spiele dazu."""
+    by: dict = {}
+    for c in clients:
+        nm = (c.get("name") or "").strip()
+        key = nm.lower() if nm and nm.lower() not in ("unbekannt", "?") else f"ip:{c['ip']}"
+        e = by.get(key)
+        if e is None:
+            e = by[key] = {"name": nm or None, "ip": c["ip"], "ips": [], "bytes": 0, "deps": {}}
+        e["bytes"] += c.get("bytes") or 0
+        e["ips"].append(c["ip"])
+        for d, v in (c.get("deps") or {}).items():
+            e["deps"][d] = e["deps"].get(d, 0) + v
+    out = []
+    for e in by.values():
+        games = depots.games({d: [0, v] for d, v in e.pop("deps").items()})
+        e["games"] = [{"name": g["name"], "bytes": g["miss"], "service": g.get("service"), "app": g.get("app")} for g in games[:6]]
+        out.append(e)
+    return sorted(out, key=lambda x: -x["bytes"])[:10]
 
 
 def _storage_view() -> dict:
