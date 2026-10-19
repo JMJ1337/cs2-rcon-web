@@ -1648,6 +1648,15 @@ async def delete_full(sid: str, data: DeleteIn):
     return job
 
 
+def _pf_limit() -> dict:
+    """Aktuelle Prefill-Grenze für die Anzeige: gedrosselt (mit Rate) oder die eingestellte Höchstgeschwindigkeit."""
+    a, st = prefill.auto, prefill.settings()
+    mx = float(st.get("max_mbs") or 0) * 1e6
+    if a.get("throttled"):
+        return {"bps": a.get("rate"), "kind": "gedrosselt", "reason": a.get("reason")}
+    return {"bps": mx or None, "kind": "max" if mx else "frei"}
+
+
 @app.get("/api/activity", dependencies=auth)
 async def activity():
     """Laufende Installationen/Updates, Fehler aus den Logs und Anlege-Jobs (für die Seitenleiste)."""
@@ -1674,7 +1683,7 @@ async def activity():
             items.append({"server_id": None, "name": "SteamPrefill" + (f": {cur['name']}" if cur else ""), "game": "prefill",
                           "container": prefill.NAME, "errors": [], "prefill": True,
                           "progress": {"label": "Vorladen", "pct": cur["pct"] if cur else 0.0, "rate": d.get("rx_bps"),
-                                       "apps_done": done, "apps_total": len(pp["apps"])}, "svc": "steam"})
+                                       "apps_done": done, "apps_total": len(pp["apps"]), "limit": _pf_limit()}, "svc": "steam"})
     except docker_api.DockerError:
         pass
     for svc, sv in prefill_more.SERVICES.items():      # Battle.net / Epic
@@ -1691,7 +1700,7 @@ async def activity():
             items.append({"server_id": None, "name": f"{sv['label']}-Prefill" + (": Anmeldung nötig" if waiting else f": {cur['name']}" if cur else ""),
                           "game": "prefill", "container": sv["name"], "errors": [], "prefill": True, "svc": svc,
                           "progress": {"label": "wartet auf Anmeldung" if waiting else "Vorladen", "pct": cur["pct"] if cur else 0.0,
-                                       "rate": d.get("rx_bps"), "apps_done": done, "apps_total": len(pp["apps"])}})
+                                       "rate": d.get("rx_bps"), "apps_done": done, "apps_total": len(pp["apps"]), "limit": _pf_limit()}})
         except docker_api.DockerError:
             pass
     jobs = [{"id": j["id"], "game": j["game"], "step": j["step"], "error": j["error"], "done": j["done"],

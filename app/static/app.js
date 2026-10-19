@@ -2448,7 +2448,7 @@ async function refreshActivity(){
       parts.push(`<div class="act" data-act-prefill="${esc(it.svc || "steam")}" title="Prefill öffnen">
         <div class="t">${gicon("prefill", 14)}<span class="n">${esc(it.name)}</span></div>
         <div class="bar"><i style="width:${Math.min(100, p.pct)}%"></i></div>
-        <div class="s">${p.label && p.label !== "Vorladen" ? esc(p.label) + " · " : ""}${p.pct.toFixed(0)} %${p.rate != null ? " · " + fmtRate(p.rate) : ""}${p.apps_total ? ` · Spiel ${Math.min(p.apps_done + 1, p.apps_total)}/${p.apps_total}` : ""}</div></div>`);
+        <div class="s">${p.label && p.label !== "Vorladen" ? esc(p.label) + " · " : ""}${p.pct.toFixed(0)} %${p.rate != null ? " · " + fmtRate(p.rate) : ""}${p.limit ? (p.limit.kind === "gedrosselt" ? ` <span style="color:var(--accent)" title="${esc(p.limit.reason || "")}">🐢 max ${fmtRate(p.limit.bps || 0)}</span>` : p.limit.bps ? ` / max ${fmtRate(p.limit.bps)}` : " / max ∞") : ""}${p.apps_total ? ` · Spiel ${Math.min(p.apps_done + 1, p.apps_total)}/${p.apps_total}` : ""}</div></div>`);
       return;
     }
     parts.push(`<div class="act" data-act-sid="${esc(it.server_id)}" title="${esc(it.container)}">
