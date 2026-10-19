@@ -129,9 +129,9 @@ CATALOG = {
 def _src(label, short, color, appid, tag, game_id, params, host_port, hint=""):
     """Source-/GoldSrc-Server von ich777: ein Port (TCP+UDP), Status per A2S, Beitreten per steam://connect."""
     e = {"label": label, "short": short, "color": color, "appid": appid, "image": _ich(tag), "uid": 99, "gid": 100,
-         "env": ICH_ENV + [f"GAME_ID={game_id}"], "binds": ICH_BINDS, "params": params,
+         "env": ICH_ENV + [f"GAME_ID={game_id}", "GAME_PORT={port}"], "binds": ICH_BINDS, "params": params,
          "ports": [["port", "Spielport (TCP+UDP)", host_port, "tcp,udp", 27015]], "web": True,
-         "status": ("a2s", "port"), "join": ("steam", "port")}
+         "status": ("a2s", "port"), "join": ("steam", "port"), "port_params": {"port": "-port"}}
     if hint:
         e["hint"] = hint
     return e
@@ -220,6 +220,49 @@ CATALOG.update({
                       hint="Beitreten per Game-ID: Die ID steht nach dem Start im Container-Log bzw. in GameID.txt."),
 })
 
+# ---- Freigegebener Portbereich (Router-Weiterleitung, z. B. 27000–27100) ----
+# Ein Spiel darf in den Bereich verschoben werden, wenn es auf einem beliebigen Port läuft UND den Port richtig meldet:
+# - "port_params": Ports als Startparameter -> innen = außen (Steam-Liste und Beitreten stimmen)
+# - "port_env":    Spiel liest seine Ports aus Umgebungsvariablen -> innen = außen
+# - "port_map_ok": reine Direktverbindung (IP:Port eintippen) -> Docker-Umleitung außen->innen genügt
+# Alles andere bleibt auf den Standardports (Ports stehen fest in Konfigdateien oder werden falsch gemeldet).
+_MOVE = {
+    "l4d2": {"port_params": {"port": "-port"}, "env_add": ["GAME_PORT={port}"]},
+    "garrysmod": {"port_params": {"port": "-port"}, "env_add": ["GAME_PORT={port}"]},
+    "insurgency": {"port_params": {"port": "-Port=", "query_port": "-QueryPort="}},
+    "quakelive": {"port_params": {"port": "+set net_port"}},
+    "killingfloor2": {"port_params": {"port": "-Port=", "query_port": "-QueryPort="}},
+    "palworld": {"port_params": {"port": "-port=", "query_port": "-QueryPort="}},
+    "abioticfactor": {"port_params": {"port": "-Port=", "query_port": "-QueryPort="}},
+    "icarus": {"port_params": {"port": "-Port=", "query_port": "-QueryPort="}},
+    "soulmask": {"port_params": {"port": "-Port=", "query_port": "-QueryPort="}},
+    "mordhau": {"port_params": {"port": "-Port=", "query_port": "-QueryPort=", "port3": "-BeaconPort="}},
+    "necesse": {"port_params": {"port": "-port"}},
+    "enshrouded": {"port_env": True},
+    "terraria": {"port_map_ok": True},
+    "openttd": {"port_map_ok": True},
+    "amongus": {"port_map_ok": True},
+}
+for _k, _m in _MOVE.items():
+    if _k in CATALOG:
+        _c = CATALOG[_k]
+        if "env_add" in _m:
+            _c["env"] = _c["env"] + [e for e in _m["env_add"] if e not in _c["env"]]
+        for _x in ("port_params", "port_env", "port_map_ok"):
+            if _x in _m:
+                _c[_x] = _m[_x]
+if "enshrouded" in CATALOG:
+    CATALOG["enshrouded"]["env"] = [("GAME_PORT={port}" if e.startswith("GAME_PORT=") else "QUERY_PORT={query_port}" if e.startswith("QUERY_PORT=") else e)
+                                    for e in CATALOG["enshrouded"]["env"]]
+# Ports, die nur im LAN gebraucht werden (Verwaltung) – nie in den freigegebenen Bereich
+LAN_ONLY_FIELDS = {"rcon_port", "admin_port", "web_port", "http_port", "web_ui"}
+
+
+def movable(key: str) -> bool:
+    c = CATALOG.get(key) or {}
+    return bool(c.get("port_params") or c.get("port_env") or c.get("port_map_ok"))
+
+
 def fields(key: str) -> list:
     c = CATALOG[key]
     out = [["name", "Container-Name", "text", f"{key}-{{n}}", ""]]
@@ -238,7 +281,10 @@ def fields(key: str) -> list:
 
 def port_plan(key: str) -> list:
     c = CATALOG[key]
-    plan = [(f, d, 1, 1) for f, _, d, _, _ in c["ports"]]
+    mv = movable(key)
+    plan = [(f, d, 1, 1, mv and f not in LAN_ONLY_FIELDS and not (key == "rust" and f == "rcon_port")) for f, _, d, _, _ in c["ports"]]
+    if key == "rust":                     # Rust: Ports schon als Startparameter, liegt im Bereich
+        plan = [(f, d, 1, 1, f != "rcon_port") for f, _, d, _, _ in c["ports"]]
     if c.get("web"):
-        plan.append(("web_port", 9040, 1, 1))
+        plan.append(("web_port", 9040, 1, 1, False))
     return plan

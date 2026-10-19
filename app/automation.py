@@ -41,6 +41,7 @@ DEFAULT_SETTINGS = {
     "container_dns": "",        # DNS für neue Spielserver-Container (leer = Lancache-DNS automatisch)
     "auto_bots": True,          # CS2: allein auf dem Server -> Bots (nicht in Competitive/Wingman)
     "auto_matchzy": True,       # CS2: MatchZy nur in Competitive/Wingman geladen
+    "port_range": "27000-27100",    # im Router weitergeleiteter Portbereich – neue Server bekommen ihre Internet-Ports von hier
 }
 
 
@@ -60,7 +61,7 @@ def get_settings() -> dict:
 def save_settings(data: dict) -> dict:
     cur = get_settings()
     for k in ("modes", "map_rules", "public_url", "internet_host", "watch_interval", "scan_interval", "scan_subnets",
-              "games_base", "cache_container", "cs2_template_src", "hostname_pattern", "names_pattern", "container_dns", "auto_bots", "auto_matchzy"):
+              "games_base", "cache_container", "cs2_template_src", "hostname_pattern", "names_pattern", "container_dns", "auto_bots", "auto_matchzy", "port_range"):
         if k in data:
             cur[k] = data[k]
     store.save(SETTINGS_FILE, cur)

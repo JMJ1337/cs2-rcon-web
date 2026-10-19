@@ -4669,8 +4669,9 @@ async def suggest(game: str):
     names = {s.get("container") for s in load_servers()} | {s["name"] for s in load_servers()}
     while any(x and str(n) in x and game in x.lower() for x in names) and n < 99:
         n += 1
-    return {"values": templates.suggest_ports(game, set(used)), "n": n,
-            "used": sorted(used)[:500]}
+    rng = templates.parse_range(automation.get_settings().get("port_range"))
+    vals = templates.suggest_ports(game, set(used), rng)
+    return {"values": vals, "n": n, "used": sorted(used)[:500], "port_range": templates.range_info(game, vals, rng)}
 
 
 class CreateIn(BaseModel):
@@ -6368,7 +6369,8 @@ async def create_batch(data: BatchIn, request: Request):
             for k in ("name", "server_name", "memo"):
                 if k in vals:
                     vals[k] = _renumber(vals[k], data.n, n)
-            vals.update({k: str(v) for k, v in templates.suggest_ports(data.game, used).items()})
+            vals.update({k: str(v) for k, v in templates.suggest_ports(
+                data.game, used, templates.parse_range(automation.get_settings().get("port_range"))).items()})
             vals.pop("token", None)           # jeder Server bekommt seinen eigenen Token
         try:
             b = templates.build(data.game, vals, _renumber(data.data_dir, data.n, n) if i else data.data_dir)

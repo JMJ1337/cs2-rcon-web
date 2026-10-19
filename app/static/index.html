@@ -331,6 +331,7 @@
             <div class="field"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="setAutoBots" style="width:auto"> CS2: allein auf dem Server → mit Bots auffüllen (nicht in Competitive/Wingman)</label>
               <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="setAutoMz" style="width:auto"> CS2: MatchZy nur in Competitive/Wingman laden (sonst entladen)</label></div>
             <div class="field"><label>Öffentliche Adresse für Besucher aus dem Internet (IP oder DNS-Name; leer = automatisch ermitteln)</label><input id="setInternetHost" placeholder="z. B. lan.groh-pa.de" class="mono" maxlength="120"></div>
+            <div class="field"><label>Im Router freigegebener Portbereich (neue Server bekommen ihre Internet-Ports von hier)</label><input id="setPortRange" placeholder="27000-27100" class="mono" maxlength="20"></div>
             <div class="field"><label>DNS für neue Spielserver-Container (leer = Lancache-DNS automatisch erkennen)</label><input id="setContainerDns" placeholder="z. B. 192.168.200.27" class="mono" maxlength="100"></div>
           </div>
           <div class="hint" style="margin-top:6px">Leer = Adresse aus dem Browser. Die CS2-Server laden Match-Configs von dieser Adresse – also die LAN-IP verwenden, nicht „localhost“.</div>
@@ -823,6 +824,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=114"></script>
+<script src="/static/app.js?v=115"></script>
 </body>
 </html>

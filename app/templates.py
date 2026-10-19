@@ -119,18 +119,21 @@ for _k, _c in _catalog.CATALOG.items():
     TEMPLATES[_k] = {"label": _c["label"], "image": _c["image"], "uid": _c["uid"], "gid": _c.get("gid", _c["uid"]),
                      "data_default": "{base}/" + _k + "/{name}", "fields": _catalog.fields(_k), "hint": _c.get("hint", "")}
 
-# Port-Vergabe: (Feld, Startport, Schrittweite, belegte Ports pro Server)
+# Port-Vergabe: (Feld, Startport, Schrittweite, belegte Ports pro Server, ins Internet freigeben?)
+# Ports mit True landen im freigegebenen Bereich (Einstellung „port_range“, Standard 27000–27100);
+# Verwaltungsports (RCON, Query fürs Tool, Webkonsole) bleiben außerhalb, die braucht nur das LAN.
 PORT_PLAN = {
-    "cs2": [("port", 27031, 1, 1), ("tv_port", 27021, 1, 1)],   # CS #n: 2703n / CSTV 2702n (27015/27016 bleiben für Wreckfest)
-    "factorio": [("port", 34197, 1, 1), ("rcon_port", 27100, 1, 1)],
-    "satisfactory": [("port", 7777, 1, 1), ("msg_port", 8888, 1, 1)],
-    "valheim": [("port", 2456, 2, 2)],                       # Spielport + Query-Port (+1)
-    "tf2": [("port", 27045, 1, 1), ("tv_port", 27055, 1, 1)],
-    "minecraft": [("port", 25565, 1, 1)],
-    "teamspeak": [("port", 9987, 1, 1), ("query_port", 10011, 1, 1), ("file_port", 30033, 1, 1)],
-    "wreckfest": [("port", 33540, 1, 1), ("steam_port", 27015, 1, 1), ("query_port", 27016, 1, 1), ("web_port", 9028, 1, 1)],   # Originalports
+    "cs2": [("port", 27031, 1, 1, True), ("tv_port", 27021, 1, 1, True)],   # CS #n: 2703n / CSTV 2702n
+    "factorio": [("port", 34197, 1, 1, True), ("rcon_port", 27500, 1, 1, False)],
+    "satisfactory": [("port", 7777, 1, 1, True), ("msg_port", 8888, 1, 1, True)],
+    "valheim": [("port", 2456, 2, 2, True)],                       # Spielport + Query-Port (+1)
+    "tf2": [("port", 27045, 1, 1, True), ("tv_port", 27055, 1, 1, True)],
+    "minecraft": [("port", 25565, 1, 1, True)],
+    "teamspeak": [("port", 9987, 1, 1, True), ("query_port", 10011, 1, 1, False), ("file_port", 30033, 1, 1, True)],
+    "wreckfest": [("port", 33540, 1, 1, True), ("steam_port", 27015, 1, 1, True), ("query_port", 27016, 1, 1, True),
+                  ("web_port", 9028, 1, 1, False)],
 }
-
+RESERVED = {27015, 27016, 27017}     # Wreckfest (Steam/Query, unter Wine fest 27017) – nur für Wreckfest selbst
 
 for _k in _catalog.CATALOG:
     PORT_PLAN[_k] = _catalog.port_plan(_k)
@@ -145,17 +148,59 @@ for _t in TEMPLATES.values():
             _f[3] = DEFAULT_JOIN_PW
 
 
-def suggest_ports(game: str, used: set[int]) -> dict:
+def parse_range(txt) -> tuple[int, int] | None:
+    m = re.fullmatch(r"\s*(\d{1,5})\s*[-–:]\s*(\d{1,5})\s*", str(txt or ""))
+    if not m:
+        return None
+    lo, hi = int(m.group(1)), int(m.group(2))
+    return (lo, hi) if 1 <= lo < hi <= 65535 else None
+
+
+def suggest_ports(game: str, used: set[int], rng: tuple[int, int] | None = None) -> dict:
+    """Freie Ports vorschlagen. Internet-Ports in den freigegebenen Bereich, wenn das Spiel das mitmacht.
+    Ist der Bereich voll, bleibt der Standardport (Hinweis im Formular)."""
     taken = set(used)
     out = {}
-    for field, base, step, span in PORT_PLAN.get(game, []):
-        p = base
-        while any((p + i) in taken for i in range(span)) and p < 65000:
-            p += step
+    for entry in PORT_PLAN.get(game, []):
+        field, base, step, span = entry[:4]
+        wan = entry[4] if len(entry) > 4 else False
+        blocked = (lambda q: q in taken or (q in RESERVED and game != "wreckfest"))
+        p = None
+        if wan and rng:
+            lo, hi = rng
+            start = base if lo <= base <= hi - span + 1 else lo
+            for cand in list(range(start, hi - span + 2, step)) + list(range(lo, start, 1)):
+                if not any(blocked(cand + i) for i in range(span)):
+                    p = cand
+                    break
+        if p is None:
+            p = base
+            while any(blocked(p + i) for i in range(span)) and p < 65000:
+                p += step
         for i in range(span):
             taken.add(p + i)
         out[field] = p
     return out
+
+
+def range_info(game: str, values: dict, rng: tuple[int, int] | None) -> dict:
+    """Welche Internet-Ports liegen außerhalb des Bereichs? (für den Hinweis beim Anlegen)"""
+    if not rng:
+        return {"range": None, "outside": [], "movable": True}
+    lo, hi = rng
+    out = []
+    for entry in PORT_PLAN.get(game, []):
+        f, _b, _st, span = entry[:4]
+        if len(entry) > 4 and not entry[4]:
+            continue
+        try:
+            p = int(values.get(f))
+        except (TypeError, ValueError):
+            continue
+        if not (lo <= p and p + span - 1 <= hi):
+            out.append({"field": f, "port": p})
+    mv = game not in _catalog.CATALOG or _catalog.movable(game) or game == "rust"
+    return {"range": f"{lo}–{hi}", "outside": out, "movable": mv}
 
 
 def host_ports(spec: dict) -> list[int]:
@@ -286,13 +331,17 @@ def build(game: str, v: dict, data_dir: str) -> dict:
         sub = {"data": data_dir, "params": (v.get("params") if v.get("params") is not None else c.get("params", "")),
                "steam_user": v.get("steam_user") or "", "steam_pw": v.get("steam_pw") or "", "host": v.get("_host") or "",
                "port": vals.get("port", ""), **{f[0]: v.get(f[0]) or "" for f in c.get("fields", [])}}
+        sub.update({f: vals[f] for f in vals})
         pp = c.get("port_params") or {}
         if pp:      # Spiel bekommt seine Ports als Startparameter -> innen = außen (wichtig für Steam-Liste/Beitreten)
-            base = re.sub(r"\s*(" + "|".join(re.escape(x) for x in pp.values()) + r")\s+\S+", "", sub["params"] or "")
-            sub["params"] = (base + " " + " ".join(f"{pp[f]} {vals[f]}" for f in pp if f in vals)).strip()
+            base = sub["params"] or ""
+            for flag in pp.values():
+                base = re.sub(r"\s*" + re.escape(flag) + (r"\S*" if flag.endswith("=") else r"\s+\S+"), "", base)
+            sub["params"] = (base + " " + " ".join((f"{pp[f]}{vals[f]}" if pp[f].endswith("=") else f"{pp[f]} {vals[f]}")
+                                                   for f in pp if f in vals)).strip()
         env = [e.format(**sub) for e in c["env"]]
         for f, _lbl, _d, protos, cport in c["ports"]:
-            if f in pp:
+            if f in pp or c.get("port_env"):
                 cport = vals[f]
             for proto in protos.split(","):
                 exposed[f"{cport}/{proto}"] = {}

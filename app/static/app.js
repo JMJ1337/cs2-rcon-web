@@ -1627,6 +1627,7 @@ function renderAuto(){
   $("#setInternetHost").value = settings.internet_host || "";
   $("#setAutoBots").checked = settings.auto_bots !== false; $("#setAutoMz").checked = settings.auto_matchzy !== false;
   $("#setContainerDns").value = settings.container_dns || "";
+  $("#setPortRange").value = settings.port_range || "27000-27100";
   $$("[data-mdel]").forEach(b => b.onclick = () => { readAuto(); settings.modes.splice(+b.dataset.mdel, 1); renderAuto(); });
   $$("[data-rdel]").forEach(b => b.onclick = () => { readAuto(); settings.map_rules.splice(+b.dataset.rdel, 1); renderAuto(); });
 }
@@ -1644,7 +1645,7 @@ $("#btnAutoSave").onclick = async () => {
       public_url: $("#setPublicUrl").value.trim(), watch_interval: parseInt($("#setInterval").value, 10) || 10,
       scan_interval: Math.max(0, parseInt($("#setScanInterval").value, 10) || 0), scan_subnets: $("#setScanSubnets").value.trim(),
       games_base: $("#setGamesBase").value.trim(), cache_container: $("#setCacheContainer").value.trim(),
-      hostname_pattern: $("#setHostnamePattern").value.trim(), names_pattern: $("#setNamesPattern").value.trim(), internet_host: $("#setInternetHost").value.trim(), auto_bots: $("#setAutoBots").checked, auto_matchzy: $("#setAutoMz").checked, container_dns: $("#setContainerDns").value.trim()}});
+      hostname_pattern: $("#setHostnamePattern").value.trim(), names_pattern: $("#setNamesPattern").value.trim(), internet_host: $("#setInternetHost").value.trim(), auto_bots: $("#setAutoBots").checked, auto_matchzy: $("#setAutoMz").checked, container_dns: $("#setContainerDns").value.trim(), port_range: $("#setPortRange").value.trim()}});
     renderAuto(); refreshModeSelects(); toast("Gespeichert – wird beim nächsten Prüfen angewendet");
   } catch(err){ toast(err.message, true); }
 };
@@ -2118,6 +2119,13 @@ async function initCreate(){
   const common = lanHosts.sort((a, b) => lanHosts.filter(x => x === b).length - lanHosts.filter(x => x === a).length)[0];
   $("#createHost").value = (settings.public_url || "").replace(/^https?:\/\//, "").split(/[:/]/)[0] || (isPriv(location.hostname) ? location.hostname : common || location.hostname);
   $("#createHint").textContent = `Image: ${t.image} · Der Ordner wird auf dem Docker-Host angelegt und für UID ${t.uid} beschreibbar gemacht. Ports: automatisch die nächsten freien gewählt (${sug.used.length} Ports sind bereits belegt) – vor dem Anlegen wird nochmals auf Überschneidungen geprüft.`;
+  const pr = sug.port_range;
+  if (pr && pr.range){
+    const msg = !pr.movable ? `⚠ ${t.label} lässt sich nicht in den freigegebenen Bereich ${pr.range} legen (Ports stehen fest in der Spielkonfiguration bzw. werden sonst falsch gemeldet) – Standardports, aus dem Internet nur mit eigener Weiterleitung erreichbar, im LAN problemlos.`
+      : pr.outside.length ? `⚠ Bereich ${pr.range} ist voll – außerhalb liegen: ${pr.outside.map(o => o.port).join(", ")}. Aus dem Internet nur mit eigener Weiterleitung erreichbar.`
+      : `✓ Alle Internet-Ports liegen im freigegebenen Bereich ${pr.range}. Verwaltungsports (RCON, Webkonsole) bleiben bewusst außerhalb – die braucht nur das LAN.`;
+    $("#createHint").textContent = msg + " · " + $("#createHint").textContent;
+  }
   const usedSet = new Set(sug.used);
   $$('[data-cf$="port"]').forEach(i => i.addEventListener("input", () => {
     const v = parseInt(i.value, 10), clash = usedSet.has(v);
