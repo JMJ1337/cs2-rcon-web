@@ -4609,6 +4609,10 @@ async def _tpl_refresh(src: dict | None = None) -> None:
                 _tpl["progress"] = round(min(100.0, int(done[-1]) / int(tot.group(1)) * 100), 1)
             if not (i2.get("State") or {}).get("Running"):
                 if "NOSPACE" in lg:
+                    try:
+                        await docker_api.remove_container(cname)
+                    except docker_api.DockerError:
+                        pass
                     raise docker_api.DockerError("Zu wenig Platz auf der internen Platte für die CS-Vorlage (mind. 10 GB Reserve)")
                 m = re.search(r"DONE (\d+)", lg)
                 if not m:
@@ -4668,6 +4672,11 @@ async def cs2_template_delete(request: Request):
     _need_admin(request)
     if _tpl["busy"]:
         raise HTTPException(409, "Vorlage wird gerade aktualisiert")
+    for c_ in ("gsm-vorlage-sync",):
+        try:
+            await docker_api.remove_container(c_)
+        except docker_api.DockerError:
+            pass
     try:
         await docker_api.remove_volume(LOCAL_TPL_VOL)
     except docker_api.DockerError as e:
