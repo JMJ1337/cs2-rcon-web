@@ -294,7 +294,7 @@ DU_OUT = "/tmp/gsm_cache_du.out"
 DU_SH = (
     "cd /data/cache/cache 2>/dev/null || cd /data/cache || exit 1; "
     "set -- */; echo \"TOTAL $#\"; T=0; "
-    "P=''; command -v ionice >/dev/null && P='ionice -c3'; "
+    "P=''; command -v ionice >/dev/null && P='ionice -c2 -n7'; "
     "for d in \"$@\"; do b=$($P nice -n19 du -sb \"$d\" 2>/dev/null | cut -f1); T=$((T+${b:-0})); echo \"D $T\"; done; "
     "F=$(find . -maxdepth 1 -type f -printf '%s\\n' 2>/dev/null | awk '{s+=$1} END {print s+0}'); "
     "echo \"END $((T+F))\""
@@ -357,8 +357,13 @@ async def poll_storage(full: bool = False) -> None:
 async def du_start(name: str) -> None:
     """Genaues Zählen losgelöst starten (läuft im Lancache-Container weiter)."""
     st = await du_status(name)
-    if st and st.get("active"):
-        return
+    if st and st.get("active") and not st.get("stalled") and st.get("done"):
+        return                                   # läuft und kommt voran
+    # alte/hängende Zählung beenden (z. B. mit der früheren Leerlauf-Priorität, die bei Last nie drankommt)
+    try:
+        await docker_api.exec_cmd(name, ["sh", "-c", "pkill -f gsm_cache_du; pkill -x du; rm -f " + DU_OUT + ".tmp; true"], timeout=15)
+    except docker_api.DockerError:
+        pass
     body = {"Cmd": ["sh", "-c", f"( {DU_SH} ) > {DU_OUT}.tmp 2>&1; mv {DU_OUT}.tmp {DU_OUT}"], "AttachStdout": False, "AttachStderr": False}
     e = (await docker_api._req("POST", f"/containers/{name}/exec", json=body)).json()
     await docker_api._req("POST", f"/exec/{e['Id']}/start", json={"Detach": True, "Tty": False})
