@@ -109,7 +109,7 @@ def token_user(token: str | None) -> dict | None:
 ADMIN_PATHS = ("/api/users", "/api/gslt", "/api/notify", "/api/backup", "/api/settings", "/api/prefill", "/api/storage", "/api/scan", "/api/cache/measure", "/api/cache/reset", "/api/docker/image-check", "/api/docker/helperlogs")
 
 # Benötigte Rechtestufe für Server-Unterseiten (users.LEVELS): 1 sehen, 2 bedienen, 3 verwalten, 4 anlegen/löschen
-_MANAGE_RX = re.compile(r"(config(/file)?|files(/.*)?|saves/load|container(/(env|diag|use-lancache|steamfix))?|wreckfest/.*|sleep/config|gslt|cstv|"
+_MANAGE_RX = re.compile(r"(config(/file)?|files(/.*)?|saves/load|container(/(env|diag|use-lancache|steamfix))?|wreckfest/(?!console).*|sleep/config|gslt|cstv|"
                         r"satisfactory/options|claim)")
 _MANAGE_GET_RX = re.compile(r"(config(/file)?|files(/.*)?|container/env|wreckfest/config|satisfactory/options)")
 
@@ -3617,6 +3617,17 @@ async def helper_logs(name: str, tail: int = 60):
         raise HTTPException(404, str(e))
 
 
+@app.get("/api/docker/mounts", dependencies=auth)
+async def docker_mounts(request: Request):
+    """Welche Host-Ordner nutzen die Container? (z. B. um alte Ordner im Home-Verzeichnis zu prüfen)"""
+    _need_admin(request)
+    out = []
+    for n, ms in (await docker_api.all_mounts()).items():
+        for m in ms:
+            out.append({"container": n, "source": m.get("source"), "type": m.get("type"), "name": m.get("name")})
+    return sorted(out, key=lambda x: (x["source"] or "", x["container"]))
+
+
 @app.get("/api/docker/image-check", dependencies=auth)
 async def image_check(images: str = ""):
     """Prüft, ob Images in der Registry existieren (ohne Download) – für den Spielekatalog."""
@@ -5088,6 +5099,28 @@ async def _wf_restart_when_empty(sid: str, container: str) -> None:
             break
         await asyncio.sleep(30)
     _wf_pending_restart.pop(sid, None)
+
+
+class WfConsoleIn(BaseModel):
+    cmd: str = Field(min_length=1, max_length=200)
+
+
+async def _wf_console(container: str, cmd: str, wait: float = 1.5) -> str:
+    """Befehl an die laufende Wreckfest-Konsole (screen-Sitzung im Container) und Bildschirm danach lesen."""
+    safe = re.sub(r"[\r\n\"$`\\]", "", cmd)[:200]
+    await docker_api.exec_cmd(container, ["sh", "-c", f'screen -S Wreckfest -X stuff "{safe}$(printf \\r)"'], timeout=10)
+    await asyncio.sleep(wait)
+    out = await docker_api.exec_cmd(container, ["sh", "-c", "screen -S Wreckfest -X hardcopy -h /tmp/wfscr.txt; tail -n 40 /tmp/wfscr.txt"], timeout=10)
+    return "\n".join(ln.rstrip() for ln in out.splitlines() if ln.strip())[-3000:]
+
+
+@app.post("/api/servers/{sid}/wreckfest/console", dependencies=auth)
+async def wf_console(sid: str, data: WfConsoleIn):
+    s = _wf_server(sid)
+    try:
+        return {"output": await _wf_console(s["container"], data.cmd)}
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
 
 
 @app.post("/api/servers/{sid}/wreckfest/lan", dependencies=auth)
