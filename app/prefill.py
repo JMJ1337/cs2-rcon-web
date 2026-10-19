@@ -356,10 +356,27 @@ async def yield_check(cache_tx: float | None, prefill_rx: float | None, others_d
         except docker_api.DockerError:
             pass
     if not running:
-        auto.update(paused=False, throttled=False, manual=False, since=None, reason=None, busy=0, quiet=0)
+        auto.update(paused=False, throttled=False, manual=False, disk_full=False, since=None, reason=None, busy=0, quiet=0)
         return
     if auto.get("manual"):
         return
+    # Cache-Platte voll -> Prefill sinnlos (nichts wird mehr gespeichert): pausieren, bis wieder Platz ist
+    from . import cache_stats, notify
+    fs = cache_stats.storage.get("fs") or {}
+    if fs.get("total") and time.time() - (fs.get("t") or 0) < 900:
+        low = fs["free"] < max(10e9, fs["total"] * 0.01)
+        if low and not auto.get("disk_full"):
+            await pause(True)
+            auto.update(paused=True, throttled=False, disk_full=True, since=time.time(),
+                        reason=f"Cache-Platte voll ({fs['free'] / 1e9:.1f} GB frei) – nichts würde gespeichert")
+            notify.fire("💾 Lancache-Platte voll – Prefill angehalten, bis der Cache wieder Platz hat.", event="disk", key="cache-full-prefill")
+            return
+        if auto.get("disk_full"):
+            if fs["free"] > max(30e9, fs["total"] * 0.03):
+                await pause(False)
+                auto.update(paused=False, disk_full=False, since=None, reason=None, busy=0, quiet=0)
+            else:
+                return
     max_bps = float(s.get("max_mbs") or 0) * 1e6
     thr_bps = float(s.get("throttle_mbs") or 5) * 1e6
     if max_bps:
