@@ -344,7 +344,9 @@ async def poll_storage(full: bool = False) -> None:
                 storage.update(cache_bytes=int(f[2]), measured=time.time(), method="df")
                 _save_measure()
         if full:
-            await du_start(name)
+            # genaues Zählen (du) ist bei ~1 Mio. Cache-Dateien und laufendem Prefill viel zu langsam (> 10 h) –
+            # eine evtl. noch laufende Zählung beenden; der Cache liegt auf eigenem Dateisystem, df ist genau genug
+            await du_stop(name)
         storage["updated"] = time.time()
         storage["error"] = None
     except (docker_api.DockerError, ValueError) as e:
@@ -368,6 +370,14 @@ async def du_start(name: str) -> None:
     e = (await docker_api._req("POST", f"/containers/{name}/exec", json=body)).json()
     await docker_api._req("POST", f"/exec/{e['Id']}/start", json={"Detach": True, "Tty": False})
     storage["du"] = {"active": True, "done": 0, "total": None, "bytes": 0, "started": time.time(), "changed": time.time()}
+
+
+async def du_stop(name: str) -> None:
+    try:
+        await docker_api.exec_cmd(name, ["sh", "-c", "pkill -f 'gsm_cache_d[u]'; pkill -x du; rm -f /tmp/gsm_cache_du.out.tmp; true"], timeout=15)
+    except docker_api.DockerError:
+        pass
+    storage["du"] = {"active": False}
 
 
 async def du_status(name: str | None = None) -> dict | None:

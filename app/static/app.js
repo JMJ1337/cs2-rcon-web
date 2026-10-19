@@ -625,7 +625,7 @@ function storageCard(st, disk){
   const val = measured ? st.cache_bytes : st.estimate;
   const lim = st.limit, pct = lim && val != null ? Math.min(100, Math.round(val / lim * 100)) : null;
   const du = st.du || {};
-  const how = st.method === "du" ? "genau gezählt" : st.method === "df" ? "Belegung des Cache-Dateisystems" : "";
+  const how = st.method === "du" ? "genau gezählt" : st.method === "df" ? "gemessen" : "";
   const when = measured ? new Date(st.measured * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"}) : "";
   const duBar = du.active ? (() => {
     const p = du.total ? Math.min(100, du.done / du.total * 100) : 0;
@@ -636,7 +636,7 @@ function storageCard(st, disk){
   return `<div class="card" title="${measured ? `${how}, ${when}` : "Geschätzt aus den Logs (alles, was in den Cache geladen wurde) – ohne Festplattenzugriff"}">
     <div class="k">Cache-Ordner${lim ? " (Limit " + esc(st.limit_raw || fmtBytes(lim)) + ")" : ""}</div><div class="v">${val != null ? (measured ? "" : "≈ ") + fmtBytes(val) : "–"}</div>
     ${pct != null ? `<div class="bar" style="margin-top:6px"><i class="${lvl(pct)}" style="width:${pct}%"></i></div>` : ""}
-    <div class="s">${pct != null ? pct + " % vom Limit · " : ""}${measured ? `${how} ${when} · ` : ""}Logs ${fmtBytes(logs)} · ${st.busy ? "misst …" : du.active ? "" : `<a href="#" onclick="measureCache();return false" title="Sofort: Belegung des Cache-Dateisystems. Dazu genaues Zählen aller Dateien mit niedrigster Priorität (läuft im Hintergrund weiter)">messen</a>`}</div>
+    <div class="s">${pct != null ? pct + " % vom Limit · " : ""}${measured ? `${how} ${when} · ` : ""}Logs ${fmtBytes(logs)} · ${st.busy ? "misst …" : du.active ? "" : `<a href="#" onclick="measureCache();return false" title="Belegung des Cache-Datenträgers messen (dauert eine Sekunde – der Cache liegt auf eigenem Datenträger)">messen</a>`}</div>
     ${duBar}</div>`;
 }
 /* ---- Dauer früherer Läufe (vor dem Start anzeigen) ---- */
@@ -662,12 +662,11 @@ async function tplRefresh(){
 }
 async function measureCache(){
   await loadTimings(true);
-  const d = durText("cache_measure", "full", "Letztes genaues Zählen");
-  if (d && !confirm(d + "\nJetzt messen?")) return;
+
   try {
     const r = await api("/api/cache/measure", {method: "POST"});
     const st = r.storage || {};
-    toast(`Cache belegt ${fmtBytes(st.cache_bytes)} (Dateisystem) – genaues Zählen läuft im Hintergrund weiter`);
+    toast(`Cache belegt ${fmtBytes(st.cache_bytes)} (gemessen am Cache-Datenträger)`);
   } catch (e) { toast(e.message, true); }
   refreshCache(); if (view === "cache") loadCacheHistory();
   clearInterval(window._duTimer);
