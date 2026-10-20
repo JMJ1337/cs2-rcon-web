@@ -257,7 +257,13 @@ func closeApp(exe string) {
 		}
 	}
 	exec.Command("taskkill", "/F", "/IM", exe).Run()
-	time.Sleep(2 * time.Second)
+	for i := 0; i < 15; i++ {
+		time.Sleep(time.Second)
+		out, _ := exec.Command("tasklist", "/FI", "IMAGENAME eq "+exe, "/NH").Output()
+		if !strings.Contains(strings.ToLower(string(out)), exe) {
+			return
+		}
+	}
 }
 
 func cs2Running() bool {
@@ -376,7 +382,8 @@ func watchConsole(steam string) {
 		off += int64(len(b))
 		for _, ln := range strings.Split(string(b), "\n") {
 			ln = strings.TrimSpace(ln)
-			if ln == "" || strings.Contains(ln, "QueuePresentAndWait") {
+			if ln == "" || strings.Contains(ln, "QueuePresentAndWait") || strings.Contains(ln, "[Localization") ||
+				strings.Contains(ln, "[ResourceSystem]") || strings.Contains(ln, "loopback") {
 				continue
 			}
 			for _, k := range keys {
@@ -462,17 +469,22 @@ func main() {
 		writeStreamCfg(cfgDir) // Auto-Kamera usw. beim CS2-Start (+exec grohlan_stream)
 	}
 	go watchConsole(steam)
-	started := time.Time{}
+	started, first := time.Time{}, ""
 	if steam == "" {
 		say("Steam nicht gefunden – bitte Steam installieren und anmelden (Konto mit CS2).")
 	} else if cs2Running() {
 		say("CS2 läuft schon – beim nächsten Spiel startet die exe es mit der CSTV-Verbindung neu.")
+	} else if st0, err := fetchState(c.API); err == nil && st0.Enabled && st0.TV != "" {
+		say("Starte CS2 und verbinde gleich mit %s (%s) …", st0.Match, st0.TV)
+		startCS2(steam, c, st0.TV)
+		started = time.Now()
+		first = st0.TV + "|" + st0.ID
 	} else {
-		say("Starte CS2 über Steam …")
+		say("Starte CS2 (gerade kein Spiel – verbindet beim nächsten) …")
 		startCS2(steam, c)
 		started = time.Now()
 	}
-	last, lastStart := "", started
+	last, lastStart := first, started
 	for {
 		st, err := fetchState(c.API)
 		switch {
