@@ -3761,7 +3761,8 @@ async def _tour_load(d: dict, m: dict, bots: bool = False) -> None:
     await ensure_matchzy(s)
     t1, t2 = tour.team(d, m["t1"]), tour.team(d, m["t2"])
     data = MatchIn(team1=TeamIn(name=t1["name"], players=t1["players"]), team2=TeamIn(name=t2["name"], players=t2["players"]),
-                   num_maps=1, maplist=[m.get("map") or "de_inferno"], players_per_team=2, skip_veto=True, preset="wingman")
+                   num_maps=1, maplist=[m.get("map") or "de_inferno"], players_per_team=2, skip_veto=True, preset="wingman",
+                   side_type="never_knife" if bots else "standard")   # Bots können nach dem Messerrunde nicht .stay/.switch wählen
     cfg = build_match(data)
     mzid = int(time.time()) % 10_000_000
     cfg["matchid"] = mzid
