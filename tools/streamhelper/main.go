@@ -177,7 +177,7 @@ func configureOBS(c Config) error {
 		return map[string]any{"id": "scene", "versioned_id": "scene", "name": name, "uuid": uuid(), "enabled": true,
 			"settings": map[string]any{"id_counter": len(items), "custom_size": false, "items": items}}
 	}
-	gc := uuid()
+	gc, au := uuid(), uuid()
 	ovID, ov := browser("GrohLAN Overlay (Spielstand / Gleich Live)", "/overlay/game")
 	stID, stS := browser("GrohLAN Gleich Live", "/overlay/start")
 	brID, brS := browser("GrohLAN Turnierbaum", "/overlay/bracket")
@@ -186,13 +186,19 @@ func configureOBS(c Config) error {
 		"scene_order": []any{map[string]any{"name": "CS2"}, map[string]any{"name": "Gleich Live"}, map[string]any{"name": "Turnierbaum"}},
 		"sources": []any{
 			map[string]any{
-				"id": "game_capture", "versioned_id": "game_capture", "name": "CS2 Spiel", "uuid": gc, "enabled": true,
-				"settings": map[string]any{"capture_mode": "window", "window": "Counter-Strike 2:SDL_app:cs2.exe",
-					"priority": 2, "capture_audio": true, "capture_cursor": false, "allow_transparency": false},
+				// Fensteraufnahme (Windows Graphics Capture) statt Spielaufnahme: funktioniert ohne
+				// -allow_third_party_software, damit CS2 „secure“ bleibt und CSTV/VAC-Server es annehmen
+				"id": "window_capture", "versioned_id": "window_capture", "name": "CS2 Spiel", "uuid": gc, "enabled": true,
+				"settings": map[string]any{"window": "Counter-Strike 2:SDL_app:cs2.exe", "method": 2, "priority": 2,
+					"cursor": false, "client_area": true, "force_sdr": false},
+			},
+			map[string]any{
+				"id": "wasapi_process_output_capture", "versioned_id": "wasapi_process_output_capture", "name": "CS2 Ton", "uuid": au, "enabled": true,
+				"settings": map[string]any{"window": "Counter-Strike 2:SDL_app:cs2.exe", "priority": 2},
 			},
 			ov, stS, brS,
 			// CS2: Spielbild, darüber das Overlay (zeigt selbst „Gleich Live“, solange kein Spiel läuft)
-			sceneSrc("CS2", item(1, "CS2 Spiel", gc), item(2, "GrohLAN Overlay (Spielstand / Gleich Live)", ovID)),
+			sceneSrc("CS2", item(1, "CS2 Spiel", gc), item(2, "CS2 Ton", au), item(3, "GrohLAN Overlay (Spielstand / Gleich Live)", ovID)),
 			sceneSrc("Gleich Live", item(1, "GrohLAN Gleich Live", stID)),
 			sceneSrc("Turnierbaum", item(1, "GrohLAN Turnierbaum", brID)),
 		},
@@ -332,7 +338,7 @@ func send(c Config, cfgDir string, cmds ...string) error {
 
 // -allow_third_party_software: sonst blockiert CS2 die OBS-Spielaufnahme. tv = CSTV-Adresse, mit der CS2 direkt verbindet.
 func startCS2(steam string, c Config, tv ...string) {
-	game := []string{"-netconport", fmt.Sprint(c.Netcon), "-sw", "-noborder", "-w", "1920", "-h", "1080", "-novid", "-allow_third_party_software", "-condebug", "+exec", "grohlan_stream"}
+	game := []string{"-netconport", fmt.Sprint(c.Netcon), "-sw", "-noborder", "-w", "1920", "-h", "1080", "-novid", "-condebug", "+exec", "grohlan_stream"}
 	if len(tv) > 0 && tv[0] != "" {
 		game = append(game, "+connect", tv[0])
 	}
