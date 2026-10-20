@@ -267,6 +267,12 @@ async def v1_stream(request: Request):
     return st
 
 
+@router.get("/halloffame", dependencies=[Depends(auth("tournament", read=True))])
+async def v1_hof():
+    """Hall of Fame: tournaments (Sieger, Finalist, Finale, MVP, alle Spielerwerte) und players (ewige Wertung)."""
+    return await _M().public_hof()
+
+
 @router.get("/deathmatch", dependencies=[Depends(auth("tournament", read=True))])
 async def v1_deathmatch():
     """Deathmatch-Bestenliste von CS #1: day (heute, ab 6 Uhr) und total."""

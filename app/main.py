@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import mapimages, gslt, matchlog, steamlist, playerdb, notify, prefill_more
-from . import cache_model, cache_inventory, timings, steambot_ctl, stream_ctl, extapi, dmstats
+from . import cache_model, cache_inventory, timings, steambot_ctl, stream_ctl, extapi, dmstats, hof
 from . import tournament as tour
 from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
@@ -371,6 +371,35 @@ async def cs2_log_http(sid: str, key: str, request: Request):
 
 def _dm_names() -> dict:
     return {p["steamid"]: playerdb.display(p) for p in playerdb.all_players() if p.get("steamid")}
+
+
+@app.get("/api/public/hof/board")
+async def public_hof():
+    """Hall of Fame: Turniersieger (neueste zuerst) und ewige Spielerwertung."""
+    names = _dm_names()
+    return {"tournaments": sorted(hof.load(), key=lambda e: -(e.get("date") or 0)), "players": hof.alltime(names)[:30]}
+
+
+@app.post("/api/tournament/hof", dependencies=auth)
+async def hof_add_current(request: Request):
+    """Aktuelles Turnier von Hand in die Hall of Fame eintragen (z. B. wenn es vorzeitig beendet wurde)."""
+    _need_right(request, "tournament")
+    d = tour.load()
+    if d.get("test"):
+        raise HTTPException(409, "Testturniere kommen nicht in die Hall of Fame")
+    e = hof.add(d)
+    if not e:
+        raise HTTPException(400, "Noch kein Sieger – erst das Finale (bzw. alle Spiele) eintragen")
+    d["hof_saved"] = e["id"]
+    tour.save(d)
+    return {"ok": True, "entry": e}
+
+
+@app.delete("/api/tournament/hof/{eid}", dependencies=auth)
+async def hof_delete(eid: str, request: Request):
+    _need_right(request, "tournament")
+    hof.delete(eid)
+    return {"ok": True}
 
 
 @app.get("/api/public/dm/board")
@@ -4067,8 +4096,19 @@ async def tour_announce_now(request: Request):
     return r
 
 
+def _hof_check(d: dict) -> None:
+    """Fertiges (echtes) Turnier automatisch in die Hall of Fame eintragen – einmal."""
+    if d.get("status") == "done" and not d.get("hof_saved") and not d.get("test") and d.get("matches"):
+        e = hof.add(d)
+        d["hof_saved"] = e["id"] if e else "-"
+        tour.save(d)
+        if e:
+            log.info("Hall of Fame: %s – Sieger %s", e["name"], (e.get("winner") or {}).get("name"))
+
+
 async def tour_tick() -> None:
     d = tour.load()
+    _hof_check(d)
     try:
         await _tour_announce(d)
     except Exception as e:  # noqa: BLE001

@@ -219,7 +219,7 @@ function matchHtml(m){
 }
 function renderPublic(){
   const r = pubData; if (!r) return;
-  refreshPubTour(); refreshPubStream(); refreshPubDm();
+  refreshPubTour(); refreshPubStream(); refreshPubDm(); refreshPubHof();
   const on = r.servers.filter(x => x.online), pl = on.reduce((a, x) => a + (x.players || 0), 0);
   $("#pubStat").innerHTML = `<b>${on.length}</b> von ${r.servers.length} Servern online · <b>${pl}</b> Spieler · ` +
     (r.net === "internet" ? `<span class="pill" title="Du kommst aus dem Internet – Adressen zeigen die öffentliche IP">🌐 Internet${r.address ? " · " + esc(r.address) : ""}</span>`
@@ -341,7 +341,7 @@ function showView(v){
   if (v === "game") renderGameView();
   if (v === "bot"){ botLoaded = false; loadBot(); }
   if (v === "api") loadApi();
-  if (v === "tour"){ tourLoaded = false; loadTour(); stLoaded = false; loadStream(); loadTourLib(); }
+  if (v === "tour"){ tourLoaded = false; loadTour(); stLoaded = false; loadStream(); loadTourLib(); loadTourHof(); }
 }
 
 /* ================= Serverliste ================= */
@@ -4167,3 +4167,45 @@ async function refreshPubDm(){
     ${L.length ? glLeaders(L, 15, true) : `<div style="color:var(--gmut);padding:6px 2px">${tab === "day" ? "Heute noch keine Kills auf CS #1 – rauf auf den Deathmatch-Server!" : "Noch keine Kills erfasst."} (ab 5 Kills/Tode erscheint man in der Liste)</div>`}</div></div></div>`;
   $$("[data-dmtab]").forEach(a => a.onclick = e => { e.preventDefault(); pubDmTab = a.dataset.dmtab; pubDmAt = 0; refreshPubDm(); });
 }
+
+// Hall of Fame (aufklappbar) auf der öffentlichen Seite
+let pubHofAt = 0, hofOpen = false;
+function hofHtml(r){
+  const T = r.tournaments || [], P = r.players || [];
+  const fmtD = t => new Date(t * 1000).toLocaleDateString("de-DE", {day: "2-digit", month: "2-digit", year: "numeric"});
+  const pl = t => (t && t.players || []).map(p => esc(p.name)).join(" & ");
+  const cards = T.map(e => `<div class="hofcard">
+      <div class="hofd">${fmtD(e.date)} · ${esc(e.mode || "")} · ${e.teams} Teams</div>
+      <div class="hofn bb">${esc(e.name)}</div>
+      <div class="hofw">🏆 <b>${esc((e.winner || {}).name || "?")}</b><span>${pl(e.winner)}</span></div>
+      ${e.second ? `<div class="hofs">🥈 ${esc(e.second.name)} <span>${pl(e.second)}</span></div>` : ""}
+      ${e.final ? `<div class="hoff">Finale ${esc(e.final.t1)} ${e.final.s1 ?? "–"}:${e.final.s2 ?? "–"} ${esc(e.final.t2)}${e.final.map ? " · " + esc(e.final.map) : ""}</div>` : ""}
+      ${e.mvp ? `<div class="hofm">⭐ MVP <b>${esc(e.mvp.name)}</b> · Rating ${(e.mvp.rating ?? 0).toFixed(2)} · K/D ${(e.mvp.kd ?? 0).toFixed(2)}</div>` : ""}</div>`).join("");
+  const tab = P.length ? `<table class="glleaders"><thead><tr><th>#</th><th>Spieler</th><th title="Turniersiege">🏆</th><th title="Finalteilnahmen">Finals</th><th title="MVP-Auszeichnungen">⭐</th><th>Turniere</th><th title="Ø-Rating über alle Turniere">Rating</th><th>K/D</th><th>Siege</th></tr></thead><tbody>
+    ${P.map((p, i) => `<tr class="${i < 3 ? "top" : ""}"><td class="rk">${i + 1}</td><td><b>${esc(p.name)}</b></td><td class="kd">${p.titles}</td><td>${p.finals}</td><td>${p.mvps}</td><td>${p.tournaments}</td><td>${p.rating != null ? p.rating.toFixed(2) : "–"}</td><td>${(p.kd ?? 0).toFixed(2)}</td><td>${p.wins}/${p.matches}</td></tr>`).join("")}</tbody></table>` : "";
+  return {cards, tab, n: T.length};
+}
+async function refreshPubHof(){
+  if (Date.now() - pubHofAt < 60000) return;
+  pubHofAt = Date.now();
+  let r; try { r = await (await fetch("/api/public/hof/board", {cache: "no-store"})).json(); } catch { return; }
+  const box = $("#pubHof"); if (!box) return;
+  const h = hofHtml(r);
+  if (!h.n){ box.innerHTML = ""; return; }
+  box.innerHTML = `<div class="tourpub"><div class="gl"><details class="hof" ${hofOpen ? "open" : ""}><summary><h3>🏛 Hall of Fame <span style="font-size:15px;color:var(--gmut)">${h.n} Turnier${h.n === 1 ? "" : "e"}</span><span class="hoftg">aufklappen ▾</span></h3></summary>
+    <div class="hofcards">${h.cards}</div>${h.tab ? `<div class="glsec" style="margin-top:16px"><h3>Ewige Wertung</h3>${h.tab}</div>` : ""}</details></div></div>`;
+  box.querySelector("details").addEventListener("toggle", e => { hofOpen = e.target.open; });
+}
+// Verwaltung: Hall-of-Fame-Einträge
+async function loadTourHof(){
+  let r; try { r = await (await fetch("/api/public/hof/board", {cache: "no-store"})).json(); } catch { return; }
+  $("#tourHof").innerHTML = (r.tournaments || []).length ? (r.tournaments || []).map(e => `<div class="row" style="gap:8px;align-items:center;margin:3px 0">
+      <span>${new Date(e.date * 1000).toLocaleDateString("de-DE")}</span><b>${esc(e.name)}</b><span>🏆 ${esc((e.winner || {}).name || "?")}</span>${e.mvp ? `<span>⭐ ${esc(e.mvp.name)}</span>` : ""}
+      <button class="small danger" data-hofdel="${esc(e.id)}" style="margin-left:auto">✕</button></div>`).join("") : "Noch keine Einträge.";
+  $$("[data-hofdel]").forEach(b => b.onclick = async () => { if (!confirm("Eintrag aus der Hall of Fame löschen?")) return;
+    try { await api(`/api/tournament/hof/${b.dataset.hofdel}`, {method: "DELETE"}); loadTourHof(); } catch (e) { toast(e.message, true); } });
+}
+$("#tourHofAdd").onclick = async () => {
+  if (!confirm("Aktuelles Turnier mit dem jetzigen Stand in die Hall of Fame eintragen?")) return;
+  try { const r = await api("/api/tournament/hof", {method: "POST"}); toast(`Eingetragen – Sieger: ${(r.entry.winner || {}).name}`); loadTourHof(); } catch (e) { toast(e.message, true); }
+};
