@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -354,6 +355,48 @@ func startCS2(steam string, c Config, tv ...string) {
 }
 
 // CS2-Konsole mitlesen (-condebug schreibt game/csgo/console.log): Verbindungsversuche und Fehler im exe-Fenster zeigen
+var (
+	conMu   sync.Mutex
+	conSeen []string // Zeilen mit „onnect“ seit dem letzten Zurücksetzen
+)
+
+func conReset() { conMu.Lock(); conSeen = nil; conMu.Unlock() }
+
+// Hat CS2 laut Konsole mit tv verbunden? (true/false = Ergebnis, ok=false = noch nichts)
+func conResult(tv string) (bool, bool) {
+	conMu.Lock()
+	defer conMu.Unlock()
+	for _, l := range conSeen {
+		if !strings.Contains(l, tv) && !strings.Contains(l, "Disconnect") {
+			continue
+		}
+		low := strings.ToLower(l)
+		if strings.Contains(low, "connected to") && strings.Contains(l, tv) || strings.Contains(low, "spectat") {
+			return true, true
+		}
+		if strings.Contains(low, "fail") || strings.Contains(low, "reject") || strings.Contains(low, "timed out") || strings.Contains(low, "disconnect") {
+			return false, true
+		}
+	}
+	return false, false
+}
+
+func waitConnected(tv string, sec int) bool {
+	for i := 0; i < sec; i++ {
+		time.Sleep(time.Second)
+		if ok, done := conResult(tv); done {
+			return ok
+		}
+	}
+	ok, _ := conResult(tv)
+	return ok
+}
+
+// laufendem CS2 über Steam „verbinde mit …“ schicken
+func steamConnect(steam, tv string) {
+	exec.Command(steam, "steam://connect/"+tv).Start()
+}
+
 func watchConsole(steam string) {
 	cfg := findCS2Cfg(steam)
 	if cfg == "" {
@@ -385,6 +428,11 @@ func watchConsole(steam string) {
 			if ln == "" || strings.Contains(ln, "QueuePresentAndWait") || strings.Contains(ln, "[Localization") ||
 				strings.Contains(ln, "[ResourceSystem]") || strings.Contains(ln, "loopback") {
 				continue
+			}
+			if strings.Contains(ln, "onnect") || strings.Contains(ln, "pectat") {
+				conMu.Lock()
+				conSeen = append(conSeen, ln)
+				conMu.Unlock()
 			}
 			for _, k := range keys {
 				if strings.Contains(ln, k) {
@@ -478,7 +526,7 @@ func main() {
 		say("Starte CS2 und verbinde gleich mit %s (%s) …", st0.Match, st0.TV)
 		startCS2(steam, c, st0.TV)
 		started = time.Now()
-		first = st0.TV + "|" + st0.ID
+		_ = st0
 	} else {
 		say("Starte CS2 (gerade kein Spiel – verbindet beim nächsten) …")
 		startCS2(steam, c)
@@ -511,19 +559,48 @@ func main() {
 					last = key
 					break
 				}
-				// 2. sonst CS2 mit „+connect <CSTV>“ neu starten (das Overlay zeigt so lange „Gleich Live“)
 				if steam == "" {
-					say("Steam nicht gefunden – kann CS2 nicht starten.")
+					say("Steam nicht gefunden – kann CS2 nicht steuern.")
 					break
 				}
-				if cs2Running() {
-					say("Spielwechsel → CS2 wird neu gestartet und verbindet mit %s …", st.TV)
+				if ok, _ := conResult(st.TV); ok { // schon verbunden (z. B. per +connect beim Start)
+					say("Zuschauen: %s  (%s)", st.Match, st.TV)
+					last = key
+					break
+				}
+				// 2. laufendes CS2 (Hauptmenü geladen) über Steam verbinden lassen
+				if cs2Running() && time.Since(lastStart) > 45*time.Second {
+					say("Spielwechsel → verbinde CS2 über Steam mit %s …", st.TV)
+					conReset()
+					steamConnect(steam, st.TV)
+					if waitConnected(st.TV, 25) {
+						say("Zuschauen: %s  (%s)", st.Match, st.TV)
+						last = key
+						break
+					}
+					say("Verbinden über Steam hat nicht geklappt – starte CS2 neu …")
+					closeApp("cs2.exe")
+					time.Sleep(4 * time.Second)
+				} else if cs2Running() {
 					closeApp("cs2.exe")
 					time.Sleep(4 * time.Second)
 				}
+				// 3. CS2 neu starten (+connect) und nach dem Laden des Hauptmenüs noch einmal über Steam verbinden
+				conReset()
 				startCS2(steam, c, st.TV)
 				lastStart = time.Now()
-				say("Zuschauen: %s  (%s) – CS2 startet und verbindet per CSTV", st.Match, st.TV)
+				say("CS2 startet und verbindet mit %s (%s) …", st.Match, st.TV)
+				if waitConnected(st.TV, 45) {
+					say("Zuschauen: %s  (%s)", st.Match, st.TV)
+				} else {
+					conReset()
+					steamConnect(steam, st.TV)
+					if waitConnected(st.TV, 25) {
+						say("Zuschauen: %s  (%s)", st.Match, st.TV)
+					} else {
+						say("CS2 hat sich nicht verbunden – nächster Versuch beim nächsten Spielwechsel (oder exe neu starten).")
+					}
+				}
 				last = key
 			} else if !cs2Running() && steam != "" && time.Since(lastStart) > 2*time.Minute {
 				say("CS2 wurde beendet – starte es wieder (%s) …", st.TV)
