@@ -3932,11 +3932,11 @@ async function loadStream(){
   const c = r.container;
   $("#stStatus").textContent = !st.enabled ? "· aus" : !c || !c.running ? "· Stream-Server startet …" : r.on_air ? "· 🔴 sendet" : "· bereit, wartet auf OBS";
   const t = r.target;
-  $("#stInfo").innerHTML = st.enabled ? `<div class="row" style="gap:6px;flex-wrap:wrap;align-items:center">OBS-Server <code>${esc(r.obs.server)}</code> <button class="small" data-copy="${esc(r.obs.server)}">kopieren</button>
+  $("#stInfo").innerHTML = `${st.enabled ? "" : `<div style="margin-bottom:6px">Stream-Server ist aus – Haken oben setzen, damit er Bilder annimmt. Die exe kannst du schon vorher auf dem Stream-PC einrichten.</div>`}<div class="row" style="gap:6px;flex-wrap:wrap;align-items:center">OBS-Server <code>${esc(r.obs.server)}</code> <button class="small" data-copy="${esc(r.obs.server)}">kopieren</button>
       · Streamschlüssel <code>${esc(r.obs.key.replace(/pass=.*/, "pass=••••"))}</code> <button class="small" data-copy="${esc(r.obs.key)}">kopieren</button>
       <button class="small" id="stNewKey" title="Neuen Schlüssel erzeugen (OBS muss angepasst werden)">neuer Schlüssel</button>
       <a class="btn small primary" href="/api/stream/helper.exe" title="Auf dem Stream-PC ausführen: richtet OBS ein, startet CS2 und den Stream, Kamera folgt dem laufenden Spiel">⬇ GrohLAN-Stream.exe</a> <a class="hint" href="/api/stream/helper.cmd">(nur Kamera-Helfer .cmd)</a></div>
-      <div style="margin-top:6px">Kamera geht gerade zu: ${t.tv ? `<b>${esc(t.match || "")}</b> <code>${esc(t.tv)}</code>` : "– kein laufendes Spiel (oder CSTV aus)"}</div>` : "";
+      <div style="margin-top:6px">Kamera geht gerade zu: ${t.tv ? `<b>${esc(t.match || "")}</b> <code>${esc(t.tv)}</code>` : "– kein laufendes Spiel (oder CSTV aus)"}</div>`;
   $$("#stInfo [data-copy]").forEach(b => b.onclick = () => copyQuiet(b.dataset.copy));
   const nk = $("#stNewKey"); if (nk) nk.onclick = () => confirm("Neuen Streamschlüssel erzeugen? OBS muss danach angepasst werden.") && saveStream({new_key: true});
 }
