@@ -2456,10 +2456,19 @@ function copyText(t){
   fallbackCopy(t, done);
 }
 function fallbackCopy(t, done){
-  const ta = document.createElement("textarea"); ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
-  document.body.appendChild(ta); ta.select();
-  try { document.execCommand("copy"); done(); } catch { prompt("Adresse kopieren:", t); }
+  // ohne HTTPS gibt es keine Zwischenablage-API -> über ein unsichtbares Textfeld
+  const ta = document.createElement("textarea"); ta.value = t; ta.setAttribute("readonly", "");
+  ta.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0";
+  document.body.appendChild(ta); ta.focus(); ta.select(); ta.setSelectionRange(0, t.length);
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { ok = false; }
   ta.remove();
+  if (ok) done(); else prompt("Kopieren mit Strg+C:", t);
+}
+function copyQuiet(t, msg){
+  const done = () => toast(msg || "Kopiert");
+  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(t).then(done).catch(() => fallbackCopy(t, done));
+  fallbackCopy(t, done);
 }
 let currentJoin = null;
 function setJoin(j){
@@ -2914,7 +2923,7 @@ $("#stoSave").onclick = async () => {
     purpose: $("#stoPurpose").value, old_path: $("#stoOld").value.trim(), format: $("#stoFormat").checked};
   try { await api("/api/storage", {method: "PUT", body}); toast("Gespeichert – Skript aktualisiert"); loadStorage(true); } catch (e) { toast(e.message, true); }
 };
-$("#stoCopy").onclick = async () => { try { await navigator.clipboard.writeText($("#stoScript").textContent); toast("Skript kopiert"); } catch { toast("Kopieren nicht möglich – bitte herunterladen", true); } };
+$("#stoCopy").onclick = () => copyQuiet($("#stoScript").textContent, "Skript kopiert");
 setInterval(() => { if (view === "storage" && !document.hidden) loadStorage(false); }, 5000);
 
 /* Container: Steam-Reparatur + Startparameter (SteamCMD-Images) */
@@ -3817,7 +3826,7 @@ async function loadStream(){
       <button class="small" id="stNewKey" title="Neuen Schlüssel erzeugen (OBS muss angepasst werden)">neuer Schlüssel</button>
       <a class="btn small" href="/api/stream/helper.ps1">⬇ Hilfsskript (Stream-PC)</a></div>
       <div style="margin-top:6px">Kamera geht gerade zu: ${t.tv ? `<b>${esc(t.match || "")}</b> <code>${esc(t.tv)}</code>` : "– kein laufendes Spiel (oder CSTV aus)"}</div>` : "";
-  $$("#stInfo [data-copy]").forEach(b => b.onclick = () => { navigator.clipboard.writeText(b.dataset.copy); toast("Kopiert"); });
+  $$("#stInfo [data-copy]").forEach(b => b.onclick = () => copyQuiet(b.dataset.copy));
   const nk = $("#stNewKey"); if (nk) nk.onclick = () => confirm("Neuen Streamschlüssel erzeugen? OBS muss danach angepasst werden.") && saveStream({new_key: true});
 }
 async function saveStream(extra){
