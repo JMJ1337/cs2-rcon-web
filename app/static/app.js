@@ -3774,6 +3774,7 @@ setInterval(() => { if (view === "tour" && !document.hidden) loadTour(); }, 5000
 // Übersicht (Verwaltung): Turnier oben, wenn der Turniermodus an ist
 let dashTourAt = 0;
 async function refreshDashTour(){
+  const el = $("#dashTour"); if (el) el.innerHTML = ""; return;   // Turnier nur auf der öffentlichen Seite und unter „🏆 Turnier“
   if (Date.now() - dashTourAt < 8000) return;
   dashTourAt = Date.now();
   let v; try { v = await api("/api/public/tournament/state"); } catch { return; }
