@@ -4159,12 +4159,11 @@ let pubDmAt = 0, pubDmTab = "day";
 async function refreshPubDm(){
   if (Date.now() - pubDmAt < 15000) return;
   pubDmAt = Date.now();
-  let r; try { r = await (await fetch("/api/public/dm", {cache: "no-store"})).json(); } catch { return; }
+  let r; try { r = await (await fetch("/api/public/dm/board", {cache: "no-store"})).json(); } catch { return; }
   const box = $("#pubDm"); if (!box) return;
-  if (!r.day.length && !r.total.length){ box.innerHTML = ""; return; }
-  const L = pubDmTab === "day" && r.day.length ? r.day : r.total, tab = L === r.day ? "day" : "total";
+  const tab = pubDmTab, L = tab === "day" ? r.day : r.total;
   box.innerHTML = `<div class="tourpub"><div class="gl"><div class="glsec"><h3>💀 Deathmatch-Bestenliste <span style="font-size:15px;color:var(--gmut)">CS #1</span>
       <span class="glseg"><a href="#" data-dmtab="day" class="${tab === "day" ? "on" : ""}">Heute</a><a href="#" data-dmtab="total" class="${tab === "total" ? "on" : ""}">Gesamt</a></span></h3>
-    ${glLeaders(L, 15, true)}</div></div></div>`;
+    ${L.length ? glLeaders(L, 15, true) : `<div style="color:var(--gmut);padding:6px 2px">${tab === "day" ? "Heute noch keine Kills auf CS #1 – rauf auf den Deathmatch-Server!" : "Noch keine Kills erfasst."} (ab 5 Kills/Tode erscheint man in der Liste)</div>`}</div></div></div>`;
   $$("[data-dmtab]").forEach(a => a.onclick = e => { e.preventDefault(); pubDmTab = a.dataset.dmtab; pubDmAt = 0; refreshPubDm(); });
 }

@@ -373,7 +373,7 @@ def _dm_names() -> dict:
     return {p["steamid"]: playerdb.display(p) for p in playerdb.all_players() if p.get("steamid")}
 
 
-@app.get("/api/public/dm")
+@app.get("/api/public/dm/board")
 async def public_dm():
     """Deathmatch-Bestenliste (CS #1): heute (seit 6 Uhr) und gesamt."""
     names = _dm_names()
