@@ -3774,12 +3774,22 @@ setInterval(() => { if (view === "tour" && !document.hidden) loadTour(); }, 5000
 // Übersicht (Verwaltung): Turnier oben, wenn der Turniermodus an ist
 let dashTourAt = 0;
 async function refreshDashTour(){
-  const el = $("#dashTour"); if (el) el.innerHTML = ""; return;   // Turnier nur auf der öffentlichen Seite und unter „🏆 Turnier“
   if (Date.now() - dashTourAt < 8000) return;
   dashTourAt = Date.now();
   let v; try { v = await api("/api/public/tournament/state"); } catch { return; }
-  $("#dashTour").innerHTML = v.active ? `<div class="dsect"><h3 class="dhead">🏆 ${esc(v.name)} <span class="hint">${esc(v.mode_label)} · ${tStatus[v.status] || v.status}${v.start ? " · Start " + new Date(v.start * 1000).toLocaleString("de-DE", {weekday: "short", hour: "2-digit", minute: "2-digit"}) : ""}</span> <a href="#" class="hint" style="margin-left:auto" onclick="showView('tour');return false">verwalten →</a></h3>
-    ${tourBoardHtml(v)}</div>` : "";
+  const el = $("#dashTour"); if (!el) return;
+  if (!v.active && v.status !== "running" && v.status !== "waiting"){ el.innerHTML = ""; return; }
+  // nur eine Statuszeile – Baum und Ergebnisse stehen unter „🏆 Turnier“ und auf der öffentlichen Seite
+  const ms = (v.matches || []).filter(m => !m.walkover), done = ms.filter(m => m.status === "done").length, live = ms.filter(m => m.status === "live");
+  const next = ms.filter(m => m.status === "ready" || (m.status === "wait" && m.planned)).sort((a, b) => (a.planned || 0) - (b.planned || 0))[0];
+  const parts = [`<b>${tStatus[v.status] || v.status}</b>`];
+  if (ms.length) parts.push(`${done}/${ms.length} Spiele`);
+  if (live.length) parts.push(`<span class="livedot">LIVE</span> ${live.map(m => `${esc(m.t1 || "?")} ${m.s1 ?? 0}:${m.s2 ?? 0} ${esc(m.t2 || "?")}`).join(" · ")}`);
+  if (next) parts.push(`nächstes: ${esc(next.t1 || next.p1 || "?")} vs ${esc(next.t2 || next.p2 || "?")}${next.planned ? " um " + tTime(next.planned) : ""}`);
+  if (v.status === "setup" && v.start) parts.push("Start " + new Date(v.start * 1000).toLocaleString("de-DE", {weekday: "short", hour: "2-digit", minute: "2-digit"}));
+  if (v.test) parts.push("TEST");
+  el.innerHTML = `<div class="tourline">🏆 <b>${esc(v.name)}</b> <span class="hint">${esc(v.mode_label || "")}</span> · ${parts.join(" · ")}
+    <a href="#" style="margin-left:auto" onclick="showView('tour');return false">verwalten →</a></div>`;
 }
 
 // Öffentliche Seite: Anmeldung, Teams bilden, Spielplan und Ergebnisse

@@ -716,3 +716,5 @@ main .topbar{top:34px}
 
 /* linke Leiste ~15 % größer (besser lesbar) */
 @media (min-width:821px){ #app>aside{zoom:1.15} }
+
+.tourline{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:8px 14px;margin:0 0 14px;font-size:13px}
