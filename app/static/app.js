@@ -3513,7 +3513,7 @@ setInterval(() => { if (view === "bot" && !document.hidden) loadBot(); }, 5000);
 
 /* ================= Turnier ================= */
 const tTime = t => t ? new Date(t * 1000).toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit"}) : "–";
-const tStatus = {setup: "Vorbereitung", running: "läuft", done: "beendet"};
+const tStatus = {setup: "Vorbereitung", waiting: "wartet auf Server", running: "läuft", done: "beendet"};
 // Turnierbaum/Spielplan: Spalten je Runde, Gruppentabellen, nächste Matches
 function tourBoardHtml(v, admin){
   if (!v || !v.matches || !v.matches.length) return `<div class="hint">Noch kein Spielplan.</div>`;
@@ -3651,11 +3651,14 @@ function tourSrvCheckHtml(c){
   if (c.offline.length) parts.push(`<button class="small" data-tsrv="start">▶ ${c.offline.length} ausgeschaltete starten</button>`);
   if (c.create) parts.push(`<button class="small primary" data-tsrv="create" data-n="${c.create}">+ ${c.create} neue${c.create === 1 ? "n" : ""} Server anlegen</button>`);
   if (c.offline.length && c.create) parts.push(`<button class="small primary" data-tsrv="both" data-n="${c.create}">Beides</button>`);
+  if (c.status === "setup" && c.matches) parts.push(`<span style="flex-basis:100%"></span><button class="small" data-tstart="wait">▶ Turnier starten, sobald alle Server da sind</button><button class="small" data-tstart="now">▶ Jetzt mit ${c.online} Server${c.online === 1 ? "" : "n"} starten</button>`);
+  if (c.status === "waiting") parts.push(`<span style="flex-basis:100%">⏳ Turnier wartet auf die Server und startet automatisch.</span><button class="small" data-tstart="now">▶ Nicht warten – jetzt mit ${c.online} starten</button>`);
   return `<div class="srvcheck warn">⚠ Nur <b>${c.online}</b> von <b>${c.need}</b> nötigen Servern online${c.offline.length ? ` · ${c.offline.length} aus (${c.offline.map(x => esc(x.name)).join(", ")})` : ""}${c.creating ? ` · ${c.creating} werden gerade angelegt` : ""}.
     Sonst laufen Spiele der ersten Runde nacheinander.
     <div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap">${parts.join("") || `<span class="hint">warte auf die neuen Server …</span>`}</div></div>`;
 }
 function bindTourSrvCheck(){
+  $$("[data-tstart]").forEach(b => b.onclick = () => tourStartAsk(b.dataset.tstart));
   $$("[data-tsrv]").forEach(b => b.onclick = async () => {
     const a = b.dataset.tsrv, n = +b.dataset.n || 0;
     if ((a === "create" || a === "both") && !confirm(`${n} neue CS2-Server fürs Turnier anlegen? (Spieldateien werden aus der Vorlage kopiert, Ports aus dem freigegebenen Bereich)`)) return;
@@ -3724,7 +3727,21 @@ $("#tourGen").onclick = async () => { if (tourData && tourData.matches.length &&
     try { const x = await api("/api/tournament/servers", {method: "POST", body: {create: c.create, start_offline: true}}); toast([x.started.length ? `${x.started.length} gestartet` : "", x.created ? `${x.created} werden angelegt` : ""].filter(Boolean).join(" · ") || "Erledigt"); } catch (e) { toast(e.message, true); }
     loadTour();
   } };
-$("#tourStart").onclick = async () => { if (!confirm("Turnier starten? Die Anmeldung schließt, Matches werden zur geplanten Zeit automatisch auf den Servern geladen.")) return; const r = await tourCall("/api/tournament/start", {method: "POST"}); if (r) toast(r.creating ? `Turnier läuft – ${r.creating} Server werden angelegt` : "Turnier läuft"); };
+$("#tourStart").onclick = () => tourStartAsk();
+async function tourStartAsk(force){
+  const c = (tourData || {}).servercheck || {};
+  let wait = true;
+  if (force === "now") wait = false;
+  else if (force !== "wait"){
+    if (c.need && !c.ok){
+      if (confirm(`Es sind erst ${c.online} von ${c.need} nötigen Servern online.\n\nOK = warten, bis alle Server da sind (fehlende werden gestartet/angelegt), dann geht es automatisch los.\nAbbrechen = andere Wahl`)) wait = true;
+      else if (confirm(`Jetzt sofort mit den ${c.online} vorhandenen Servern starten? Spiele der ersten Runde laufen dann teils nacheinander.`)) wait = false;
+      else return;
+    } else if (!confirm("Turnier starten? Die Anmeldung schließt, Matches werden zur geplanten Zeit automatisch auf den Servern geladen.")) return;
+  }
+  const r = await tourCall("/api/tournament/start", {body: {wait}});
+  if (r) toast(r.waiting ? `Wartet auf Server (${r.online}/${r.need} online${r.creating ? `, ${r.creating} werden angelegt` : ""}) – startet dann automatisch` : (r.creating ? `Turnier läuft – ${r.creating} Server werden angelegt` : "Turnier läuft"));
+}
 $("#ttKind").onchange = () => $("#ttSecL").classList.toggle("hidden", $("#ttKind").value !== "sim");
 $("#ttStart").onclick = async () => {
   const kind = $("#ttKind").value, n = +$("#ttTeams").value || 8;

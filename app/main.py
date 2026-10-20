@@ -3292,7 +3292,8 @@ def _tour_servercheck(d: dict, pool: list[dict]) -> dict:
     creating = _cs2_creating()
     create = max(0, need - len(pool) - creating)
     return {"need": need, "online": len(online), "offline": [{"id": s["id"], "name": s["name"]} for s in offline],
-            "creating": creating, "create": min(10, create), "ok": len(online) >= need}
+            "creating": creating, "create": min(10, create), "ok": len(online) >= need,
+            "status": d.get("status"), "matches": bool(d["matches"])}
 
 
 class TourServersIn(BaseModel):
@@ -3434,9 +3435,14 @@ async def _tour_create_servers(n: int) -> str | None:
     return r.get("id")
 
 
+class TourStartIn(BaseModel):
+    wait: bool = True          # True: erst loslegen, wenn alle nötigen Server online sind · False: mit den vorhandenen
+
+
 @app.post("/api/tournament/start", dependencies=auth)
-async def tour_start(request: Request):
+async def tour_start(request: Request, data: TourStartIn | None = None):
     _need_admin(request)
+    data = data or TourStartIn()
     d = tour.load()
     if not d["matches"]:
         raise HTTPException(400, "Erst den Spielplan erstellen")
@@ -3444,18 +3450,39 @@ async def tour_start(request: Request):
     need = tour.needed_servers(d)
     job = None
     missing = need - len(pool) - _cs2_creating()          # schon laufende Anlege-Aufträge nicht doppelt
-    if d.get("auto_servers") and missing > 0:
+    if data.wait and d.get("auto_servers") and missing > 0:
         try:
             job = await _tour_create_servers(min(10, missing))
         except HTTPException as e:
             raise HTTPException(e.status_code, f"Server anlegen: {e.detail}")
+    started = []
+    if data.wait:                                            # ausgeschaltete Turnier-Server gleich mit starten
+        for s in pool:
+            if not (_state.get(s["id"]) or {}).get("online"):
+                try:
+                    await wake_server(s)
+                    started.append(s["name"])
+                except HTTPException:
+                    pass
     d["servers"] = [s["id"] for s in pool]
+    d["registration"] = False
+    chk = _tour_servercheck(d, pool)
+    if data.wait and not chk["ok"]:
+        d["status"] = "waiting"                              # tour_tick startet, sobald alle da sind
+        tour.save(d)
+        return {"ok": True, "waiting": True, "need": need, "online": chk["online"], "creating": min(10, missing) if job else 0,
+                "started": started}
+    _tour_go(d)
+    tour.save(d)
+    return {"ok": True, "waiting": False, "creating": min(10, missing) if job else 0, "job": job, "started": started}
+
+
+def _tour_go(d: dict) -> None:
     d["status"] = "running"
     d["registration"] = False
-    d["start"] = d.get("start") or time.time()
+    d["start"] = max(d.get("start") or 0, time.time()) if d.get("waited") else (d.get("start") or time.time())
+    d.pop("waited", None)
     tour.plan(d)
-    tour.save(d)
-    return {"ok": True, "creating": min(10, missing) if job else 0, "job": job}
 
 
 @app.post("/api/tournament/stop", dependencies=auth)
@@ -3592,6 +3619,15 @@ def _tour_test(d: dict) -> str | None:
 
 async def tour_tick() -> None:
     d = tour.load()
+    if d.get("status") == "waiting":                         # wartet auf die Server (gestartet/angelegt beim Start)
+        pool = _tour_pool()
+        d["servers"] = [s["id"] for s in pool]
+        if _tour_servercheck(d, pool)["ok"]:
+            d["waited"] = True
+            _tour_go(d)
+            log.info("Turnier: alle Server da – es geht los")
+        tour.save(d)
+        return
     if d.get("status") != "running":
         _tour_names.clear()
         return
