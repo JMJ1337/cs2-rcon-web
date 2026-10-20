@@ -89,10 +89,11 @@ CATALOG = {
     },
     "enshrouded": {
         "label": "Enshrouded", "short": "Enshrouded", "color": "#3e6fa8", "appid": 1203620, "image": "sknnr/enshrouded-dedicated-server:latest",
-        "uid": 10000, "gid": 10000, "env": ["SERVER_NAME={server_name}", "SERVER_PASSWORD={password}", "GAME_PORT=15636", "QUERY_PORT=15637",
+        # Image (jsknnr) nutzt PORT = Spielport und STEAM_PORT = Steam-Abfrage (A2S); GAME_PORT/QUERY_PORT gibt es nicht mehr
+        "uid": 10000, "gid": 10000, "env": ["SERVER_NAME={server_name}", "SERVER_PASSWORD={password}", "PORT={port}", "STEAM_PORT={query_port}",
                                             "SERVER_SLOTS=16"],
         "binds": ["{data}:/home/steam/enshrouded/savegame"], "params": "",
-        "ports": [["port", "Spielport (UDP)", 15636, "udp", 15636], ["query_port", "Query-Port (UDP)", 15637, "udp", 15637]], "web": False,
+        "ports": [["port", "Spielport (UDP)", 15637, "udp", 15637], ["query_port", "Steam-Abfrageport (UDP)", 15638, "udp", 15638]], "web": False,
         "fields": [["server_name", "Servername", "text", "Groh Enshrouded #{n}", ""], ["password", "Passwort", "text", "", ""]],
         "status": ("a2s", "query_port"), "join": ("addr", "port"),
     },
@@ -253,9 +254,6 @@ for _k, _m in _MOVE.items():
         for _x in ("port_params", "port_env", "port_map_ok"):
             if _x in _m:
                 _c[_x] = _m[_x]
-if "enshrouded" in CATALOG:
-    CATALOG["enshrouded"]["env"] = [("GAME_PORT={port}" if e.startswith("GAME_PORT=") else "QUERY_PORT={query_port}" if e.startswith("QUERY_PORT=") else e)
-                                    for e in CATALOG["enshrouded"]["env"]]
 # Ports, die nur im LAN gebraucht werden (Verwaltung) – nie in den freigegebenen Bereich
 LAN_ONLY_FIELDS = {"rcon_port", "admin_port", "web_port", "http_port", "web_ui"}
 

@@ -2473,9 +2473,41 @@ async def cache_history_api(range: str = "30d"):
     return out
 
 
+async def _enshrouded_migrate():
+    """Einmalig: alte Enshrouded-Container (GAME_PORT/QUERY_PORT) auf PORT/STEAM_PORT umstellen. Die vorhandenen
+    Portfreigaben bleiben: bisheriger Query-Port wird Spielport, bisheriger Spielport wird Steam-Abfrageport."""
+    if not docker_api.available():
+        return
+    for s in load_servers():
+        if game_of(s) != "enshrouded" or not s.get("container"):
+            continue
+        try:
+            info = await docker_api.inspect(s["container"])
+        except docker_api.DockerError:
+            continue
+        envd = dict(e.split("=", 1) for e in (info.get("Config") or {}).get("Env") or [] if "=" in e)
+        if "STEAM_PORT" in envd or ((info.get("Config") or {}).get("Labels") or {}).get("gsm.managed") != "1":
+            continue
+        q, g = envd.get("QUERY_PORT") or str(s.get("port") or 15637), envd.get("GAME_PORT") or str(s.get("game_port") or 15636)
+
+        def mutate(cfg, hc, q=q, g=g):
+            cfg["Env"] = [e for e in cfg.get("Env") or [] if e.split("=", 1)[0] not in ("GAME_PORT", "QUERY_PORT", "PORT", "STEAM_PORT")]
+            cfg["Env"] += [f"PORT={q}", f"STEAM_PORT={g}"]
+        try:
+            await docker_api.recreate(s["container"], mutate)
+            await _set_server_fields(s["id"], port=int(g), game_port=int(q))
+            log.info("Enshrouded %s umgestellt: Spielport %s, Steam-Abfrage %s", s["container"], q, g)
+        except docker_api.DockerError as e:
+            log.warning("Enshrouded-Umstellung %s: %s", s["container"], e)
+
+
 async def _names_loop():
     """Alle 5 Minuten: Rechnernamen der heutigen Cache-Clients festhalten (DHCP vergibt IPs später neu)."""
     await asyncio.sleep(30)
+    try:
+        await _enshrouded_migrate()
+    except Exception:  # noqa: BLE001
+        log.exception("Enshrouded-Umstellung")
     while True:
         try:
             ips = cache_history.ips_today()
@@ -6069,7 +6101,8 @@ ENV_KEYS = {
     "teamspeak": [("TS3SERVER_DEFAULT_VOICE_PORT", "Sprach-Port")],
     "factorio": [("DLC_SPACE_AGE", "Space Age (DLC) aktiv (true/false)"), ("SAVE_NAME", "Spielstand"), ("LOAD_LATEST_SAVE", "Letzten Spielstand laden (true/false)")],
     "satisfactory": [("MAXPLAYERS", "Max. Spieler"), ("AUTOSAVENUM", "Anzahl Autosaves"), ("SKIPUPDATE", "Updates überspringen (true/false)")],
-    "enshrouded": [("SERVER_NAME", "Servername"), ("SERVER_PASSWORD", "Passwort"), ("SERVER_SLOTS", "Max. Spieler")],
+    "enshrouded": [("SERVER_NAME", "Servername"), ("SERVER_PASSWORD", "Passwort"), ("SERVER_SLOTS", "Max. Spieler"),
+                   ("PORT", "Spielport"), ("STEAM_PORT", "Steam-Abfrageport")],
     "projectzomboid": [("SRV_NAME", "Servername"), ("ADMIN_PWD", "Admin-Passwort")],
     "vrising": [("SERVER_NAME", "Servername"), ("WORLD_NAME", "Welt")],
     "dontstarve": [("CLUSTER_TOKEN", "Klei-Server-Token")],
