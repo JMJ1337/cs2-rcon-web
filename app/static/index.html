@@ -6,7 +6,7 @@
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap">
-<link rel="stylesheet" href="/static/app.css?v=108">
+<link rel="stylesheet" href="/static/app.css?v=109">
 </head>
 <body>
 
@@ -432,11 +432,11 @@
           </div>
           <div id="stInfo" class="hint" style="margin-top:8px"></div>
           <details style="margin-top:8px"><summary>So wird der Stream-PC eingerichtet</summary><ol class="hint" style="line-height:1.7">
-            <li>PC mit Grafikkarte, Steam + CS2 (ein eigenes Steam-Konto), OBS Studio.</li>
-            <li>In Steam bei CS2 → Eigenschaften → Startoptionen: <code id="stLaunch">-netconport 2121 -fullscreen</code></li>
-            <li>OBS → Einstellungen → Stream: Dienst „Benutzerdefiniert“, Server und Streamschlüssel von oben. Ausgabe: 1080p/60 oder 720p/60, x264/NVENC, 6000 kbit/s, Keyframe-Intervall 1 s.</li>
-            <li>OBS-Quelle „Spielaufnahme“ auf CS2, dann „Stream starten“.</li>
-            <li>Hilfsprogramm (.cmd) herunterladen und auf dem Stream-PC per Doppelklick starten (bei der Windows-Warnung „Weitere Informationen → Trotzdem ausführen“). Es verbindet CS2 automatisch per CSTV mit dem laufenden Spiel und schaltet die Auto-Kamera (Auto-Director) ein – beim nächsten Spiel wechselt es selbst.</li>
+            <li>PC mit Grafikkarte, Steam angemeldet mit einem Konto, das CS2 hat.</li>
+            <li><b>GrohLAN-Stream.exe</b> herunterladen und auf dem Stream-PC starten (Windows-Warnung: „Weitere Informationen → Trotzdem ausführen“). Sie
+              installiert OBS falls nötig, richtet Profil, Szene (CS2-Spielaufnahme) und Stream-Ziel ein, startet CS2 mit Fernsteuerung und den Stream –
+              und verbindet CS2 danach immer per CSTV mit dem laufenden Spiel, Auto-Kamera an. Fenster offen lassen.</li>
+            <li>Neuer Streamschlüssel? Dann die exe neu herunterladen (die Einstellungen stecken in der Datei).</li>
           </ol></details>
         </div>
         <div class="panel" style="margin-top:16px"><h2>Spielplan &amp; Ergebnisse</h2><div id="tourBoard"></div></div>
@@ -949,6 +949,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=139"></script>
+<script src="/static/app.js?v=140"></script>
 </body>
 </html>

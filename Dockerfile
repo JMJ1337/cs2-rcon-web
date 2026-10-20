@@ -1,3 +1,9 @@
+# Stream-PC-Helfer (Windows-exe) bauen – das Tool hängt beim Herunterladen die Einstellungen an
+FROM golang:1.23-alpine AS streamhelper
+WORKDIR /src
+COPY tools/streamhelper/ .
+RUN CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o /out/grohlan-stream.exe .
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -9,6 +15,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+COPY --from=streamhelper /out/grohlan-stream.exe ./app/bin/grohlan-stream.exe
 
 # Version/Build-Datum (setzt die GitHub Action beim Bauen)
 ARG APP_VERSION=dev

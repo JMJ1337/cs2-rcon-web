@@ -3951,11 +3951,23 @@ class StreamIn(BaseModel):
     new_key: bool = False
 
 
+def _stream_lan_host() -> str:
+    """LAN-Adresse des Docker-Hosts (dort laufen Tool und Stream-Server) – aus den Spielservern abgeleitet."""
+    for x in load_servers():
+        h = _join_host(x)
+        try:
+            if ipaddress.ip_address(h).is_private:
+                return h
+        except ValueError:
+            continue
+    return _docker_host_ip()
+
+
 @app.get("/api/stream", dependencies=auth)
 async def stream_get(request: Request):
     _need_admin(request)
     st = stream_ctl.settings()
-    host = _docker_host_ip()
+    host = _stream_lan_host()
     return {"settings": {k: st.get(k) for k in ("enabled", "title", "server", "netcon_port")}, "container": await stream_ctl.state(),
             "on_air": await stream_ctl.on_air() if st.get("enabled") else False, "target": _stream_target(),
             "obs": {"server": f"rtmp://{host}:{stream_ctl.RTMP_PORT}", "key": f"{stream_ctl.PATH}?user=obs&pass={st['key']}"},
@@ -3978,6 +3990,23 @@ async def stream_put(data: StreamIn, request: Request):
         stream_ctl.save({"enabled": old.get("enabled")})
         raise HTTPException(502, str(e))
     return {"ok": True}
+
+
+@app.get("/api/stream/helper.exe", dependencies=auth)
+async def stream_helper_exe(request: Request):
+    """Alles-in-einem für den Stream-PC: richtet OBS ein, startet CS2 + Stream und folgt dem laufenden Spiel.
+    Die Einstellungen werden ans Ende der exe gehängt (Windows ignoriert angehängte Daten)."""
+    _need_admin(request)
+    exe = Path(__file__).parent / "bin" / "grohlan-stream.exe"
+    if not exe.exists():
+        raise HTTPException(404, "Stream-Helfer ist in diesem Build nicht enthalten")
+    st = stream_ctl.settings()
+    host = _stream_lan_host()                                 # der Stream-PC steht im LAN
+    cfg = {"api": f"http://{host}:{TOOL_PORT}/api/public/stream/state", "server": f"rtmp://{host}:{stream_ctl.RTMP_PORT}",
+           "key": f"{stream_ctl.PATH}?user=obs&pass={st['key']}", "netcon": int(st.get("netcon_port") or 2121), "profile": "GrohLAN"}
+    data = exe.read_bytes() + b"\n#GROHLAN-STREAM-CONFIG#" + json.dumps(cfg).encode()
+    return _Resp(content=data, media_type="application/octet-stream",
+                 headers={"Content-Disposition": 'attachment; filename="GrohLAN-Stream.exe"'})
 
 
 @app.get("/api/stream/helper.cmd", dependencies=auth)
