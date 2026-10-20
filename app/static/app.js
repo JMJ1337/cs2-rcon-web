@@ -3659,13 +3659,13 @@ function glStreamAttach(s){
     const v = document.createElement("video");
     v.controls = true; v.autoplay = true; v.muted = true; v.playsInline = true; v.className = "glvideo";
     glSt = {el: v, src: s.hls, h: null};
-    const go = () => {
-      if (v.canPlayType("application/vnd.apple.mpegurl")) v.src = s.hls;
-      else if (window.Hls && Hls.isSupported()){ glSt.h = new Hls({liveSyncDurationCount: 2}); glSt.h.loadSource(s.hls); glSt.h.attachMedia(v);
+    const go = () => {     // hls.js zuerst (Chrome meldet inzwischen „HLS kann ich“, spielt fMP4-Live aber nicht ab)
+      if (window.Hls && Hls.isSupported()){ glSt.h = new Hls({liveSyncDurationCount: 2}); glSt.h.loadSource(s.hls); glSt.h.attachMedia(v);
         glSt.h.on(Hls.Events.ERROR, (e, d) => { if (d.fatal && glSt){ glSt.h.destroy(); glSt = null; } }); }
+      else if (v.canPlayType("application/vnd.apple.mpegurl")) v.src = s.hls;     // iPhone/Safari
     };
-    if (window.Hls || v.canPlayType("application/vnd.apple.mpegurl")) go();
-    else { const sc = document.createElement("script"); sc.src = "/static/hls.min.js"; sc.onload = go; document.head.appendChild(sc); }
+    if (window.Hls) go();
+    else { const sc = document.createElement("script"); sc.src = "/static/hls.min.js"; sc.onload = go; sc.onerror = go; document.head.appendChild(sc); }
   }
   slot.appendChild(glSt.el);
   if (glSt.el.paused) glSt.el.play().catch(() => {});
@@ -4026,14 +4026,14 @@ async function refreshPubStream(){
     <div class="hint" style="margin-top:4px">Ton ist aus – zum Einschalten auf das Video tippen. ${r.tv ? `Lieber im Spiel zuschauen? <a href="steam://run/730//+connect%20${esc(r.tv)}">In CS2 öffnen</a>` : ""}</div></div>`;
   const v = $("#pubVideo");
   const start = () => {
-    if (v.canPlayType("application/vnd.apple.mpegurl")) { v.src = r.hls; return; }
+    if (!(window.Hls && Hls.isSupported()) && v.canPlayType("application/vnd.apple.mpegurl")) { v.src = r.hls; return; }
     if (!window.Hls || !Hls.isSupported()) { box.querySelector(".hint").textContent = "Dein Browser kann den Stream nicht abspielen."; return; }
     pubHls = new Hls({liveSyncDurationCount: 2, lowLatencyMode: false});
     pubHls.loadSource(r.hls); pubHls.attachMedia(v);
     pubHls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal){ pubHls.destroy(); pubHls = null; pubStreamOn = false; } });
   };
-  if (window.Hls || v.canPlayType("application/vnd.apple.mpegurl")) start();
-  else { const sc = document.createElement("script"); sc.src = "/static/hls.min.js"; sc.onload = start; document.head.appendChild(sc); }
+  if (window.Hls) start();
+  else { const sc = document.createElement("script"); sc.src = "/static/hls.min.js"; sc.onload = start; sc.onerror = start; document.head.appendChild(sc); }
 }
 setInterval(() => { if (!$("#pub").classList.contains("hidden") && !document.hidden) refreshPubStream(); }, 10000);
 

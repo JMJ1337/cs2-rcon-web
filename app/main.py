@@ -8326,8 +8326,8 @@ let h=null,on=false;const v=document.getElementById('v');
 async function r(){let s;try{s=await (await fetch('/api/public/stream/state',{cache:'no-store'})).json();}catch(e){return}
  const live=s.enabled&&s.on_air;document.getElementById('off').style.display=live?'none':'grid';
  document.getElementById('cap').innerHTML=live?'<b>● LIVE</b> '+(s.match||s.title||'').replace(/</g,'&lt;'):'';
- if(live&&!on){on=true;if(v.canPlayType('application/vnd.apple.mpegurl')){v.src=s.hls}else if(window.Hls&&Hls.isSupported()){h=new Hls({liveSyncDurationCount:2});h.loadSource(s.hls);h.attachMedia(v);
-  h.on(Hls.Events.ERROR,(e,d)=>{if(d.fatal){h.destroy();h=null;on=false}})}}
+ if(live&&!on){on=true;if(window.Hls&&Hls.isSupported()){h=new Hls({liveSyncDurationCount:2});h.loadSource(s.hls);h.attachMedia(v);
+  h.on(Hls.Events.ERROR,(e,d)=>{if(d.fatal){h.destroy();h=null;on=false}})}else if(v.canPlayType('application/vnd.apple.mpegurl')){v.src=s.hls}}
  if(!live&&on){on=false;if(h){h.destroy();h=null}v.removeAttribute('src');v.load()}}
 r();setInterval(r,10000);</script></body></html>"""
     return _Resp(content=page, media_type="text/html")
