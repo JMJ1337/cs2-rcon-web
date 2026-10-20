@@ -432,11 +432,12 @@
           </div>
           <div class="panel">
             <h2>Teilnehmer <span class="hint" id="tourPlN"></span></h2>
-            <div class="row" style="gap:6px;margin-bottom:8px"><select id="tourAddSel" style="flex:1"></select><button id="tourAdd">Hinzufügen</button></div>
+            <div class="row" style="gap:6px;margin-bottom:6px"><select id="tourAddSel" style="flex:1"></select><button id="tourAdd">Hinzufügen</button></div>
+            <div class="row" style="gap:6px;margin-bottom:8px"><input id="tourAddId" placeholder="SteamID64 oder Steam-Profil-Link" style="flex:2;min-width:180px"><input id="tourAddName" placeholder="Name (optional)" maxlength="40" style="flex:1;min-width:110px"><button id="tourAddManual">+ per Hand</button></div>
             <div id="tourPlayers"></div>
             <h2 style="margin-top:14px">Teams <span class="hint">(je 2 Spieler – bilden die Spieler auf der öffentlichen Seite selbst, hier änderbar)</span></h2>
             <div id="tourTeams"></div>
-            <div class="row" style="gap:6px;margin-top:8px"><input id="tourNewTeam" placeholder="Neues Team" maxlength="24" style="flex:1"><button id="tourAddTeam">Team anlegen</button></div>
+            <div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap"><input id="tourNewTeam" placeholder="Neues Team" maxlength="24" style="width:150px"><select id="tourNewP1"></select><select id="tourNewP2"></select><button class="primary" id="tourAddTeam">Team anlegen</button></div>
           </div>
         </div>
         <div class="panel" style="margin-top:16px;padding:12px 16px">
@@ -1008,6 +1009,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=157"></script>
+<script src="/static/app.js?v=158"></script>
 </body>
 </html>

@@ -3874,12 +3874,14 @@ async function loadTour(){
   bindTourSrvCheck();
   $("#tourServers").innerHTML = `Server fürs Turnier: ${d.pool.length ? d.pool.map(s => `${s.online ? "🟢" : "⚪"} ${esc(s.name)}`).join(", ") : "keine (außer CS #1)"}${d.needed ? ` · für die erste Runde gleichzeitig nötig: ${d.needed}` : ""}${d.needed && d.pool.length < d.needed ? (d.settings.auto_servers !== false ? ` – ${d.needed - d.pool.length} werden beim Start angelegt` : ` – zu wenige, Matches laufen nacheinander`) : ""}${d.bot ? "" : " · Steam-Bot ist aus (keine Einladungen)"}`;
   const reg = new Set(d.players.map(p => p.steamid));
-  $("#tourAddSel").innerHTML = `<option value="">– LAN-Spieler hinzufügen –</option>` + d.lan_players.filter(p => !reg.has(p.steamid)).map(p => `<option value="${esc(p.steamid)}">${esc(p.name)}</option>`).join("");
+  const teamEditing = $("#tourTeams").contains(document.activeElement) || ["tourNewTeam", "tourNewP1", "tourNewP2", "tourAddId", "tourAddName", "tourAddSel"].includes((document.activeElement || {}).id);
+  if (!teamEditing) $("#tourAddSel").innerHTML = `<option value="">– bekannten Spieler hinzufügen –</option>` + d.lan_players.filter(p => !reg.has(p.steamid)).map(p => `<option value="${esc(p.steamid)}">${p.lan ? "🖧 " : ""}${esc(p.name)}</option>`).join("");
   $("#tourPlN").textContent = `(${d.players.length})`;
   const tname = Object.fromEntries(d.teams.map(t => [t.id, t.name]));
   $("#tourPlayers").innerHTML = d.players.length ? d.players.map(p => `<div class="row" style="gap:8px;margin:3px 0;flex-wrap:nowrap">${p.avatar ? `<img class="avatar" src="${esc(p.avatar)}" alt="">` : `<span class="avatar" style="display:inline-block"></span>`}<b style="flex:1">${esc(p.name)}</b><span class="hint">${p.team ? esc(tname[p.team] || "") : "kein Team"}</span><button class="small danger" data-tdelp="${esc(p.steamid)}">✕</button></div>`).join("") : `<div class="hint">Noch niemand angemeldet.</div>`;
-  const opts = sel => `<option value="">–</option>` + d.players.map(p => `<option value="${esc(p.steamid)}" ${p.steamid === sel ? "selected" : ""}>${esc(p.name)}</option>`).join("");
-  $("#tourTeams").innerHTML = d.teams.map(t => `<div class="row" style="gap:6px;margin:4px 0;flex-wrap:wrap" data-tteam="${esc(t.id)}">
+  const opts = sel => `<option value="">– Spieler –</option>` + d.players.map(p => `<option value="${esc(p.steamid)}" ${p.steamid === sel ? "selected" : ""}>${esc(p.name)}${p.team && p.steamid !== sel ? " (" + esc(tname[p.team] || "Team") + ")" : ""}</option>`).join("");
+  if (!teamEditing){ $("#tourNewP1").innerHTML = opts(""); $("#tourNewP2").innerHTML = opts(""); }
+  if (!teamEditing) $("#tourTeams").innerHTML = d.teams.map(t => `<div class="row" style="gap:6px;margin:4px 0;flex-wrap:wrap" data-tteam="${esc(t.id)}">
     <input value="${esc(t.name)}" maxlength="24" style="width:150px" data-tn><select data-tp1>${opts(t.steamids[0])}</select><select data-tp2>${opts(t.steamids[1])}</select>
     <button class="small" data-tsave>Speichern</button><button class="small danger" data-tdel>✕</button>${t.steamids.length < 2 ? ` <span class="pill warn">sucht Partner</span>` : ""}</div>`).join("") || `<div class="hint">Noch keine Teams.</div>`;
   if (tDrag) return;                       // nicht mitten im Ziehen neu zeichnen
@@ -3890,7 +3892,9 @@ async function loadTour(){
   $$("[data-tdelp]").forEach(b => b.onclick = async () => { await tourCall(`/api/tournament/players/${b.dataset.tdelp}`, {method: "DELETE"}); });
   $$("[data-tteam]").forEach(row => {
     const id = row.dataset.tteam;
-    row.querySelector("[data-tsave]").onclick = () => tourCall("/api/tournament/teams", {body: {id, name: row.querySelector("[data-tn]").value, players: [row.querySelector("[data-tp1]").value, row.querySelector("[data-tp2]").value].filter(Boolean)}});
+    const save = () => tourCall("/api/tournament/teams", {body: {id, name: row.querySelector("[data-tn]").value, players: [row.querySelector("[data-tp1]").value, row.querySelector("[data-tp2]").value].filter(Boolean)}}, "Team gespeichert");
+    row.querySelector("[data-tsave]").onclick = save;
+    row.querySelectorAll("select").forEach(x => x.onchange = () => { x.blur(); save(); });     // Spieler wählen = gleich speichern
     row.querySelector("[data-tdel]").onclick = () => confirm("Team löschen?") && tourCall(`/api/tournament/teams/${id}`, {method: "DELETE"});
   });
   $$("[data-tres]").forEach(b => b.onclick = () => tourCall(`/api/tournament/match/${b.dataset.tres}/result`, {body: {s1: +$(`[data-ts1="${b.dataset.tres}"]`).value || 0, s2: +$(`[data-ts2="${b.dataset.tres}"]`).value || 0}}));
@@ -3908,8 +3912,18 @@ $("#tourSave").onclick = async () => {
     par_qf: $("#tourParQf").checked, par_sf: $("#tourParSf").checked}}, "Gespeichert");
   tourLoaded = false;
 };
-$("#tourAdd").onclick = () => $("#tourAddSel").value && tourCall("/api/tournament/players", {body: {steamid: $("#tourAddSel").value}});
-$("#tourAddTeam").onclick = () => $("#tourNewTeam").value.trim() && tourCall("/api/tournament/teams", {body: {name: $("#tourNewTeam").value.trim(), players: []}}).then(() => { $("#tourNewTeam").value = ""; });
+$("#tourAdd").onclick = () => { if (!$("#tourAddSel").value) return; document.activeElement.blur(); tourCall("/api/tournament/players", {body: {steamid: $("#tourAddSel").value}}); };
+$("#tourAddTeam").onclick = async () => {
+  const name = $("#tourNewTeam").value.trim();
+  if (!name) return toast("Teamname eingeben", true);
+  const r = await tourCall("/api/tournament/teams", {body: {name, players: [$("#tourNewP1").value, $("#tourNewP2").value].filter(Boolean)}}, "Team angelegt");
+  if (r){ $("#tourNewTeam").value = ""; document.activeElement.blur(); loadTour(); }
+};
+$("#tourAddManual").onclick = async () => {
+  const id = $("#tourAddId").value.trim(); if (!id) return toast("SteamID64 oder Profil-Link eingeben", true);
+  const r = await tourCall("/api/tournament/players", {body: {steamid: id, name: $("#tourAddName").value.trim() || null}}, "Spieler hinzugefügt");
+  if (r){ $("#tourAddId").value = ""; $("#tourAddName").value = ""; document.activeElement.blur(); loadTour(); }
+};
 $("#tourGen").onclick = async () => { if (tourData && tourData.matches.length && !confirm("Spielplan neu erstellen? Bisherige Ergebnisse gehen verloren.")) return; const r = await tourCall("/api/tournament/generate", {method: "POST"}); if (!r) return; toast(`Spielplan erstellt – ${r.needed} Server gleichzeitig nötig, ${r.have} vorhanden`);
   const c = r.servercheck;
   if (c && !c.ok && (c.create || c.offline.length) && (!c.create || await diskOkForCreate(c.create)) && confirm(`Für die erste Runde sind ${c.need} Server nötig, online sind ${c.online}.\n\n${[c.offline.length ? `${c.offline.length} ausgeschaltete starten` : "", c.create ? `${c.create} neue anlegen` : ""].filter(Boolean).join(" und ")}?`)){

@@ -3298,8 +3298,8 @@ async def tour_get(request: Request):
     _need_right(request, "tournament")
     d = tour.load()
     pool = _tour_pool()
-    lan = [{"steamid": p["steamid"], "name": playerdb.display(p), "avatar": p.get("avatar")}
-           for p in playerdb.all_players() if str(p.get("steamid") or "").isdigit() and playerdb.on_lan(p)]
+    lan = sorted(({"steamid": p["steamid"], "name": playerdb.display(p), "avatar": p.get("avatar"), "lan": playerdb.on_lan(p)}
+                  for p in playerdb.all_players() if str(p.get("steamid") or "").isdigit()), key=lambda x: (not x["lan"], x["name"].lower()))
     return {**_tour_out(d), "settings": {k: d.get(k) for k in ("maps", "auto_servers", "invite", "par_qf", "par_sf")}, "max_servers": tour.max_servers(d),
             "pool": [{"id": s["id"], "name": s["name"], "online": bool((_state.get(s["id"]) or {}).get("online"))} for s in pool],
             "needed": tour.needed_servers(d) if d["matches"] else None, "lan_players": lan,
@@ -3375,19 +3375,31 @@ async def tour_put(data: TourSettings, request: Request):
 
 
 class TourPlayerIn(BaseModel):
-    steamid: str = Field(pattern=r"^\d{17}$")
+    steamid: str = Field(min_length=1, max_length=200)    # SteamID64 oder Profil-Link
+    name: str | None = Field(None, max_length=40)
 
 
 @app.post("/api/tournament/players", dependencies=auth)
 async def tour_add_player(data: TourPlayerIn, request: Request):
     _need_right(request, "tournament")
+    sid = steam.to_steamid64(data.steamid)
+    prof = {}
+    if not sid or not playerdb.get(sid):            # Profil-Link/Vanity auflösen bzw. Name + Bild von Steam holen
+        try:
+            prof = await steam.resolve_player(data.steamid)
+            sid = prof.get("steamid") or sid
+        except steam.SteamError as e:
+            if not sid:
+                raise HTTPException(400, str(e))
+        if sid and not playerdb.get(sid):
+            playerdb.add_manual(sid, data.name or prof.get("name") or "", prof.get("avatar") or "")
     d = tour.load()
-    if not any(p["steamid"] == data.steamid for p in d["players"]):
-        p = playerdb.get(data.steamid)
-        d["players"].append({"steamid": data.steamid, "name": playerdb.display(p) if p else data.steamid,
-                             "avatar": (p or {}).get("avatar"), "t": time.time()})
+    if not any(p["steamid"] == sid for p in d["players"]):
+        p = playerdb.get(sid)
+        d["players"].append({"steamid": sid, "name": (data.name or "").strip()[:40] or (playerdb.display(p) if p else "") or prof.get("name") or sid,
+                             "avatar": (p or {}).get("avatar") or prof.get("avatar"), "t": time.time()})
         tour.save(d)
-    return {"ok": True}
+    return {"ok": True, "steamid": sid}
 
 
 @app.delete("/api/tournament/players/{steamid}", dependencies=auth)
@@ -3418,11 +3430,15 @@ async def tour_team_save(data: TourTeamAdmin, request: Request):
     for o in d["teams"]:
         if o is not t:
             o["players"] = [x for x in o["players"] if x not in pl]
+    if not _clean_team_name(data.name):
+        raise HTTPException(400, "Teamname fehlt")
     if t:
-        t.update(name=_clean_team_name(data.name), players=pl)
+        t.update(name=_clean_team_name(data.name), players=pl[:2])
     else:
-        d["teams"].append({"id": tour.new_team_id(), "name": _clean_team_name(data.name), "players": pl})
-    d["teams"] = [x for x in d["teams"] if x["players"] or x is t]
+        t = {"id": tour.new_team_id(), "name": _clean_team_name(data.name), "players": pl[:2]}
+        d["teams"].append(t)
+    d["teams"] = [x for x in d["teams"] if x["players"] or x is t or x.get("manual")]
+    t["manual"] = True                                     # von Hand angelegt: bleibt auch leer bestehen
     tour.save(d)
     return {"ok": True}
 
