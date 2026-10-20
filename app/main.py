@@ -3585,7 +3585,7 @@ def _split_lan(steamids: list[str]) -> dict[bool, list[str]]:
     out: dict[bool, list[str]] = {True: [], False: []}
     for sid in steamids:
         p = playerdb.get(sid)
-        out[bool(p and playerdb.on_lan(p))].append(sid)
+        out[bool(p and playerdb.connects_from_lan(p))].append(sid)
     return out
 
 

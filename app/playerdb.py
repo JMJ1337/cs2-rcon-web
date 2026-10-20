@@ -396,6 +396,15 @@ def on_lan(p: dict) -> bool:
     return bool(p.get("lan_ip")) and not p.get("wan_ip")       # alte Einträge ohne Zeitstempel
 
 
+def connects_from_lan(p: dict) -> bool:
+    """Woher verbindet der Spieler GERADE? (für Adressen in Einladungen) – die zuletzt gesehene IP entscheidet,
+    unabhängig vom Haken „auf der LAN“. Ohne Zeitstempel: wie on_lan."""
+    ls, ws = p.get("lan_seen") or 0, p.get("wan_seen") or 0
+    if ls or ws:
+        return ls >= ws
+    return on_lan(p)
+
+
 def set_lan(pid: str, value) -> dict:
     p = get(pid)
     if not p:
