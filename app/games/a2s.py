@@ -130,9 +130,13 @@ async def players(host: str, port: int, timeout: float = 3.0) -> list[dict]:
 
 INSIDE_SH = r"""
 P=%d
-q() { exec 3<>/dev/udp/127.0.0.1/$P || exit 1; printf "$1" >&3; timeout 2 dd bs=1400 count=1 <&3 2>/dev/null | od -An -v -tx1 | tr -d ' \n'; exec 3>&-; }
+# Source-Server binden oft nur an die Container-IP (nicht 127.0.0.1) -> beide probieren
+for IP in 127.0.0.1 $(hostname -i 2>/dev/null); do
+q() { exec 3<>/dev/udp/$IP/$P || return 1; printf "$1" >&3; timeout 2 dd bs=1400 count=1 <&3 2>/dev/null | od -An -v -tx1 | tr -d ' \n'; exec 3>&-; }
 R=$(q '\xff\xff\xff\xffTSource Engine Query\x00')
 if [ "${R:8:2}" = "41" ]; then C=${R:10:8}; E=$(echo $C | sed 's/../\\x&/g'); R=$(q "\\xff\\xff\\xff\\xffTSource Engine Query\\x00$E"); fi
+[ ${#R} -ge 12 ] && break
+done
 echo "$R"
 """
 
