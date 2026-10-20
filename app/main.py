@@ -3908,6 +3908,13 @@ async def _tour_load(d: dict, m: dict, bots: bool = False) -> None:
     p = MATCH_PRESETS["wingman"]
     title = f"Turnier: {t1['name']} vs {t2['name']}"[:63]
     _tour_names[s["id"]] = title
+    # Ein noch geladenes MatchZy-Match (z. B. aus einem vorigen Turnier) blockiert das Laden und lässt die neuen
+    # Spieler nicht auf den Server – vorher beenden
+    try:
+        await run(s, "css_endmatch")
+        await asyncio.sleep(3)
+    except Exception:  # noqa: BLE001
+        pass
     await run(s, f'game_type {p["game_type"]}; game_mode {p["game_mode"]}; hostname "{title}"; matchzy_loadmatch_url "{url}"')
     m.update(status="live", started=time.time(), mz_id=str(mzid), token=token)
     if bots:
