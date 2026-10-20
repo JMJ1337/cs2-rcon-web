@@ -3125,6 +3125,7 @@ def _tour_out(d: dict) -> dict:
     for m in v["matches"]:
         sv = m.get("server") or ""
         m["server_name"] = names.get(sv) or (f"Testserver {sv[4:]}" if sv.startswith("sim-") else None)
+        m["mz"] = next((x.get("mz_id") for x in d["matches"] if x["id"] == m["id"]), None)
         if m.get("status") == "live" and sv in names:          # CSTV-Link zum Zuschauen
             m["tv_url"] = ((_state.get(sv) or {}).get("join") or {}).get("tv_url")
     v["test"] = (d.get("test") or {}).get("kind")
@@ -4121,7 +4122,17 @@ async def tour_tick() -> None:
                     tour.set_result(d, m["id"], s1, s2)
                     _tour_names.pop(m.get("server") or "", None)
             continue
-        res = next((x for x in matchlog.recent(m.get("server"), 10) if str(x.get("matchid")) == str(m.get("mz_id"))), None)
+        rec = matchlog.recent(m.get("server"), 10)
+        res = next((x for x in rec if str(x.get("matchid")) == str(m.get("mz_id"))), None)
+        if not res:                               # Rückfall: MatchZy-Match mit denselben Teamnamen, das nach dem Laden begann
+            n1, n2 = tour.team_name(d, m["t1"]), tour.team_name(d, m["t2"])
+            res = next((x for x in rec if x.get("source") != "log" and (x.get("started") or 0) >= (m.get("started") or 0) - 120
+                        and {(x.get("team1") or {}).get("name"), (x.get("team2") or {}).get("name")} == {n1, n2}), None)
+            if res:
+                log.info("Turnier-Match %s: MatchZy-ID %s übernommen (vorher %s)", m["id"], res.get("matchid"), m.get("mz_id"))
+                m["mz_id"] = str(res.get("matchid"))
+                if (res.get("team1") or {}).get("name") == n2 and n1 != n2:   # Seiten vertauscht -> Ergebnis drehen
+                    res = {**res, "team1": res.get("team2"), "team2": res.get("team1")}
         # Wächter: MatchZy hat das Match nicht übernommen (z. B. direkt nach dem vorigen Match noch beschäftigt) -> neu laden
         mzm = (((_state.get(m.get("server") or "") or {}).get("matchzy") or {}).get("match") or {})
         if not res and m.get("mz_id") and now - (m.get("started") or now) > 90 and str(mzm.get("matchid") or "") != str(m["mz_id"]) \
