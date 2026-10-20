@@ -3947,7 +3947,7 @@ async function loadStream(){
   if (!stLoaded || !$("#streamPanel").contains(document.activeElement)){
     $("#stOn").checked = !!st.enabled; $("#stTitle").value = st.title || "";
     $("#stServer").innerHTML = `<option value="">automatisch: laufendes Turnierspiel</option>` + r.servers.map(x => `<option value="${esc(x.id)}">${esc(x.name || x.id)}</option>`).join("");
-    $("#stServer").value = st.server || ""; $("#stLaunch").textContent = `-netconport ${st.netcon_port || 2121} -fullscreen`;
+    $("#stServer").value = st.server || "";
     stLoaded = true;
   }
   const c = r.container;
