@@ -3877,6 +3877,19 @@ async def tour_tick() -> None:
                     _tour_names.pop(m.get("server") or "", None)
             continue
         res = next((x for x in matchlog.recent(m.get("server"), 10) if str(x.get("matchid")) == str(m.get("mz_id"))), None)
+        # Wächter: MatchZy hat das Match nicht übernommen (z. B. direkt nach dem vorigen Match noch beschäftigt) -> neu laden
+        mzm = (((_state.get(m.get("server") or "") or {}).get("matchzy") or {}).get("match") or {})
+        if m.get("mz_id") and now - (m.get("started") or now) > 90 and str(mzm.get("matchid") or "") != str(m["mz_id"]) \
+                and (mzm.get("state") in (None, "none") or not mzm.get("matchid")) and (m.get("reloads") or 0) < 5 \
+                and now - (m.get("reloaded") or 0) > 90:
+            m["reloads"] = (m.get("reloads") or 0) + 1
+            m["reloaded"] = now
+            log.info("Turnier-Match %s: MatchZy hat es nicht geladen – lade neu (%s. Versuch)", m["id"], m["reloads"])
+            try:
+                await _tour_load(d, m, bots=test == "bots")
+            except Exception as e:  # noqa: BLE001
+                log.warning("Turnier-Match %s neu laden: %s", m["id"], e)
+            continue
         if res:
             m["s1"], m["s2"] = (res.get("team1") or {}).get("score"), (res.get("team2") or {}).get("score")
             m["stats"] = tour.match_stats(res)          # K/D/HS je Spieler für die Bestenliste
