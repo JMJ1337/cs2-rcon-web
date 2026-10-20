@@ -3166,7 +3166,22 @@ async def public_tournament(request: Request):
         me["registered"] = any(p["steamid"] == me["steamid"] for p in d["players"])
         t = tour.player_team(d, me["steamid"])
         me["team"] = t["id"] if t else None
-    return {**_tour_out(d), "me": me or None}
+    v = _tour_out(d)
+    if not client_is_lan(request):
+        await _tour_tv_wan(v)
+    return {**v, "me": me or None}
+
+
+async def _tour_tv_wan(v: dict) -> None:
+    """Zuschauen-Links (CSTV) für Besucher aus dem Internet auf die öffentliche Adresse umschreiben."""
+    wan = await wan_host()
+    if not wan:
+        return
+    hosts = {x["id"]: _join_host(x) for x in load_servers()}
+    for m in v.get("matches") or []:
+        h = hosts.get(m.get("server") or "")
+        if h and m.get("tv_url"):
+            m["tv_url"] = m["tv_url"].replace(h, wan)
 
 
 def _tour_me(request: Request, d: dict) -> dict:
@@ -8155,7 +8170,7 @@ async def homepage_cors(request: Request, call_next):
 
 
 _EMBED_FUNCS = ("const esc", "const tTime", "const tStatus", "const GL_TROPHY", "function glPill", "function glMatch", "function glCols",
-                "function glTree", "function glShow", "function tmMini", "function tvBtn")
+                "function glTree", "let glSt", "function glStreamAttach", "function glShow", "function tmMini", "function tvBtn")
 _embed_js: dict = {}
 
 
@@ -8183,9 +8198,11 @@ async def embed_tournament():
     page = """<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>GrohLAN Turnier</title><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap">
 <link rel="stylesheet" href="/static/app.css"><style>html,body{background:transparent!important;margin:0;padding:0}#o{padding:8px}</style></head>
-<body><div id="o"><div class="hint" style="padding:20px">Lade Turnier …</div></div><script>""" + _embed_script() + """
+<body><div id="o"><div class="hint" style="padding:20px">Lade Turnier …</div></div><script src="/static/hls.min.js"></script><script>""" + _embed_script() + """
 async function r(){try{const v=await (await fetch('/api/public/tournament/state',{cache:'no-store'})).json();
- document.getElementById('o').innerHTML=v&&v.active&&v.matches&&v.matches.length?glShow(v):'<div class="gl"><div class="glsec"><h3>Turnier</h3><div style="color:#aaa">Noch kein Spielplan.</div></div></div>';}catch(e){}}
+ try{v.stream=await (await fetch('/api/public/stream/state',{cache:'no-store'})).json();}catch(e){}
+ document.getElementById('o').innerHTML=v&&v.active&&v.matches&&v.matches.length?glShow(v):'<div class="gl"><div class="glsec"><h3>Turnier</h3><div style="color:#aaa">Noch kein Spielplan.</div></div></div>';
+ glStreamAttach(v.stream);}catch(e){}}
 r();setInterval(r,15000);</script></body></html>"""
     return _Resp(content=page, media_type="text/html")
 

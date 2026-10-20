@@ -3647,6 +3647,27 @@ function glTree(ms, finals){
     </div></div></div></div>
     ${right.length ? `<div class="glside right">${glCols(right, "right")}</div>` : ""}</div>`;
 }
+// Stream-Player bleibt beim Neuzeichnen erhalten (Video-Element wird nur umgehängt)
+let glSt = null;
+function glStreamAttach(s){
+  const slot = document.getElementById("glStreamSlot");
+  if (!s || !s.enabled || !s.on_air || !slot){ if (glSt && !slot){ if (glSt.h) glSt.h.destroy(); glSt = null; } return; }
+  if (!glSt || glSt.src !== s.hls){
+    if (glSt && glSt.h) glSt.h.destroy();
+    const v = document.createElement("video");
+    v.controls = true; v.autoplay = true; v.muted = true; v.playsInline = true; v.className = "glvideo";
+    glSt = {el: v, src: s.hls, h: null};
+    const go = () => {
+      if (v.canPlayType("application/vnd.apple.mpegurl")) v.src = s.hls;
+      else if (window.Hls && Hls.isSupported()){ glSt.h = new Hls({liveSyncDurationCount: 2}); glSt.h.loadSource(s.hls); glSt.h.attachMedia(v);
+        glSt.h.on(Hls.Events.ERROR, (e, d) => { if (d.fatal && glSt){ glSt.h.destroy(); glSt = null; } }); }
+    };
+    if (window.Hls || v.canPlayType("application/vnd.apple.mpegurl")) go();
+    else { const sc = document.createElement("script"); sc.src = "/static/hls.min.js"; sc.onload = go; document.head.appendChild(sc); }
+  }
+  slot.appendChild(glSt.el);
+  if (glSt.el.paused) glSt.el.play().catch(() => {});
+}
 function glShow(v){
   const by = st => v.matches.filter(m => st.includes(m.stage));
   const live = v.matches.filter(m => m.status === "live");
@@ -3655,8 +3676,15 @@ function glShow(v){
   if (live.length || next.length) h += `<div class="glsec"><h3>${live.length ? "Live &amp; als Nächstes" : "Als Nächstes"}</h3><div class="glnext">${[...live, ...next].map(m =>
     `<div class="glcard"><div class="glh">${esc(m.label)}${m.map ? " · " + esc(m.map) : ""}</div>${glMatch(m, "left")}</div>`).join("")}</div></div>`;
   const W = by("W"), K = by("K"), L = by("L"), F = by("F");
-  if (K.length) h += `<div class="glsec"><h3>K.-o.-Phase</h3>${glTree(K, [])}</div>`;
-  if (W.length) h += `<div class="glsec"><h3>${L.length ? "Winner-Bracket" : "Turnierbaum"}</h3>${glTree(W, F)}</div>`;
+  // Live-Stream direkt über dem Pokal (sonst „Stream offline“ + Hinweis auf CSTV)
+  const sv = v.stream, stH = !sv ? "" : sv.enabled && sv.on_air
+    ? `<div class="glstream"><div class="glstreamcap"><span class="livedot">LIVE</span> ${esc(sv.match || sv.title || "Live-Stream")}</div><div id="glStreamSlot" class="glstreamslot"></div></div>`
+    : `<div class="glstream off">📺 Stream offline${live.length ? " – live zuschauen im Spiel per CSTV: 👁 Zuschauen bei den laufenden Spielen" : ""}</div>`;
+  let stDone = false;
+  const withStream = x => { if (stDone) return x; stDone = true; return stH + x; };
+  if (K.length) h += `<div class="glsec"><h3>K.-o.-Phase</h3>${withStream(glTree(K, []))}</div>`;
+  if (W.length) h += `<div class="glsec"><h3>${L.length ? "Winner-Bracket" : "Turnierbaum"}</h3>${withStream(glTree(W, F))}</div>`;
+  if (!stDone && stH) h = stH + h;
   if (L.length){
     const rounds = {};
     L.forEach(m => (rounds[m.round] = rounds[m.round] || []).push(m));
@@ -3914,6 +3942,7 @@ let pubTourData = null;
 async function refreshPubTour(){
   try { pubTourData = await (await fetch("/api/public/tournament/state", {cache: "no-store"})).json(); } catch { return; }
   const v = pubTourData;
+  try { if (v && v.active) v.stream = await (await fetch("/api/public/stream/state", {cache: "no-store"})).json(); } catch {}
   if (!v || !v.active){ $("#pubTour").innerHTML = ""; return; }
   if ($("#pubTour").contains(document.activeElement) && document.activeElement.tagName === "INPUT") return;   // nicht beim Tippen neu zeichnen
   const me = v.me, myTeam = me && me.team;
@@ -3931,6 +3960,7 @@ async function refreshPubTour(){
   $("#pubTour").innerHTML = `<div class="tourpub"><h3 class="pdsec">🏆 ${esc(v.name)} <span class="hint">${esc(v.mode_label)} · ${tStatus[v.status] || v.status}${v.start ? " · Start " + new Date(v.start * 1000).toLocaleString("de-DE", {weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"}) + " Uhr" : ""}</span></h3>
     ${reg}${v.status === "setup" ? `<div class="hint" style="margin-bottom:6px">Teams (${v.teams.length}) · ${v.players.length} Spieler angemeldet</div>${teams}` : ""}
     ${v.matches.length ? tourBoardHtml(v) : ""}</div>`;
+  glStreamAttach(v.stream);
   const call = async (path, body) => { try { const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})}); if (!r.ok) throw new Error((await r.json()).detail || r.status); refreshPubTour(); } catch (e) { toast(e.message, true); } };
   $$("[data-pt]").forEach(b => b.onclick = e => { e.preventDefault(); const a = b.dataset.pt;
     if (a === "team") return call("/api/public/tournament/team", {name: $("#ptTeam").value.trim()});
@@ -3976,6 +4006,7 @@ let pubHls = null, pubStreamOn = false;
 async function refreshPubStream(){
   let r; try { r = await (await fetch("/api/public/stream/state", {cache: "no-store"})).json(); } catch { return; }
   const box = $("#pubStream"); if (!box) return;
+  if (pubTourData && pubTourData.active && pubTourData.matches && pubTourData.matches.length) r.on_air = false;   // Stream steht dann im Turnierbaum über dem Pokal
   if (!r.enabled || !r.on_air){
     if (pubStreamOn){ if (pubHls){ pubHls.destroy(); pubHls = null; } box.innerHTML = ""; pubStreamOn = false; }
     return;

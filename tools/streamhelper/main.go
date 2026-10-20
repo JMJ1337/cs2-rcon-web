@@ -219,6 +219,28 @@ func findSteam() string {
 	return ""
 }
 
+// Ja/Nein im Fenster fragen – Enter = Ja
+func ask(q string) bool {
+	fmt.Printf("%s  %s [J/n] ", time.Now().Format("15:04:05"), q)
+	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	line = strings.ToLower(strings.TrimSpace(line))
+	return line == "" || strings.HasPrefix(line, "j") || strings.HasPrefix(line, "y")
+}
+
+func closeApp(exe string) {
+	say("Beende %s …", exe)
+	exec.Command("taskkill", "/IM", exe).Run() // erst freundlich
+	for i := 0; i < 10; i++ {
+		time.Sleep(time.Second)
+		out, _ := exec.Command("tasklist", "/FI", "IMAGENAME eq "+exe, "/NH").Output()
+		if !strings.Contains(strings.ToLower(string(out)), exe) {
+			return
+		}
+	}
+	exec.Command("taskkill", "/F", "/IM", exe).Run()
+	time.Sleep(2 * time.Second)
+}
+
 func cs2Running() bool {
 	out, _ := exec.Command("tasklist", "/FI", "IMAGENAME eq cs2.exe", "/NH").Output()
 	return strings.Contains(strings.ToLower(string(out)), "cs2.exe")
@@ -283,8 +305,11 @@ func main() {
 		obs = installOBS()
 	}
 	if obs != "" {
+		if obsRunning() && ask("OBS läuft schon. Jetzt schließen, einrichten und mit Stream neu starten?") {
+			closeApp("obs64.exe")
+		}
 		if obsRunning() {
-			say("OBS läuft schon – Einstellungen werden beim nächsten OBS-Start übernommen. Bitte OBS einmal schließen und die exe neu starten, falls nicht gestreamt wird.")
+			say("OBS läuft weiter mit den alten Einstellungen – falls nicht gestreamt wird: OBS schließen und die exe neu starten.")
 		} else if err := configureOBS(c); err != nil {
 			say("OBS einrichten fehlgeschlagen: %v", err)
 		} else {
@@ -298,7 +323,14 @@ func main() {
 		say("Steam nicht gefunden – bitte Steam installieren und anmelden (Konto mit CS2).")
 	} else if cs2Running() {
 		if netcon(c, "echo GrohLAN") != nil {
-			say("CS2 läuft schon, aber ohne Fernsteuerung. Bitte CS2 beenden – die exe startet es dann selbst richtig.")
+			if ask("CS2 läuft schon, aber ohne Fernsteuerung. Jetzt beenden und richtig neu starten?") {
+				closeApp("cs2.exe")
+				time.Sleep(5 * time.Second)
+				say("Starte CS2 über Steam (Fernsteuerung auf Port %d) …", c.Netcon)
+				startCS2(steam, c)
+			} else {
+				say("Dann bitte CS2 selbst beenden – die exe startet es danach automatisch neu.")
+			}
 		}
 	} else {
 		say("Starte CS2 über Steam (Fernsteuerung auf Port %d) …", c.Netcon)
