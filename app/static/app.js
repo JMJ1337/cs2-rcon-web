@@ -3517,32 +3517,131 @@ const tStatus = {setup: "Vorbereitung", running: "läuft", done: "beendet"};
 // Turnierbaum/Spielplan: Spalten je Runde, Gruppentabellen, nächste Matches
 function tourBoardHtml(v, admin){
   if (!v || !v.matches || !v.matches.length) return `<div class="hint">Noch kein Spielplan.</div>`;
+  if (!admin) return glShow(v);
   let h = "";
   const live = v.matches.filter(m => m.status === "live");
   const next = v.matches.filter(m => m.status === "ready" || (m.status === "wait" && m.planned)).sort((a, b) => (a.planned || 0) - (b.planned || 0)).slice(0, 6);
-  if (live.length || next.length) h += `<div class="tnext">${[...live, ...next].map(m => tmCard(m, admin, true)).join("")}</div>`;
-  const tabs = Object.entries(v.groups || {});
-  if (v.table) tabs.push(["Tabelle", v.table]);
-  if (tabs.length) h += `<div class="tgroups">${tabs.map(([g, rows]) => `<table class="cachetable"><thead><tr><th>${g.length === 1 ? "Gruppe " + esc(g) : esc(g)}</th><th>Sp</th><th>S</th><th>N</th><th>Runden</th></tr></thead><tbody>
-    ${rows.map((r, i) => `<tr><td>${i + 1}. <b>${esc(r.name)}</b></td><td class="mono">${r.played}</td><td class="mono">${r.won}</td><td class="mono">${r.lost}</td><td class="mono">${r.rf}:${r.ra}</td></tr>`).join("")}</tbody></table>`).join("")}</div>`;
-  const cols = {};
-  v.matches.forEach(m => { const k = `${m.stage}|${String(m.round).padStart(3, "0")}`; (cols[k] = cols[k] || []).push(m); });
-  h += `<div class="tboard">${Object.keys(cols).sort((a, b) => a.split("|")[1].localeCompare(b.split("|")[1]) || a.localeCompare(b)).map(k =>
-    `<div class="tcol"><h4>${esc(cols[k][0].label.replace(/^Gruppe \w+ · /, "Gruppen · "))}</h4>${cols[k].map(m => tmCard(m, admin)).join("")}</div>`).join("")}</div>`;
+  if (live.length || next.length) h += `<div class="tsec"><h3>${live.length ? "🔴 Läuft gerade &amp; als Nächstes" : "Als Nächstes"}</h3><div class="tnext">${[...live, ...next].map(m => tmCard(m, admin, true)).join("")}</div></div>`;
+  const byStage = st => v.matches.filter(m => st.includes(m.stage));
+  // Gruppen: Tabelle + Spiele der Gruppe nebeneinander
+  const gnames = Object.keys(v.groups || {});
+  if (gnames.length) h += `<div class="tsec"><h3>Gruppenphase</h3><div class="tgroups">${gnames.map(g => groupBox("Gruppe " + g, v.groups[g], byStage("G").filter(m => m.group === g), admin)).join("")}</div></div>`;
+  if (v.table) h += `<div class="tsec"><h3>Jeder gegen jeden</h3><div class="tgroups">${groupBox("Tabelle", v.table, byStage("R"), admin, true)}</div></div>`;
+  // K.-o.-Bäume
+  const W = byStage("W"), K = byStage("K"), L = byStage("L"), F = byStage("F");
+  if (K.length) h += bracketHtml("K.-o.-Phase", K, [], admin);
+  if (W.length) h += bracketHtml(L.length ? "Winner-Bracket" : "K.-o.-Baum", W, F, admin);
+  if (L.length) h += bracketHtml("Loser-Bracket", L, [], admin);
   return h;
 }
+function groupBox(title, rows, ms, admin, rounds){
+  const tbl = `<table class="cachetable"><thead><tr><th>${esc(title)}</th><th title="Spiele">Sp</th><th title="Siege">S</th><th title="Niederlagen">N</th><th title="Runden gewonnen:verloren">Runden</th></tr></thead><tbody>
+    ${(rows || []).map((r, i) => `<tr class="${i < 2 && !rounds ? "adv" : ""}"><td>${i + 1}. <b>${esc(r.name)}</b></td><td class="mono">${r.played}</td><td class="mono">${r.won}</td><td class="mono">${r.lost}</td><td class="mono">${r.rf}:${r.ra}</td></tr>`).join("")}</tbody></table>`;
+  const list = ms.sort((a, b) => a.round - b.round || (a.no || 0) - (b.no || 0)).map(m => admin ? tmCard(m, true) : tmMini(m)).join("");
+  return `<div class="tgroup">${tbl}<div class="${admin ? "tglist adm" : "tglist"}">${list}</div></div>`;
+}
+function tmMini(m){
+  const sc = m.status === "live" || m.status === "done" ? `${m.s1 ?? 0}<i>:</i>${m.s2 ?? 0}` : (m.planned ? tTime(m.planned) : "–");
+  const w1 = m.winner && m.winner === m.t1, w2 = m.winner && m.winner === m.t2;
+  return `<div class="tmini ${m.status}"><span class="${w1 ? "w" : ""}">${esc(m.t1 || m.p1 || "?")}</span><b>${sc}</b><span class="${w2 ? "w" : ""}">${esc(m.t2 || m.p2 || "?")}</span>${m.status === "live" ? tvBtn(m, true) : ""}</div>`;
+}
+function tvBtn(m, small){
+  return m.tv_url ? `<a class="tvbtn${small ? " sm" : ""}" href="${esc(m.tv_url)}" title="Per CSTV zuschauen (startet CS2)">👁${small ? "" : " Zuschauen"}</a>` : "";
+}
+function bracketHtml(title, ms, tail, admin){
+  const rounds = {};
+  ms.forEach(m => (rounds[m.round] = rounds[m.round] || []).push(m));
+  const cols = Object.keys(rounds).map(Number).sort((a, b) => a - b).map(r => rounds[r].sort((a, b) => (a.no || 0) - (b.no || 0)));
+  if (tail.length) cols.push(tail);
+  const name = c => (c[0].label || "").split(" · ").pop();
+  return `<div class="tsec"><h3>${esc(title)}</h3><div class="bk">${cols.map((c, i) => {
+    const nx = cols[i + 1], cls = !nx ? "" : nx.length * 2 === c.length ? "half" : "same";
+    return `<div class="bkcol ${cls} ${i ? "prev" : ""}"><h4>${esc(name(c))}</h4><div class="bkslots">${c.map(m =>
+      `<div class="bkslot"><i class="cin"></i>${tmCard(m, admin)}</div>`).join("")}</div></div>`;
+  }).join("")}</div></div>`;
+}
 function tmCard(m, admin, big){
-  const row = (t, s, win) => `<div class="tr ${win ? "win" : ""}"><b>${esc(t || "?")}</b><span>${s ?? (m.status === "done" ? "" : "")}</span></div>`;
-  const meta = m.status === "done" ? (m.walkover ? "Freilos" : "beendet") : m.status === "live" ? `🔴 LIVE · ${esc(m.server_name || "")} · ${esc(m.map || "")}` :
+  const show = m.status === "live" || m.status === "done";
+  const row = (t, p, s, win) => `<div class="tr ${win ? "win" : ""} ${t ? "" : "tbd"}"><b>${esc(t || p || "noch offen")}</b><span class="sc">${show && !m.walkover ? (s ?? 0) : ""}</span></div>`;
+  const meta = m.status === "done" ? (m.walkover ? "Freilos" : "beendet") : m.status === "live" ? `<span class="livedot">LIVE</span> ${esc(m.server_name || "")} · ${esc(m.map || "")}` :
     `${m.planned ? tTime(m.planned) + " Uhr" : ""}${m.server_name ? " · " + esc(m.server_name) : ""}${m.map ? " · " + esc(m.map) : ""}`;
-  return `<div class="tm ${m.status}">${big ? `<div class="meta" style="margin:0 0 3px">${esc(m.label)}</div>` : ""}
-    ${row(m.t1, m.s1, m.winner && m.winner === m.t1)}${row(m.t2, m.s2, m.winner && m.winner === m.t2)}
-    <div class="meta">${meta}</div>
+  const bye = m.walkover || m.t1 === "Freilos" || m.t2 === "Freilos";
+  return `<div class="tm ${m.status} ${bye ? "bye" : ""}">${big ? `<div class="meta" style="margin:0 0 3px">${esc(m.label)}</div>` : ""}
+    ${m.no ? `<span class="tno">#${m.no}</span>` : ""}
+    ${row(m.t1, m.p1, m.s1, m.winner && m.winner === m.t1)}${row(m.t2, m.p2, m.s2, m.winner && m.winner === m.t2)}
+    <div class="meta tmeta"><span>${meta}</span>${m.status === "live" ? tvBtn(m) : ""}</div>
     ${admin && (m.status === "ready" || m.status === "live" || m.status === "done") && !m.walkover ? `<div class="row" style="gap:4px;margin-top:5px;flex-wrap:nowrap">
       <input type="number" min="0" value="${m.s1 ?? ""}" data-ts1="${m.id}" style="width:48px;padding:2px 4px"><input type="number" min="0" value="${m.s2 ?? ""}" data-ts2="${m.id}" style="width:48px;padding:2px 4px">
       <button class="small" data-tres="${m.id}" title="Ergebnis von Hand eintragen">✓</button>
       ${m.status === "ready" ? `<button class="small" data-tload="${m.id}" title="Jetzt auf dem Server laden">▶</button>` : ""}
       ${m.status !== "ready" ? `<button class="small" data-trst="${m.id}" title="Ergebnis zurücksetzen">↺</button>` : ""}</div>` : ""}</div>`;
+}
+// --- Übersicht im GrohLAN-Look: gespiegelter Turnierbaum, Pokal in der Mitte, Gruppen darunter
+const GL_TROPHY = `<svg viewBox="0 0 120 110" class="gltrophy" aria-hidden="true"><defs><linearGradient id="glg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f3cf47"/><stop offset="1" stop-color="#e39a2f"/></linearGradient></defs>
+  <path d="M38 8h44v26c0 16-10 28-22 28S38 50 38 34z" fill="url(#glg)"/><path d="M38 14H22c0 16 8 26 20 28M82 14h16c0 16-8 26-20 28" fill="none" stroke="url(#glg)" stroke-width="5" stroke-linecap="round"/>
+  <rect x="54" y="60" width="12" height="16" fill="url(#glg)"/><path d="M42 76h36l4 12H38z" fill="url(#glg)"/><rect x="34" y="88" width="52" height="8" rx="2" fill="url(#glg)"/>
+  <path d="M10 70c4-14 10-22 18-26M110 70c-4-14-10-22-18-26" fill="none" stroke="#9fc33a" stroke-width="3" stroke-linecap="round"/>
+  <g fill="#9fc33a"><ellipse cx="13" cy="58" rx="3" ry="6" transform="rotate(-30 13 58)"/><ellipse cx="18" cy="49" rx="3" ry="6" transform="rotate(-40 18 49)"/><ellipse cx="107" cy="58" rx="3" ry="6" transform="rotate(30 107 58)"/><ellipse cx="102" cy="49" rx="3" ry="6" transform="rotate(40 102 49)"/></g></svg>`;
+function glPill(m, n, side){
+  const t = n === 1 ? m.t1 : m.t2, p = n === 1 ? m.p1 : m.p2, sc = n === 1 ? m.s1 : m.s2;
+  const show = (m.status === "live" || m.status === "done") && !m.walkover;
+  const win = m.winner && m.winner === t, lose = m.status === "done" && m.winner && !win;
+  return `<div class="glpill ${side} ${win ? "win" : ""} ${lose ? "lose" : ""} ${t ? "" : "tbd"}"><span class="gln">${esc(t || p || "offen")}</span><span class="gls">${show ? (sc ?? 0) : ""}</span></div>`;
+}
+function glMatch(m, side){
+  const info = m.status === "live" ? `<span class="livedot">LIVE</span>${m.server_name ? " " + esc(m.server_name) : ""}` :
+    m.status === "done" ? "" : (m.planned ? tTime(m.planned) + " Uhr" : "");
+  return `<div class="glm ${m.status} ${m.walkover ? "bye" : ""}" title="${esc(m.label)}${m.map ? " · " + esc(m.map) : ""}">
+    ${glPill(m, 1, side)}${glPill(m, 2, side)}
+    ${info || m.status === "live" ? `<div class="glinfo"><span>${info}</span>${m.status === "live" ? tvBtn(m, false) : ""}</div>` : ""}</div>`;
+}
+function glCols(cols, side){
+  // cols: Runden (Listen von Matches) von außen nach innen
+  return cols.map((c, i) => {
+    const nx = cols[i + 1], cls = !nx ? "last" : nx.length * 2 === c.length ? "half" : "same";
+    return `<div class="glcol ${cls}"><div class="glh">${esc((c[0].label || "").split(" · ").pop())}</div><div class="glslots">${c.map(m => `<div class="glslot">${glMatch(m, side)}</div>`).join("")}</div></div>`;
+  }).join("");
+}
+function glTree(ms, finals){
+  const rounds = {};
+  ms.forEach(m => (rounds[m.round] = rounds[m.round] || []).push(m));
+  const cols = Object.keys(rounds).map(Number).sort((a, b) => a - b).map(r => rounds[r].sort((a, b) => (a.no || 0) - (b.no || 0)));
+  const fin = cols.length && cols[cols.length - 1].length === 1 ? cols.pop()[0] : null;
+  const left = cols.map(c => c.slice(0, c.length / 2)), right = cols.map(c => c.slice(c.length / 2));
+  const last = finals.length ? finals[finals.length - 1] : fin;
+  const champ = last && last.status === "done" ? last.winner : null;
+  return `<div class="gltree cup ${finals.length ? "xf" : ""}">
+    ${left.length ? `<div class="glside left">${glCols(left, "left")}</div>` : ""}
+    <div class="glcenter"><div class="glh">&nbsp;</div><div class="glslots"><div class="glslot"><div class="glfin">
+      <div class="glcup">${champ ? `<div class="glchamp">${esc(champ)}</div>` : ""}${GL_TROPHY}${fin ? `<div class="glh">${esc(fin.label.split(" · ").pop())}</div>` : ""}</div>
+      ${fin ? glMatch(fin, "mid") : ""}
+      ${finals.length ? `<div class="glextra">${finals.map(f => `<div class="glh">${esc(f.label)}</div>${glMatch(f, "mid")}`).join("")}</div>` : ""}
+    </div></div></div></div>
+    ${right.length ? `<div class="glside right">${glCols(right, "right")}</div>` : ""}</div>`;
+}
+function glShow(v){
+  const by = st => v.matches.filter(m => st.includes(m.stage));
+  const live = v.matches.filter(m => m.status === "live");
+  const next = v.matches.filter(m => m.status === "ready" || (m.status === "wait" && m.planned)).sort((a, b) => (a.planned || 0) - (b.planned || 0)).slice(0, 4);
+  let h = "";
+  if (live.length || next.length) h += `<div class="glsec"><h3>${live.length ? "Live &amp; als Nächstes" : "Als Nächstes"}</h3><div class="glnext">${[...live, ...next].map(m =>
+    `<div class="glcard"><div class="glh">${esc(m.label)}${m.map ? " · " + esc(m.map) : ""}</div>${glMatch(m, "left")}</div>`).join("")}</div></div>`;
+  const W = by("W"), K = by("K"), L = by("L"), F = by("F");
+  if (K.length) h += `<div class="glsec"><h3>K.-o.-Phase</h3>${glTree(K, [])}</div>`;
+  if (W.length) h += `<div class="glsec"><h3>${L.length ? "Winner-Bracket" : "Turnierbaum"}</h3>${glTree(W, F)}</div>`;
+  if (L.length){
+    const rounds = {};
+    L.forEach(m => (rounds[m.round] = rounds[m.round] || []).push(m));
+    const cols = Object.keys(rounds).map(Number).sort((a, b) => a - b).map(r => rounds[r]);
+    h += `<div class="glsec"><h3>Loser-Bracket</h3><div class="gltree"><div class="glside left">${glCols(cols, "left")}</div></div></div>`;
+  }
+  const groups = Object.entries(v.groups || {}).map(([g, rows]) => ["Gruppe " + g, rows, by("G").filter(m => m.group === g)]);
+  if (v.table) groups.push(["Tabelle", v.table, by("R")]);
+  if (groups.length) h += `<div class="glsec"><h3>${v.table ? "Jeder gegen jeden" : "Gruppenphase"}</h3><div class="glgroups">${groups.map(([title, rows, ms]) => `<div class="glgroup">
+    <div class="glgh">${esc(title)}</div><div class="glgb">
+      ${rows.map((r, i) => `<div class="glrow ${i < 2 && !v.table ? "adv" : ""}"><span class="glrk">${i + 1}</span><b>${esc(r.name)}</b><span title="Siege–Niederlagen">${r.won}–${r.lost}</span><span class="mono" title="Runden">${r.rf}:${r.ra}</span></div>`).join("")}
+      <div class="glgm">${ms.sort((a, b) => a.round - b.round || (a.no || 0) - (b.no || 0)).map(tmMini).join("")}</div></div></div>`).join("")}</div></div>`;
+  return `<div class="gl">${h}</div>`;
 }
 let tourData = null, tourLoaded = false;
 const toLocalInput = t => { if (!t) return ""; const d = new Date(t * 1000); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
@@ -3618,7 +3717,7 @@ async function refreshDashTour(){
   dashTourAt = Date.now();
   let v; try { v = await api("/api/public/tournament/state"); } catch { return; }
   $("#dashTour").innerHTML = v.active ? `<div class="dsect"><h3 class="dhead">🏆 ${esc(v.name)} <span class="hint">${esc(v.mode_label)} · ${tStatus[v.status] || v.status}${v.start ? " · Start " + new Date(v.start * 1000).toLocaleString("de-DE", {weekday: "short", hour: "2-digit", minute: "2-digit"}) : ""}</span> <a href="#" class="hint" style="margin-left:auto" onclick="showView('tour');return false">verwalten →</a></h3>
-    <div class="panel" style="padding:12px 16px">${tourBoardHtml(v)}</div></div>` : "";
+    ${tourBoardHtml(v)}</div>` : "";
 }
 
 // Öffentliche Seite: Anmeldung, Teams bilden, Spielplan und Ergebnisse
@@ -3642,7 +3741,7 @@ async function refreshPubTour(){
       ${v.status === "setup" && me && me.registered && !myTeam && t.players.length < 2 ? `<button class="small primary" style="margin-top:5px" data-ptjoin="${esc(t.id)}">Beitreten</button>` : ""}</div>`).join("")}</div>` : "";
   $("#pubTour").innerHTML = `<div class="tourpub"><h3 class="pdsec">🏆 ${esc(v.name)} <span class="hint">${esc(v.mode_label)} · ${tStatus[v.status] || v.status}${v.start ? " · Start " + new Date(v.start * 1000).toLocaleString("de-DE", {weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"}) + " Uhr" : ""}</span></h3>
     ${reg}${v.status === "setup" ? `<div class="hint" style="margin-bottom:6px">Teams (${v.teams.length}) · ${v.players.length} Spieler angemeldet</div>${teams}` : ""}
-    ${v.matches.length ? `<div class="panel">${tourBoardHtml(v)}</div>` : ""}</div>`;
+    ${v.matches.length ? tourBoardHtml(v) : ""}</div>`;
   const call = async (path, body) => { try { const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})}); if (!r.ok) throw new Error((await r.json()).detail || r.status); refreshPubTour(); } catch (e) { toast(e.message, true); } };
   $$("[data-pt]").forEach(b => b.onclick = e => { e.preventDefault(); const a = b.dataset.pt;
     if (a === "team") return call("/api/public/tournament/team", {name: $("#ptTeam").value.trim()});

@@ -332,12 +332,24 @@ def public_view(d: dict) -> dict:
                        "team": (player_team(d, p["steamid"]) or {}).get("id")} for p in d["players"]]
     out["matches"] = [{**{k: m.get(k) for k in ("id", "stage", "round", "label", "group", "s1", "s2", "status", "planned",
                                                  "started", "ended", "map", "server", "walkover")},
-                       "t1": tn(m["t1"]), "t2": tn(m["t2"]), "winner": tn(m["winner"]), "t1_id": m["t1"], "t2_id": m["t2"]}
+                       "t1": tn(m["t1"]), "t2": tn(m["t2"]), "winner": tn(m["winner"]), "t1_id": m["t1"], "t2_id": m["t2"],
+                       "p1": _ph(m.get("src1")), "p2": _ph(m.get("src2")), "no": int(m["id"][1:]) if m["id"][1:].isdigit() else None}
                       for m in d["matches"]]
     out["groups"] = {g: standings(d, g) for g in (d.get("groups") or {})}
     if d.get("mode") == "rr" and d["matches"]:
         out["table"] = rr_table(d)
     return out
+
+
+def _ph(src) -> str | None:
+    """Platzhalter, solange ein Team noch nicht feststeht: „Sieger #3“, „1. Gruppe A“."""
+    if not isinstance(src, dict):
+        return None
+    if "g" in src:
+        return f"{src.get('pos')}. Gruppe {src['g']}"
+    if "m" in src:
+        return f"{'Sieger' if src.get('r') == 'W' else 'Verlierer'} #{str(src['m'])[1:]}"
+    return None
 
 
 def _pname(d: dict, sid: str) -> str:

@@ -3067,6 +3067,8 @@ def _tour_out(d: dict) -> dict:
     for m in v["matches"]:
         sv = m.get("server") or ""
         m["server_name"] = names.get(sv) or (f"Testserver {sv[4:]}" if sv.startswith("sim-") else None)
+        if m.get("status") == "live" and sv in names:          # CSTV-Link zum Zuschauen
+            m["tv_url"] = ((_state.get(sv) or {}).get("join") or {}).get("tv_url")
     v["test"] = (d.get("test") or {}).get("kind")
     return v
 
@@ -3526,13 +3528,19 @@ async def tour_tick() -> None:
     for m in d["matches"]:
         if m["status"] != "live":
             continue
-        if test == "sim":                       # Simulation: nach zufälliger Spielzeit ein zufälliges Ergebnis
-            if now - (m.get("started") or now) >= m.get("sim_len", 30):
+        if test == "sim":                       # Simulation: Runden laufen hoch, nach der Spielzeit steht das Ergebnis
+            if not m.get("sim_final"):
                 a, b = 9, random.randint(0, 8)
                 if random.random() < 0.15 and m["stage"] in ("G", "R"):
                     a, b = 8, 8
                 elif random.random() < 0.5:
                     a, b = b, a
+                m["sim_final"] = [a, b]
+            a, b = m["sim_final"]
+            frac = min(1.0, (now - (m.get("started") or now)) / max(1, m.get("sim_len", 30)))
+            m["s1"], m["s2"] = int(a * frac), int(b * frac)
+            if frac >= 1:
+                m.pop("sim_final", None)
                 try:
                     tour.set_result(d, m["id"], a, b)
                 except ValueError:
