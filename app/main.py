@@ -3929,6 +3929,18 @@ async def stream_put(data: StreamIn, request: Request):
     return {"ok": True}
 
 
+@app.get("/api/stream/helper.cmd", dependencies=auth)
+async def stream_helper_cmd(request: Request):
+    """Doppelklick-Version: startet das Skript ohne Signatur-Sperre (ExecutionPolicy nur für diesen Aufruf)."""
+    _need_admin(request)
+    import base64 as _b64
+    base = str(request.base_url).rstrip("/")
+    enc = _b64.b64encode(stream_ctl.helper_script(f"{base}/api/public/stream/state").encode("utf-16-le")).decode()
+    cmd = f"@echo off\r\ntitle GrohLAN Stream-Helfer\r\npowershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {enc}\r\npause\r\n"
+    return _Resp(content=cmd.encode(), media_type="application/octet-stream",
+                 headers={"Content-Disposition": 'attachment; filename="grohlan-stream-helfer.cmd"'})
+
+
 @app.get("/api/stream/helper.ps1", dependencies=auth)
 async def stream_helper(request: Request):
     _need_admin(request)

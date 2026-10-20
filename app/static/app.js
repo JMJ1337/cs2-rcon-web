@@ -3825,7 +3825,7 @@ async function loadStream(){
   $("#stInfo").innerHTML = st.enabled ? `<div class="row" style="gap:6px;flex-wrap:wrap;align-items:center">OBS-Server <code>${esc(r.obs.server)}</code> <button class="small" data-copy="${esc(r.obs.server)}">kopieren</button>
       · Streamschlüssel <code>${esc(r.obs.key.replace(/pass=.*/, "pass=••••"))}</code> <button class="small" data-copy="${esc(r.obs.key)}">kopieren</button>
       <button class="small" id="stNewKey" title="Neuen Schlüssel erzeugen (OBS muss angepasst werden)">neuer Schlüssel</button>
-      <a class="btn small" href="/api/stream/helper.ps1">⬇ Hilfsskript (Stream-PC)</a></div>
+      <a class="btn small" href="/api/stream/helper.cmd" title="Auf dem Stream-PC per Doppelklick starten">⬇ Hilfsprogramm (Stream-PC)</a> <a class="hint" href="/api/stream/helper.ps1">(.ps1)</a></div>
       <div style="margin-top:6px">Kamera geht gerade zu: ${t.tv ? `<b>${esc(t.match || "")}</b> <code>${esc(t.tv)}</code>` : "– kein laufendes Spiel (oder CSTV aus)"}</div>` : "";
   $$("#stInfo [data-copy]").forEach(b => b.onclick = () => copyQuiet(b.dataset.copy));
   const nk = $("#stNewKey"); if (nk) nk.onclick = () => confirm("Neuen Streamschlüssel erzeugen? OBS muss danach angepasst werden.") && saveStream({new_key: true});
