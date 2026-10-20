@@ -5925,7 +5925,7 @@ async def container_steamfix(sid: str):
 
 
 ENV_KEYS = {
-    "_ich777": [("GAME_PARAMS", "Startparameter"), ("VALIDATE", "Dateien beim Start prüfen (true/leer)")],
+    "_ich777": [("GAME_ID", "SteamCMD-App (ID + Parameter)"), ("GAME_PARAMS", "Startparameter"), ("VALIDATE", "Dateien beim Start prüfen (true/leer)")],
     "valheim": [("SERVER_NAME", "Servername"), ("SERVER_PASS", "Passwort (min. 5 Zeichen)"), ("WORLD_NAME", "Welt"),
                 ("SERVER_PUBLIC", "Öffentlich gelistet (true/false)"), ("SERVER_ARGS", "Zusätzliche Argumente (z. B. -crossplay -preset casual)"),
                 ("BACKUPS_MAX_COUNT", "Anzahl Backups")],

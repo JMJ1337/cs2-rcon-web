@@ -151,12 +151,12 @@ def _ue(label, short, color, appid, tag, game_id, params, ports, status_port="qu
 CATALOG.update({
     # --- Klassiker (GoldSrc / Source) ---
     "cs16": _src("Counter-Strike 1.6", "CS 1.6", "#d9a441", 10, "cstrike1.6", "90", "+maxplayers 16 +map de_dust2 +sv_lan 1", 27070),
-    "czero": _src("Counter-Strike: Condition Zero", "CS:CZ", "#c98b2e", 80, "cstrikeczero", "90 +app_set_config '90 mod czero'",
+    "czero": _src("Counter-Strike: Condition Zero", "CS:CZ", "#c98b2e", 80, "cstrikeczero", "90 +app_set_config 90 mod czero +app_update 90",
                   "+maxplayers 16 +map de_dust2_cz +sv_lan 1", 27071),
-    "dod": _src("Day of Defeat", "DoD", "#6b7a3a", 30, "dodclassic", "90 +app_set_config '90 mod dod'",
+    "dod": _src("Day of Defeat", "DoD", "#6b7a3a", 30, "dodclassic", "90 +app_set_config 90 mod dod +app_update 90",
                 "+maxplayers 24 +map dod_avalanche +sv_lan 1", 27073),
     "dods": _src("Day of Defeat: Source", "DoD:S", "#7d8b3f", 300, "dods", "232290", "+maxplayers 24 +map dod_avalanche +sv_lan 1", 27074),
-    "tfc": _src("Team Fortress Classic", "TFC", "#b5562b", 20, "tf", "90 +app_set_config '90 mod tfc'", "+maxplayers 24 +map 2fort +sv_lan 1", 27075),
+    "tfc": _src("Team Fortress Classic", "TFC", "#b5562b", 20, "tf", "90 +app_set_config 90 mod tfc +app_update 90", "+maxplayers 24 +map 2fort +sv_lan 1", 27075),
     "hldm": _src("Half-Life Deathmatch", "HLDM", "#e07b1a", 70, "hldm", "90", "+maxplayers 16 +map crossfire +sv_lan 1", 27076),
     "hl2dm": _src("Half-Life 2: Deathmatch", "HL2DM", "#f08c1a", 320, "hl2dm", "232370", "+maxplayers 16 +map dm_lockdown +sv_lan 1", 27077),
     "svencoop": _src("Sven Co-op", "Sven", "#4a7fb5", 225840, "svencoop", "276060",
