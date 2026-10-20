@@ -409,6 +409,16 @@
             <div class="row" style="gap:6px;margin-top:8px"><input id="tourNewTeam" placeholder="Neues Team" maxlength="24" style="flex:1"><button id="tourAddTeam">Team anlegen</button></div>
           </div>
         </div>
+        <div class="panel" style="margin-top:16px;padding:12px 16px">
+          <h2>Test mit Bot-Teams <span class="hint">– prüft Spielplan, Zeiten, Ergebnisse und die Anzeige. Dein echtes Turnier wird vorher gesichert und beim Beenden wiederhergestellt.</span></h2>
+          <div class="row" style="gap:10px;flex-wrap:wrap;align-items:center">
+            <label>Teams <input type="number" id="ttTeams" min="2" max="32" value="8" style="width:70px"></label>
+            <label>Art <select id="ttKind"><option value="sim">Simuliert (schnell, ohne Server)</option><option value="bots">Bots spielen auf den Servern (echte Matches)</option></select></label>
+            <label id="ttSecL">Spielzeit je Match bis <input type="number" id="ttSec" min="15" max="600" value="60" style="width:70px"> s</label>
+            <button class="primary" id="ttStart">Test starten</button><button class="danger" id="ttEnd">Test beenden</button>
+          </div>
+          <div class="hint" style="margin-top:6px">Modus wie oben eingestellt. „Bots auf den Servern“ nutzt die CS-Server außer CS #1: je Match ein normales Wingman-Spiel mit 4 Bots, das Ergebnis kommt aus dem Server-Log (dauert ca. 15–20 min pro Match).</div>
+        </div>
         <div class="panel" style="margin-top:16px"><h2>Spielplan &amp; Ergebnisse</h2><div id="tourBoard"></div></div>
       </div>
     </section>
@@ -919,6 +929,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=130"></script>
+<script src="/static/app.js?v=131"></script>
 </body>
 </html>

@@ -3556,7 +3556,8 @@ async function loadTour(){
     $("#tourAuto").checked = d.settings.auto_servers !== false; $("#tourInvite").checked = d.settings.invite !== false;
     tourLoaded = true;
   }
-  $("#tourStatus").textContent = "· " + (tStatus[d.status] || d.status) + (d.active ? " · auf der Übersicht sichtbar" : "");
+  $("#tourStatus").textContent = "· " + (tStatus[d.status] || d.status) + (d.active ? " · auf der Übersicht sichtbar" : "") + (d.test ? ` · TEST (${d.test === "sim" ? "simuliert" : "Bots"})` : "");
+  $("#ttStart").disabled = !!d.test; $("#ttEnd").disabled = !d.test;
   $("#tourServers").innerHTML = `Server fürs Turnier: ${d.pool.length ? d.pool.map(s => `${s.online ? "🟢" : "⚪"} ${esc(s.name)}`).join(", ") : "keine (außer CS #1)"}${d.needed ? ` · für die erste Runde gleichzeitig nötig: ${d.needed}` : ""}${d.needed && d.pool.length < d.needed ? (d.settings.auto_servers !== false ? ` – ${d.needed - d.pool.length} werden beim Start angelegt` : ` – zu wenige, Matches laufen nacheinander`) : ""}${d.bot ? "" : " · Steam-Bot ist aus (keine Einladungen)"}`;
   const reg = new Set(d.players.map(p => p.steamid));
   $("#tourAddSel").innerHTML = `<option value="">– LAN-Spieler hinzufügen –</option>` + d.lan_players.filter(p => !reg.has(p.steamid)).map(p => `<option value="${esc(p.steamid)}">${esc(p.name)}</option>`).join("");
@@ -3594,6 +3595,18 @@ $("#tourAdd").onclick = () => $("#tourAddSel").value && tourCall("/api/tournamen
 $("#tourAddTeam").onclick = () => $("#tourNewTeam").value.trim() && tourCall("/api/tournament/teams", {body: {name: $("#tourNewTeam").value.trim(), players: []}}).then(() => { $("#tourNewTeam").value = ""; });
 $("#tourGen").onclick = async () => { if (tourData && tourData.matches.length && !confirm("Spielplan neu erstellen? Bisherige Ergebnisse gehen verloren.")) return; const r = await tourCall("/api/tournament/generate", {method: "POST"}); if (r) toast(`Spielplan erstellt – ${r.needed} Server gleichzeitig nötig, ${r.have} vorhanden`); };
 $("#tourStart").onclick = async () => { if (!confirm("Turnier starten? Die Anmeldung schließt, Matches werden zur geplanten Zeit automatisch auf den Servern geladen.")) return; const r = await tourCall("/api/tournament/start", {method: "POST"}); if (r) toast(r.creating ? `Turnier läuft – ${r.creating} Server werden angelegt` : "Turnier läuft"); };
+$("#ttKind").onchange = () => $("#ttSecL").classList.toggle("hidden", $("#ttKind").value !== "sim");
+$("#ttStart").onclick = async () => {
+  const kind = $("#ttKind").value, n = +$("#ttTeams").value || 8;
+  if (!confirm(`Test mit ${n} Bot-Teams starten (${kind === "sim" ? "simuliert" : "Bots auf den Servern"})? Dein Turnier wird gesichert und danach wiederhergestellt.`)) return;
+  await saveTourSettingsSilently();
+  const r = await tourCall("/api/tournament/test", {body: {teams: n, kind, match_sec: +$("#ttSec").value || 60, mode: $("#tourMode").value}});
+  if (r) toast(`Test läuft: ${r.matches} Matches auf ${r.servers} ${kind === "sim" ? "Testservern" : "Servern"}`);
+};
+$("#ttEnd").onclick = () => confirm("Test beenden und echtes Turnier wiederherstellen?") && tourCall("/api/tournament/test/end", {method: "POST"}, "Test beendet").then(() => { tourLoaded = false; });
+async function saveTourSettingsSilently(){
+  try { await api("/api/tournament", {method: "PUT", body: {mode: $("#tourMode").value}}); } catch {}
+}
 $("#tourStop").onclick = () => tourCall("/api/tournament/stop", {method: "POST"}, "Angehalten");
 $("#tourReset").onclick = () => confirm("Spielplan und Ergebnisse löschen? Teilnehmer und Teams bleiben.") && tourCall("/api/tournament/reset", {method: "POST"}, "Spielplan gelöscht");
 setInterval(() => { if (view === "tour" && !document.hidden) loadTour(); }, 5000);

@@ -1,4 +1,5 @@
 import asyncio
+import random
 from datetime import datetime
 import ipaddress
 import hashlib
@@ -3064,7 +3065,9 @@ def _tour_out(d: dict) -> dict:
     v = tour.public_view(d)
     names = {s["id"]: s.get("name") for s in load_servers()}
     for m in v["matches"]:
-        m["server_name"] = names.get(m.get("server"))
+        sv = m.get("server") or ""
+        m["server_name"] = names.get(sv) or (f"Testserver {sv[4:]}" if sv.startswith("sim-") else None)
+    v["test"] = (d.get("test") or {}).get("kind")
     return v
 
 
@@ -3503,27 +3506,56 @@ async def _tour_load(d: dict, m: dict) -> None:
     asyncio.create_task(_tour_invite(d, m, s))
 
 
+def _tour_test(d: dict) -> str | None:
+    return (d.get("test") or {}).get("kind")
+
+
 async def tour_tick() -> None:
     d = tour.load()
     if d.get("status") != "running":
         _tour_names.clear()
         return
-    changed = False
-    # neue Server (z. B. gerade fürs Turnier angelegt) in den Pool aufnehmen
-    pool = [s["id"] for s in _tour_pool()]
-    if pool != d["servers"]:
-        d["servers"], changed = pool, True
-    # Ergebnisse von MatchZy übernehmen
+    test = _tour_test(d)
+    now = time.time()
+    # neue Server (z. B. gerade fürs Turnier angelegt) in den Pool aufnehmen – im Simulations-Test virtuelle Server
+    if test != "sim":
+        pool = [s["id"] for s in _tour_pool()]
+        if pool != d["servers"]:
+            d["servers"] = pool
+    # Ergebnisse übernehmen
     for m in d["matches"]:
         if m["status"] != "live":
+            continue
+        if test == "sim":                       # Simulation: nach zufälliger Spielzeit ein zufälliges Ergebnis
+            if now - (m.get("started") or now) >= m.get("sim_len", 30):
+                a, b = 9, random.randint(0, 8)
+                if random.random() < 0.15 and m["stage"] in ("G", "R"):
+                    a, b = 8, 8
+                elif random.random() < 0.5:
+                    a, b = b, a
+                try:
+                    tour.set_result(d, m["id"], a, b)
+                except ValueError:
+                    tour.set_result(d, m["id"], 9, 7)
             continue
         s = next((x for x in load_servers() if x["id"] == m.get("server")), None)
         if s:
             _tour_names[s["id"]] = f"Turnier: {tour.team_name(d, m['t1'])} vs {tour.team_name(d, m['t2'])}"[:63]
+        if test == "bots":                      # Bot-Test: Ergebnis aus dem Server-Log (Game Over), Seiten nach Halbzeit getauscht
+            res = next((x for x in matchlog.recent(m.get("server"), 10) if x.get("source") == "log"
+                        and (x.get("started") or 0) >= (m.get("started") or 0) - 30), None)
+            if res:
+                m["s1"], m["s2"] = (res.get("team2") or {}).get("score"), (res.get("team1") or {}).get("score")
+                if res.get("finished"):
+                    s1, s2 = int(m["s1"] or 0), int(m["s2"] or 0)
+                    if s1 == s2 and m["stage"] not in ("G", "R"):
+                        s1 += 1
+                    tour.set_result(d, m["id"], s1, s2)
+                    _tour_names.pop(m.get("server") or "", None)
+            continue
         res = next((x for x in matchlog.recent(m.get("server"), 10) if str(x.get("matchid")) == str(m.get("mz_id"))), None)
         if res:
             m["s1"], m["s2"] = (res.get("team1") or {}).get("score"), (res.get("team2") or {}).get("score")
-            changed = True
             if res.get("finished"):
                 s1, s2 = m["s1"] or 0, m["s2"] or 0
                 if res.get("maps"):
@@ -3537,26 +3569,110 @@ async def tour_tick() -> None:
     tour.plan(d)
     # fällige Matches laden, 10 Minuten vorher erinnern
     busy = {m["server"] for m in d["matches"] if m["status"] == "live"}
-    now = time.time()
     for m in sorted(d["matches"], key=lambda x: x.get("planned") or 0):
         if m["status"] != "ready" or not m.get("server") or not m.get("planned"):
+            continue
+        if test == "sim":
+            if m["planned"] <= now + 5 and m["server"] not in busy:
+                m.update(status="live", started=now, sim_len=random.randint(15, int((d.get("test") or {}).get("match_sec") or 60)))
+                busy.add(m["server"])
             continue
         s = next((x for x in load_servers() if x["id"] == m["server"]), None)
         if not s:
             continue
-        if not m.get("reminded") and m["planned"] - now <= 600 and m["planned"] - now > 60:
+        if not test and not m.get("reminded") and m["planned"] - now <= 600 and m["planned"] - now > 60:
             m["reminded"] = True
-            changed = True
             asyncio.create_task(_tour_invite(d, m, s, soon=True))
         if m["planned"] <= now + 30 and m["server"] not in busy and (_state.get(s["id"]) or {}).get("online"):
             try:
-                await _tour_load(d, m)
+                await (_tour_load_bots(d, m) if test == "bots" else _tour_load(d, m))
                 busy.add(m["server"])
-                changed = True
             except Exception as e:  # noqa: BLE001
                 log.warning("Turnier-Match %s laden: %s", m["id"], e)
-    if changed or True:
-        tour.save(d)
+    tour.save(d)
+
+
+async def _tour_load_bots(d: dict, m: dict) -> None:
+    """Test mit Bots: normales Wingman-Spiel ohne MatchZy-Teamliste, 4 Bots spielen es durch."""
+    s = get_server(m["server"])
+    a, b = tour.team_name(d, m["t1"]), tour.team_name(d, m["t2"])
+    title = f"Turnier-Test: {a} vs {b}"[:63]
+    _tour_names[s["id"]] = title
+    mp = re.sub(r"[^\w\-/]", "", m.get("map") or "de_inferno")
+    cmds = ["matchzy_kick_when_no_match_loaded 0", "game_type 0", "game_mode 2", f'hostname "{title}"',
+            f'mp_teamname_1 "{a}"', f'mp_teamname_2 "{b}"', "bot_kick", "bot_join_after_player 0", "bot_quota_mode normal",
+            "bot_quota 4", "bot_difficulty 2", "mp_autoteambalance 1", "mp_limitteams 1", "mp_maxrounds 16",
+            "mp_warmuptime 5", "mp_warmup_pausetimer 0", "sv_hibernate_when_empty 0", f"changelevel {mp}"]
+    await run(s, "; ".join(cmds))
+    m.update(status="live", started=time.time(), mz_id=None)
+
+
+class TourTestIn(BaseModel):
+    teams: int = Field(8, ge=2, le=32)
+    kind: str = "sim"                       # sim = simuliert (schnell) · bots = Bots spielen auf den Servern
+    mode: str | None = None
+    match_sec: int = Field(60, ge=15, le=600)
+
+
+@app.post("/api/tournament/test", dependencies=auth)
+async def tour_test(data: TourTestIn, request: Request):
+    """Testturnier mit x Bot-Teams – das echte Turnier (Teilnehmer, Teams, Spielplan) wird vorher gesichert."""
+    _need_admin(request)
+    d = tour.load()
+    if _tour_test(d):
+        raise HTTPException(409, "Es läuft schon ein Test – erst beenden")
+    if data.kind not in ("sim", "bots"):
+        raise HTTPException(400, "Unbekannte Testart")
+    store.save("tournament_backup.json", d)
+    names = ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India", "Juliett", "Kilo", "Lima",
+             "Mike", "November", "Oscar", "Papa", "Quebec", "Romeo", "Sierra", "Tango", "Uniform", "Victor", "Whiskey",
+             "X-Ray", "Yankee", "Zulu", "Ares", "Boreas", "Chronos", "Dione", "Eos", "Gaia"]
+    d["players"], d["teams"] = [], []
+    for i in range(data.teams):
+        ids = [f"7656119900000{i * 2:04d}", f"7656119900000{i * 2 + 1:04d}"]
+        for k, sid in enumerate(ids):
+            d["players"].append({"steamid": sid, "name": f"Bot {names[i]} {k + 1}", "avatar": None, "t": time.time()})
+        d["teams"].append({"id": tour.new_team_id(), "name": f"Team {names[i]}", "players": ids})
+    if data.mode:
+        if data.mode not in tour.MODES:
+            raise HTTPException(400, "Unbekannter Modus")
+        d["mode"] = data.mode
+    d["test"] = {"kind": data.kind, "match_sec": data.match_sec, "started": time.time()}
+    d["name"] = (d.get("name") or "Turnier").replace(" (TEST)", "") + " (TEST)"
+    try:
+        tour.generate(d)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if data.kind == "sim":
+        d["servers"] = [f"sim-{i + 1}" for i in range(tour.needed_servers(d))]
+        d["match_min"], d["pause_min"] = max(1, round(data.match_sec / 60)), 0
+    else:
+        d["servers"] = [s["id"] for s in _tour_pool()]
+        if not d["servers"]:
+            raise HTTPException(400, "Keine CS-Server außer CS #1 – für den Bot-Test mindestens einen weiteren CS-Server anlegen")
+        d["match_min"], d["pause_min"] = 20, 2
+    d.update(status="running", registration=False, start=time.time(), active=True)
+    tour.plan(d)
+    tour.save(d)
+    return {"ok": True, "matches": len(d["matches"]), "servers": len(d["servers"])}
+
+
+@app.post("/api/tournament/test/end", dependencies=auth)
+async def tour_test_end(request: Request):
+    """Test beenden: echtes Turnier wiederherstellen, Bots von den Servern werfen."""
+    _need_admin(request)
+    d = tour.load()
+    kind = _tour_test(d)
+    if kind == "bots":
+        for sid in {m.get("server") for m in d["matches"] if m.get("status") == "live" and m.get("server")}:
+            try:
+                await run(get_server(sid), "bot_kick; bot_quota 0")
+            except Exception:  # noqa: BLE001
+                pass
+    _tour_names.clear()
+    old = store.load("tournament_backup.json", None)
+    tour.save(old if isinstance(old, dict) else {**tour.DEFAULTS})
+    return {"ok": True}
 
 
 async def tour_loop():
