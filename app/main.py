@@ -1349,6 +1349,8 @@ async def collect_generic(s: dict) -> dict:
                     if not (s.get("container") and docker_api.available()):
                         raise
                     cport = next((p[4] for p in c["ports"] if p[0] == c["status"][1]), None)
+                    if c["status"][1] in (c.get("port_params") or {}) or c.get("port_env"):
+                        cport = int(s["port"])      # Ports innen = außen (Startparameter) -> nicht der Katalog-Standardport
                     try:
                         info = await adapters.a2s.info_inside(s["container"], cport)
                     except docker_api.DockerError as e:
