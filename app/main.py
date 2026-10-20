@@ -3354,7 +3354,7 @@ def _tour_servercheck(d: dict, pool: list[dict]) -> dict:
     if d["matches"]:
         need = tour.needed_servers(d)
     else:
-        full = sum(1 for t in d["teams"] if len(t["players"]) == 2)
+        full = sum(1 for t in d["teams"] if len(t["players"]) >= 1)
         need = min(full // 2, tour.max_servers(d)) if full >= 2 else max(0, -(-len(d["players"]) // 8))
     online = [s for s in pool if (_state.get(s["id"]) or {}).get("online")]
     offline = [s for s in pool if s not in online][:max(0, need - len(online))]
@@ -3877,6 +3877,8 @@ async def _tour_load(d: dict, m: dict, bots: bool = False) -> None:
     mzid = random.randint(1_000_000, 99_999_999)          # eindeutig – zwei Server laden oft in derselben Sekunde
     cfg["matchid"] = mzid
     cfg["cvars"] = {**cfg.get("cvars", {}), "tv_delay": "0"}      # Zuschauen/Stream ohne Verzögerung
+    if not bots and min(len(h1) or 2, len(h2) or 2) < 2:
+        cfg["min_players_to_ready"] = 1                            # Team mit nur einem Spieler darf allein „ready“ sein
     if bots:                                  # Bot-Test: Bots füllen die Teams (Bots melden sich nie „bereit“ -> Start erzwingen)
         cfg["cvars"] = {**cfg.get("cvars", {}), **BOT_CVARS}
     token = secrets.token_urlsafe(12)
@@ -3983,7 +3985,7 @@ async def _tour_announce(d: dict, force: bool = False) -> dict:
                  f"„{d.get('name') or 'Turnier'}“ startet {'in ' + str(mins) + ' Minuten' if mins else 'jetzt'}" + (f" ({when} Uhr)!" if when else "!")]
         if t:
             mate = [tour._pname(d, x) for x in t["players"] if x != sid]
-            lines.append(f"👥 Dein Team: {t['name']}" + (f" – zusammen mit {mate[0]}" if mate else " – dir fehlt noch ein Partner!"))
+            lines.append(f"👥 Dein Team: {t['name']}" + (f" – zusammen mit {mate[0]}" if mate else " – du spielst solo (oder holst dir noch einen Partner)"))
             m = next((x for x in tour.ordered(d) if t["id"] in (x.get("t1"), x.get("t2")) and x["status"] in ("ready", "wait")), None)
             if m:
                 opp = tour.team_name(d, m["t2"] if m["t1"] == t["id"] else m["t1"])

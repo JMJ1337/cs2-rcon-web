@@ -3886,7 +3886,7 @@ async function loadTour(){
   if (!teamEditing){ $("#tourNewP1").innerHTML = opts(""); $("#tourNewP2").innerHTML = opts(""); }
   if (!teamEditing) $("#tourTeams").innerHTML = d.teams.map(t => `<div class="row" style="gap:6px;margin:4px 0;flex-wrap:wrap" data-tteam="${esc(t.id)}">
     <input value="${esc(t.name)}" maxlength="24" style="width:150px" data-tn><select data-tp1>${opts(t.steamids[0])}</select><select data-tp2>${opts(t.steamids[1])}</select>
-    <button class="small" data-tsave>Speichern</button><button class="small danger" data-tdel>✕</button>${t.steamids.length < 2 ? ` <span class="pill warn">sucht Partner</span>` : ""}</div>`).join("") || `<div class="hint">Noch keine Teams.</div>`;
+    <button class="small" data-tsave>Speichern</button><button class="small danger" data-tdel>✕</button>${t.steamids.length < 2 ? ` <span class="pill">solo – Platz frei</span>` : ""}</div>`).join("") || `<div class="hint">Noch keine Teams.</div>`;
   if (tDrag) return;                       // nicht mitten im Ziehen neu zeichnen
   $("#tourBoard").innerHTML = tourBoardHtml(d, true);
   $("#tourLanes").innerHTML = tourLanesHtml(d);

@@ -121,9 +121,9 @@ def _rr_rounds(ids: list) -> list[list[tuple]]:
 
 def generate(d: dict) -> dict:
     """Spielplan neu erzeugen (löscht alte Matches). Reihenfolge der Teams = Setzliste (zufällig gemischt)."""
-    teams = [t["id"] for t in d["teams"] if len(t["players"]) == 2]
+    teams = [t["id"] for t in d["teams"] if len(t["players"]) >= 1]
     if len(teams) < 2:
-        raise ValueError("Mindestens 2 vollständige Teams (je 2 Spieler) nötig")
+        raise ValueError("Mindestens 2 Teams mit Spielern nötig")
     random.shuffle(teams)
     d["matches"], d["groups"] = [], {}
     mode = d.get("mode") or "ko"
@@ -211,7 +211,7 @@ def standings(d: dict, g: str) -> list[dict]:
 
 
 def rr_table(d: dict) -> list[dict]:
-    d2 = {**d, "groups": {"_": [t["id"] for t in d["teams"] if len(t["players"]) == 2]}}
+    d2 = {**d, "groups": {"_": [t["id"] for t in d["teams"] if len(t["players"]) >= 1]}}
     ms = [{**m, "stage": "G", "group": "_"} for m in d["matches"] if m["stage"] == "R"]
     return standings({**d2, "matches": ms}, "_")
 
@@ -348,7 +348,7 @@ def is_late(m: dict) -> bool:
 
 def max_servers(d: dict) -> int:
     """Höchstens Teams / 4 Server (aufgerundet) – mehr braucht kein Turnier."""
-    n = sum(1 for t in d.get("teams") or [] if len(t.get("players") or []) == 2)
+    n = sum(1 for t in d.get("teams") or [] if len(t.get("players") or []) >= 1)
     return max(1, -(-n // 4))
 
 
