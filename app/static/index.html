@@ -6,7 +6,7 @@
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap">
-<link rel="stylesheet" href="/static/app.css?v=105">
+<link rel="stylesheet" href="/static/app.css?v=106">
 </head>
 <body>
 
@@ -56,7 +56,6 @@
 <div id="app" class="hidden">
   <aside>
     <div class="head">
-      <button class="small pubbtn" id="btnPubView" title="Öffentliche Übersicht aller Server mit Beitrittsdaten (wie ohne Login)">◀ Übersicht</button>
       <div class="logo">Spielserver<span>manager</span></div>
       <button class="small" id="btnLogout" title="Abmelden">Logout</button>
     </div>
@@ -98,6 +97,7 @@
   </aside>
 
   <main>
+    <div class="mainstrip"><button class="small pubbtn" id="btnPubView" title="Öffentliche Übersicht aller Server mit Beitrittsdaten (wie ohne Login)">◀ Öffentliche Übersicht</button></div>
     <!-- Dashboard -->
     <section id="view-dash">
       <div class="topbar"><div><div class="title">Übersicht aller Server</div><div class="sub" id="dashSub">wird geladen …</div></div>

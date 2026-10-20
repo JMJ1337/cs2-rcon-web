@@ -700,6 +700,7 @@ aside .head .logo{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space
 .glgm{display:flex;flex-direction:column;gap:3px;margin-top:8px}
 .gl .tmini{background:var(--gmid)}.gl .tmini span.w{color:var(--glime)}.gl .tmini.live{outline-color:var(--glime)}
 @media (max-width:700px){.gl{padding:12px}.glcol{width:140px}.glcenter{width:170px}.gl{--gap:20px}}
-/* Button „Übersicht“ (öffentliche Seite) oben mittig über dem Inhalt */
-#app .pubbtn{position:fixed;top:12px;left:calc(250px + (100vw - 250px) / 2);transform:translateX(-50%);z-index:20;padding:6px 16px;font-size:13px;box-shadow:0 4px 16px #0007}
-@media (max-width:820px){#app .pubbtn{position:static;transform:none;padding:4px 10px;box-shadow:none}}
+/* Button „Öffentliche Übersicht“: eigene schmale Leiste oben mittig, die Kopfzeilen der Seiten rutschen darunter */
+.mainstrip{position:sticky;top:0;z-index:3;height:34px;display:flex;align-items:center;justify-content:center;background:var(--bg);border-bottom:1px solid var(--line)}
+.mainstrip .pubbtn{padding:3px 16px;font-size:12px}
+main .topbar{top:34px}
