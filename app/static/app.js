@@ -997,7 +997,7 @@ function cacheGamesHtml(l){
 async function refreshDash(){
   try { overview = await api("/api/overview"); } catch { return; }
   await Promise.all([loadMetrics(), loadSizes()]);
-  if (view === "dash"){ $("#hostPanel").innerHTML = hostPanelHtml(); refreshDashTour(); }
+  if (view === "dash"){ $("#hostPanel").innerHTML = hostPanelHtml(); refreshDashTour(); refreshDashDisk(); }
   renderServerList();
   if (view !== "dash") return;
   $("#dashEmpty").classList.toggle("hidden", overview.length > 0);
@@ -2197,9 +2197,26 @@ async function initCreate(){
     i.style.borderColor = clash ? "var(--bad)" : ""; i.title = clash ? "Port ist bereits belegt" : "";
   }));
 }
+
+// Vor dem Anlegen von Servern: Platz auf der Spiele-Partition prüfen (Warnung unter 500 GB)
+const fmtGB = b => (b / 1e9).toFixed(b < 1e11 ? 1 : 0) + " GB";
+async function diskOkForCreate(n){
+  let g; try { g = await api("/api/storage/games?fresh=1"); } catch { return true; }
+  if (!g || !g.low) return true;
+  return confirm(`⚠ Auf der Spiele-Partition (${g.path}) sind nur noch ${fmtGB(g.free)} von ${fmtGB(g.total)} frei – weniger als 500 GB.\n\nTrotzdem ${n || 1} Server anlegen?`);
+}
+let dashDiskAt = 0;
+async function refreshDashDisk(){
+  if (Date.now() - dashDiskAt < 120000) return;
+  dashDiskAt = Date.now();
+  let g; try { g = await api("/api/storage/games"); } catch { return; }
+  const el = $("#dashDisk"); if (!el) return;
+  el.innerHTML = g && g.low ? `<div class="srvcheck warn" style="margin-bottom:12px">⚠ Spiele-Partition fast voll: nur noch <b>${fmtGB(g.free)}</b> von ${fmtGB(g.total)} frei auf <code>${esc(g.path)}</code> (Warnung unter 500 GB). Neue Server nur nach Rückfrage.</div>` : "";
+}
 $("#btnCreate").onclick = async () => {
   const values = Object.fromEntries($$("[data-cf]").map(i => [i.dataset.cf, i.value.trim()]));
   const count = Math.max(1, Math.min(10, parseInt($("#createCount").value, 10) || 1));
+  if (!await diskOkForCreate(count)) return;
   if (count > 1){
     if (!confirm(`${count} × ${tpl.templates[createGame].label} anlegen – ab „${values.name}“, Nummern/Ports/Ordner werden hochgezählt, nacheinander?`)) return;
     try {
@@ -3672,6 +3689,7 @@ function bindTourSrvCheck(){
   $$("[data-tsrv]").forEach(b => b.onclick = async () => {
     const a = b.dataset.tsrv, n = +b.dataset.n || 0;
     if ((a === "create" || a === "both") && !confirm(`${n} neue CS2-Server fürs Turnier anlegen? (Spieldateien werden aus der Vorlage kopiert, Ports aus dem freigegebenen Bereich)`)) return;
+    if ((a === "create" || a === "both") && !await diskOkForCreate(n)) return;
     b.disabled = true;
     try {
       const r = await api("/api/tournament/servers", {method: "POST", body: {create: a === "start" ? 0 : n, start_offline: a !== "create"}});
@@ -3831,7 +3849,7 @@ $("#tourAdd").onclick = () => $("#tourAddSel").value && tourCall("/api/tournamen
 $("#tourAddTeam").onclick = () => $("#tourNewTeam").value.trim() && tourCall("/api/tournament/teams", {body: {name: $("#tourNewTeam").value.trim(), players: []}}).then(() => { $("#tourNewTeam").value = ""; });
 $("#tourGen").onclick = async () => { if (tourData && tourData.matches.length && !confirm("Spielplan neu erstellen? Bisherige Ergebnisse gehen verloren.")) return; const r = await tourCall("/api/tournament/generate", {method: "POST"}); if (!r) return; toast(`Spielplan erstellt – ${r.needed} Server gleichzeitig nötig, ${r.have} vorhanden`);
   const c = r.servercheck;
-  if (c && !c.ok && (c.create || c.offline.length) && confirm(`Für die erste Runde sind ${c.need} Server nötig, online sind ${c.online}.\n\n${[c.offline.length ? `${c.offline.length} ausgeschaltete starten` : "", c.create ? `${c.create} neue anlegen` : ""].filter(Boolean).join(" und ")}?`)){
+  if (c && !c.ok && (c.create || c.offline.length) && (!c.create || await diskOkForCreate(c.create)) && confirm(`Für die erste Runde sind ${c.need} Server nötig, online sind ${c.online}.\n\n${[c.offline.length ? `${c.offline.length} ausgeschaltete starten` : "", c.create ? `${c.create} neue anlegen` : ""].filter(Boolean).join(" und ")}?`)){
     try { const x = await api("/api/tournament/servers", {method: "POST", body: {create: c.create, start_offline: true}}); toast([x.started.length ? `${x.started.length} gestartet` : "", x.created ? `${x.created} werden angelegt` : ""].filter(Boolean).join(" · ") || "Erledigt"); } catch (e) { toast(e.message, true); }
     loadTour();
   } };
@@ -3847,6 +3865,7 @@ async function tourStartAsk(force){
       else return;
     } else if (!confirm("Turnier starten? Die Anmeldung schließt, Matches werden zur geplanten Zeit automatisch auf den Servern geladen.")) return;
   }
+  if (wait && c.create && (tourData || {}).settings && tourData.settings.auto_servers !== false && !await diskOkForCreate(c.create)) return;
   const r = await tourCall("/api/tournament/start", {body: {wait}});
   if (r) toast(r.waiting ? `Wartet auf Server (${r.online}/${r.need} online${r.creating ? `, ${r.creating} werden angelegt` : ""}) – startet dann automatisch` : (r.creating ? `Turnier läuft – ${r.creating} Server werden angelegt` : "Turnier läuft"));
 }
@@ -3854,6 +3873,7 @@ $("#ttKind").onchange = () => $("#ttSecL").classList.toggle("hidden", $("#ttKind
 $("#ttStart").onclick = async () => {
   const kind = $("#ttKind").value, n = +$("#ttTeams").value || 8;
   if (!confirm(`Test mit ${n} Bot-Teams starten (${kind === "sim" ? "simuliert" : "Bots auf den Servern"})? Dein Turnier wird gesichert und danach wiederhergestellt.`)) return;
+  if (kind === "bots" && !await diskOkForCreate(Math.ceil(n / 4))) return;
   await saveTourSettingsSilently();
   const r = await tourCall("/api/tournament/test", {body: {teams: n, kind, match_sec: +$("#ttSec").value || 60, mode: $("#tourMode").value}});
   if (r) toast(r.waiting ? `Test wartet auf Server: ${r.servers} da, ${r.need} nötig${r.creating ? `, ${r.creating} werden angelegt` : ""} – startet dann automatisch`

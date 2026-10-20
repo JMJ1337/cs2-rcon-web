@@ -7738,6 +7738,32 @@ async def prefill_scheduler():
         log.warning("SteamPrefill: %s", e)
 
 
+# --- freier Platz auf der Spiele-Partition (games_base, meist NAS): Warnung unter 500 GB
+GAMES_LOW = 500 * 1000 ** 3
+_gfree: dict = {"t": 0.0, "v": None}
+
+
+async def games_free(force: bool = False) -> dict | None:
+    if not force and _gfree["v"] and time.time() - _gfree["t"] < 120:
+        return _gfree["v"]
+    base = os.path.normpath(automation.get_settings().get("games_base") or "/mnt/grohlan")
+    try:
+        out = await docker_api.run_helper([f"{base}:/g:ro"], ["sh", "-c", "df -P -B1 /g | tail -1"], timeout=60)
+        f = out.split()
+        total, free = int(f[1]), int(f[3])
+        v = {"path": base, "total": total, "free": free, "low": free < GAMES_LOW, "limit": GAMES_LOW}
+    except Exception as e:  # noqa: BLE001
+        v = {"path": base, "error": str(e)[:200], "low": False}
+    _gfree.update(t=time.time(), v=v)
+    return v
+
+
+@app.get("/api/storage/games", dependencies=auth)
+async def storage_games(request: Request, fresh: bool = False):
+    _need_admin(request)
+    return await games_free(fresh)
+
+
 @app.post("/api/create", dependencies=auth)
 async def create_server(data: CreateIn, request: Request):
     _need_docker()
