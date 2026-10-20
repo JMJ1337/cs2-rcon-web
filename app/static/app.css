@@ -704,3 +704,8 @@ aside .head .logo{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space
 .mainstrip{position:sticky;top:0;z-index:3;height:34px;display:flex;align-items:center;justify-content:center;background:var(--bg);border-bottom:1px solid var(--line)}
 .mainstrip .pubbtn{padding:3px 16px;font-size:12px}
 main .topbar{top:34px}
+
+/* Live-Stream auf der öffentlichen Seite */
+.streambox{max-width:1100px;margin:0 auto 16px;padding:0 4px}
+.streambox video{width:100%;aspect-ratio:16/9;background:#000;border-radius:12px;border:1px solid var(--line);display:block}
+.streamcap{font-size:15px;margin:0 0 6px}

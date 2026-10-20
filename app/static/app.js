@@ -219,7 +219,7 @@ function matchHtml(m){
 }
 function renderPublic(){
   const r = pubData; if (!r) return;
-  refreshPubTour();
+  refreshPubTour(); refreshPubStream();
   const on = r.servers.filter(x => x.online), pl = on.reduce((a, x) => a + (x.players || 0), 0);
   $("#pubStat").innerHTML = `<b>${on.length}</b> von ${r.servers.length} Servern online · <b>${pl}</b> Spieler · ` +
     (r.net === "internet" ? `<span class="pill" title="Du kommst aus dem Internet – Adressen zeigen die öffentliche IP">🌐 Internet${r.address ? " · " + esc(r.address) : ""}</span>`
@@ -340,7 +340,7 @@ function showView(v){
   if (v === "storage"){ loadStorage(true); loadFolders(); loadDocker().then(() => loadSysDisk()); }
   if (v === "game") renderGameView();
   if (v === "bot"){ botLoaded = false; loadBot(); }
-  if (v === "tour"){ tourLoaded = false; loadTour(); }
+  if (v === "tour"){ tourLoaded = false; loadTour(); stLoaded = false; loadStream(); }
 }
 
 /* ================= Serverliste ================= */
@@ -3749,3 +3749,62 @@ async function refreshPubTour(){
     call(`/api/public/tournament/${a}`); });
   $$("[data-ptjoin]").forEach(b => b.onclick = () => call(`/api/public/tournament/team/${b.dataset.ptjoin}/join`));
 }
+
+// --- Live-Stream: Verwaltung
+let stLoaded = false;
+async function loadStream(){
+  let r; try { r = await api("/api/stream"); } catch { return; }
+  const st = r.settings;
+  if (!stLoaded || !$("#streamPanel").contains(document.activeElement)){
+    $("#stOn").checked = !!st.enabled; $("#stTitle").value = st.title || "";
+    $("#stServer").innerHTML = `<option value="">automatisch: laufendes Turnierspiel</option>` + r.servers.map(x => `<option value="${esc(x.id)}">${esc(x.name || x.id)}</option>`).join("");
+    $("#stServer").value = st.server || ""; $("#stLaunch").textContent = `-netconport ${st.netcon_port || 2121} -fullscreen`;
+    stLoaded = true;
+  }
+  const c = r.container;
+  $("#stStatus").textContent = !st.enabled ? "· aus" : !c || !c.running ? "· Stream-Server startet …" : r.on_air ? "· 🔴 sendet" : "· bereit, wartet auf OBS";
+  const t = r.target;
+  $("#stInfo").innerHTML = st.enabled ? `<div class="row" style="gap:6px;flex-wrap:wrap;align-items:center">OBS-Server <code>${esc(r.obs.server)}</code> <button class="small" data-copy="${esc(r.obs.server)}">kopieren</button>
+      · Streamschlüssel <code>${esc(r.obs.key.replace(/pass=.*/, "pass=••••"))}</code> <button class="small" data-copy="${esc(r.obs.key)}">kopieren</button>
+      <button class="small" id="stNewKey" title="Neuen Schlüssel erzeugen (OBS muss angepasst werden)">neuer Schlüssel</button>
+      <a class="btn small" href="/api/stream/helper.ps1">⬇ Hilfsskript (Stream-PC)</a></div>
+      <div style="margin-top:6px">Kamera geht gerade zu: ${t.tv ? `<b>${esc(t.match || "")}</b> <code>${esc(t.tv)}</code>` : "– kein laufendes Spiel (oder CSTV aus)"}</div>` : "";
+  $$("#stInfo [data-copy]").forEach(b => b.onclick = () => { navigator.clipboard.writeText(b.dataset.copy); toast("Kopiert"); });
+  const nk = $("#stNewKey"); if (nk) nk.onclick = () => confirm("Neuen Streamschlüssel erzeugen? OBS muss danach angepasst werden.") && saveStream({new_key: true});
+}
+async function saveStream(extra){
+  try { await api("/api/stream", {method: "PUT", body: {enabled: $("#stOn").checked, title: $("#stTitle").value.trim(), server: $("#stServer").value, ...(extra || {})}}); toast("Gespeichert"); }
+  catch (e) { toast(e.message, true); }
+  stLoaded = false; loadStream();
+}
+$("#stOn").onchange = () => saveStream();
+$("#stTitle").onchange = () => saveStream();
+$("#stServer").onchange = () => saveStream();
+setInterval(() => { if (view === "tour" && !document.hidden) loadStream(); }, 10000);
+
+// --- Live-Stream: öffentliche Seite (HLS über das Tool)
+let pubHls = null, pubStreamOn = false;
+async function refreshPubStream(){
+  let r; try { r = await (await fetch("/api/public/stream/state", {cache: "no-store"})).json(); } catch { return; }
+  const box = $("#pubStream"); if (!box) return;
+  if (!r.enabled || !r.on_air){
+    if (pubStreamOn){ if (pubHls){ pubHls.destroy(); pubHls = null; } box.innerHTML = ""; pubStreamOn = false; }
+    return;
+  }
+  const cap = `<span class="livedot">LIVE</span> ${esc(r.title || "Live-Stream")}${r.match ? ` · <b>${esc(r.match)}</b>` : ""}`;
+  if (pubStreamOn){ const c = $("#pubStreamCap"); if (c) c.innerHTML = cap; return; }
+  pubStreamOn = true;
+  box.innerHTML = `<div class="streambox"><div class="streamcap" id="pubStreamCap">${cap}</div><video id="pubVideo" controls autoplay muted playsinline></video>
+    <div class="hint" style="margin-top:4px">Ton ist aus – zum Einschalten auf das Video tippen. ${r.tv ? `Lieber im Spiel zuschauen? <a href="steam://run/730//+connect%20${esc(r.tv)}">In CS2 öffnen</a>` : ""}</div></div>`;
+  const v = $("#pubVideo");
+  const start = () => {
+    if (v.canPlayType("application/vnd.apple.mpegurl")) { v.src = r.hls; return; }
+    if (!window.Hls || !Hls.isSupported()) { box.querySelector(".hint").textContent = "Dein Browser kann den Stream nicht abspielen."; return; }
+    pubHls = new Hls({liveSyncDurationCount: 2, lowLatencyMode: false});
+    pubHls.loadSource(r.hls); pubHls.attachMedia(v);
+    pubHls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal){ pubHls.destroy(); pubHls = null; pubStreamOn = false; } });
+  };
+  if (window.Hls || v.canPlayType("application/vnd.apple.mpegurl")) start();
+  else { const sc = document.createElement("script"); sc.src = "/static/hls.min.js"; sc.onload = start; document.head.appendChild(sc); }
+}
+setInterval(() => { if (!$("#pub").classList.contains("hidden") && !document.hidden) refreshPubStream(); }, 10000);

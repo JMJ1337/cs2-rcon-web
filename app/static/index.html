@@ -6,7 +6,7 @@
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap">
-<link rel="stylesheet" href="/static/app.css?v=106">
+<link rel="stylesheet" href="/static/app.css?v=107">
 </head>
 <body>
 
@@ -18,6 +18,7 @@
     <button class="primary" id="btnPubLogin">Anmelden</button>
   </header>
   <div class="pubintro hint">Alle Spielserver im LAN. „Beitreten“ startet das Spiel und verbindet direkt (wo das Spiel es unterstützt), sonst Adresse kopieren und im Spiel eintragen.</div>
+  <div id="pubStream"></div>
   <div id="pubTour"></div>
   <div class="pubgrid" id="pubGrid"><div class="hint">Lade Server …</div></div>
   <div id="pubMatches"></div>
@@ -418,7 +419,22 @@
             <label id="ttSecL">Spielzeit je Match bis <input type="number" id="ttSec" min="15" max="600" value="60" style="width:70px"> s</label>
             <button class="primary" id="ttStart">Test starten</button><button class="danger" id="ttEnd">Test beenden</button>
           </div>
-          <div class="hint" style="margin-top:6px">Modus wie oben eingestellt. „Bots auf den Servern“ nutzt die CS-Server außer CS #1: je Match ein normales Wingman-Spiel mit 4 Bots, das Ergebnis kommt aus dem Server-Log (dauert ca. 15–20 min pro Match).</div>
+          <div class="hint" style="margin-top:6px">Modus wie oben eingestellt. „Bots auf den Servern“ nutzt die CS-Server außer CS #1: je Match wird wie echt über MatchZy geladen, 4 Bots füllen die Teams und das Match wird automatisch gestartet (Bots melden sich nie „bereit“). Ergebnis wie im echten Turnier (ca. 15–20 min pro Match).</div>
+        </div>
+        <div class="panel" style="margin-top:16px" id="streamPanel"><h2>📺 Live-Stream im Browser <span class="hint" id="stStatus"></span></h2>
+          <div class="pfopts">
+            <label><input type="checkbox" id="stOn"> Stream-Server an (zeigt den Stream auf der öffentlichen Seite, sobald OBS sendet)</label>
+            <label>Titel <input id="stTitle" maxlength="80" style="width:260px" placeholder="GrohLAN Turnier – live"></label>
+            <label>Zeigt <select id="stServer"><option value="">automatisch: laufendes Turnierspiel</option></select></label>
+          </div>
+          <div id="stInfo" class="hint" style="margin-top:8px"></div>
+          <details style="margin-top:8px"><summary>So wird der Stream-PC eingerichtet</summary><ol class="hint" style="line-height:1.7">
+            <li>PC mit Grafikkarte, Steam + CS2 (ein eigenes Steam-Konto), OBS Studio.</li>
+            <li>In Steam bei CS2 → Eigenschaften → Startoptionen: <code id="stLaunch">-netconport 2121 -fullscreen</code></li>
+            <li>OBS → Einstellungen → Stream: Dienst „Benutzerdefiniert“, Server und Streamschlüssel von oben. Ausgabe: 1080p/60 oder 720p/60, x264/NVENC, 6000 kbit/s, Keyframe-Intervall 1 s.</li>
+            <li>OBS-Quelle „Spielaufnahme“ auf CS2, dann „Stream starten“.</li>
+            <li>Hilfsskript herunterladen und auf dem Stream-PC starten (Rechtsklick → Mit PowerShell ausführen). Es verbindet CS2 automatisch per CSTV mit dem laufenden Spiel und schaltet die Auto-Kamera (Auto-Director) ein – beim nächsten Spiel wechselt es selbst.</li>
+          </ol></details>
         </div>
         <div class="panel" style="margin-top:16px"><h2>Spielplan &amp; Ergebnisse</h2><div id="tourBoard"></div></div>
       </div>
@@ -930,6 +946,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=132"></script>
+<script src="/static/app.js?v=133"></script>
 </body>
 </html>

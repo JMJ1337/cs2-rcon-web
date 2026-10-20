@@ -12,6 +12,8 @@ import secrets
 import time
 import urllib.parse
 import uuid
+
+import httpx
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -21,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import mapimages, gslt, matchlog, steamlist, playerdb, notify, prefill_more
-from . import cache_model, cache_inventory, timings, steambot_ctl
+from . import cache_model, cache_inventory, timings, steambot_ctl, stream_ctl
 from . import tournament as tour
 from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
@@ -3736,6 +3738,94 @@ class BotLogin(BaseModel):
 
 class BotCode(BaseModel):
     code: str = Field(min_length=3, max_length=12)
+
+
+# --- Live-Stream im Browser (CSTV-Bild vom Stream-PC über OBS -> MediaMTX -> HLS)
+def _stream_target() -> dict:
+    """Welches Spiel zeigt der Stream? Fester Server aus den Einstellungen, sonst das laufende Turnierspiel."""
+    st = stream_ctl.settings()
+    sid = st.get("server") or ""
+    label, mid = None, None
+    if not sid:
+        d = tour.load()
+        live = [m for m in d.get("matches") or [] if m.get("status") == "live" and m.get("server")]
+        live.sort(key=lambda m: (not m.get("seq"), -(m.get("started") or 0)))
+        if d.get("status") == "running" and live:
+            m = live[0]
+            sid, mid = m["server"], m["id"]
+            label = f"{tour.team_name(d, m['t1'])} vs {tour.team_name(d, m['t2'])} · {(m.get('label') or '').split(' · ')[-1]}"
+    j = ((_state.get(sid) or {}).get("join") or {}) if sid else {}
+    if sid and not label:
+        label = _tour_names.get(sid) or next((x.get("name") for x in load_servers() if x["id"] == sid), sid)
+    return {"server": sid or None, "match": label, "id": mid or sid or None, "tv": j.get("tv_address")}
+
+
+@app.get("/api/public/stream/state")
+async def public_stream():
+    st = stream_ctl.settings()
+    if not st.get("enabled"):
+        return {"enabled": False}
+    return {"enabled": True, "on_air": await stream_ctl.on_air(), "title": st.get("title") or "", **_stream_target(),
+            "hls": f"/stream/{stream_ctl.PATH}/index.m3u8"}
+
+
+@app.get("/stream/{path:path}")
+async def stream_proxy(path: str, request: Request):
+    """HLS vom Stream-Container durchreichen – Zuschauer brauchen nur den Port des Tools."""
+    if ".." in path or not stream_ctl.settings().get("enabled"):
+        raise HTTPException(404)
+    try:
+        async with httpx.AsyncClient(timeout=15) as cl:
+            r = await cl.get(f"{stream_ctl.HLS}/{path}", params=dict(request.query_params))
+    except httpx.HTTPError:
+        raise HTTPException(503, "Stream-Server nicht erreichbar")
+    return _Resp(content=r.content, status_code=r.status_code, media_type=r.headers.get("content-type"),
+                 headers={"Cache-Control": "no-cache"})
+
+
+class StreamIn(BaseModel):
+    enabled: bool | None = None
+    title: str | None = Field(None, max_length=80)
+    server: str | None = None
+    netcon_port: int | None = Field(None, ge=1024, le=65535)
+    new_key: bool = False
+
+
+@app.get("/api/stream", dependencies=auth)
+async def stream_get(request: Request):
+    _need_admin(request)
+    st = stream_ctl.settings()
+    host = _docker_host_ip()
+    return {"settings": {k: st.get(k) for k in ("enabled", "title", "server", "netcon_port")}, "container": await stream_ctl.state(),
+            "on_air": await stream_ctl.on_air() if st.get("enabled") else False, "target": _stream_target(),
+            "obs": {"server": f"rtmp://{host}:{stream_ctl.RTMP_PORT}", "key": f"{stream_ctl.PATH}?user=obs&pass={st['key']}"},
+            "servers": [{"id": x["id"], "name": x.get("name")} for x in load_servers() if game_of(x) == "cs2"]}
+
+
+@app.put("/api/stream", dependencies=auth)
+async def stream_put(data: StreamIn, request: Request):
+    _need_admin(request)
+    _need_docker()
+    old = stream_ctl.settings()
+    d = stream_ctl.save(data.model_dump())
+    try:
+        c = await stream_ctl.state()
+        if d["enabled"] and (not c or not c.get("running") or data.new_key):
+            await stream_ctl.start()
+        elif not d["enabled"] and c and c.get("running"):
+            await stream_ctl.stop()
+    except docker_api.DockerError as e:
+        stream_ctl.save({"enabled": old.get("enabled")})
+        raise HTTPException(502, str(e))
+    return {"ok": True}
+
+
+@app.get("/api/stream/helper.ps1", dependencies=auth)
+async def stream_helper(request: Request):
+    _need_admin(request)
+    base = str(request.base_url).rstrip("/")
+    return _Resp(content=stream_ctl.helper_script(f"{base}/api/public/stream/state").encode("utf-8-sig"), media_type="text/plain",
+                 headers={"Content-Disposition": 'attachment; filename="grohlan-stream-helfer.ps1"'})
 
 
 class BotMsg(BaseModel):
