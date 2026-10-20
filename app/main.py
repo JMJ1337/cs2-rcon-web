@@ -4025,10 +4025,10 @@ async def tour_test_end(request: Request):
     _need_admin(request)
     d = tour.load()
     kind = _tour_test(d)
-    if kind == "bots":
-        for sid in {m.get("server") for m in d["matches"] if m.get("status") == "live" and m.get("server")}:
+    if kind == "bots":     # MatchZy-Matches beenden (sonst bleibt der Server im Aufwärmen hängen) und Bots runter
+        for sid in {m.get("server") for m in d["matches"] if m.get("server")} | set(d.get("servers") or []):
             try:
-                await run(get_server(sid), "bot_kick; bot_quota 0")
+                await run(get_server(sid), "css_endmatch; bot_kick; bot_quota 0")
             except Exception:  # noqa: BLE001
                 pass
     _tour_names.clear()
