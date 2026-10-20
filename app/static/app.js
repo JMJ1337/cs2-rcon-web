@@ -340,7 +340,7 @@ function showView(v){
   if (v === "storage"){ loadStorage(true); loadFolders(); loadDocker().then(() => loadSysDisk()); }
   if (v === "game") renderGameView();
   if (v === "bot"){ botLoaded = false; loadBot(); }
-  if (v === "tour"){ tourLoaded = false; loadTour(); stLoaded = false; loadStream(); }
+  if (v === "tour"){ tourLoaded = false; loadTour(); stLoaded = false; loadStream(); loadTourLib(); }
 }
 
 /* ================= Serverliste ================= */
@@ -3571,13 +3571,14 @@ function bracketHtml(title, ms, tail, admin){
 }
 function tmCard(m, admin, big){
   const show = m.status === "live" || m.status === "done";
-  const row = (t, p, s, win) => `<div class="tr ${win ? "win" : ""} ${t ? "" : "tbd"}"><b>${esc(t || p || "noch offen")}</b><span class="sc">${show && !m.walkover ? (s ?? 0) : ""}</span></div>`;
+  const canSwap = k => admin && m["f" + k] && (m.status === "wait" || m.status === "ready" || m.walkover);
+  const row = (t, p, s, win, k) => `<div class="tr ${win ? "win" : ""} ${t ? "" : "tbd"} ${canSwap(k) ? "drag" : ""}"${canSwap(k) ? ` draggable="true" data-sm="${m.id}" data-ss="${k}" title="Ziehen, um mit einem anderen Team zu tauschen"` : ""}><b>${esc(t || p || "noch offen")}</b><span class="sc">${show && !m.walkover ? (s ?? 0) : ""}</span></div>`;
   const meta = m.status === "done" ? (m.walkover ? "Freilos" : "beendet") : m.status === "live" ? `<span class="livedot">LIVE</span> ${esc(m.server_name || "")} · ${esc(m.map || "")}` :
     `${m.planned ? tTime(m.planned) + " Uhr" : ""}${m.server_name ? " · " + esc(m.server_name) : ""}${m.map ? " · " + esc(m.map) : ""}`;
   const bye = m.walkover || m.t1 === "Freilos" || m.t2 === "Freilos";
   return `<div class="tm ${m.status} ${bye ? "bye" : ""}">${big ? `<div class="meta" style="margin:0 0 3px">${esc(m.label)}</div>` : ""}
     ${m.no ? `<span class="tno">#${m.no}</span>` : ""}
-    ${row(m.t1, m.p1, m.s1, m.winner && m.winner === m.t1)}${row(m.t2, m.p2, m.s2, m.winner && m.winner === m.t2)}
+    ${row(m.t1, m.p1, m.s1, m.winner && m.winner === m.t1, "1")}${row(m.t2, m.p2, m.s2, m.winner && m.winner === m.t2, "2")}
     <div class="meta tmeta"><span>${meta}</span>${m.status === "live" ? tvBtn(m) : ""}</div>
     ${admin && (m.status === "ready" || m.status === "live" || m.status === "done") && !m.walkover ? `<div class="row" style="gap:4px;margin-top:5px;flex-wrap:nowrap">
       <input type="number" min="0" value="${m.s1 ?? ""}" data-ts1="${m.id}" style="width:48px;padding:2px 4px"><input type="number" min="0" value="${m.s2 ?? ""}" data-ts2="${m.id}" style="width:48px;padding:2px 4px">
@@ -3679,6 +3680,99 @@ function bindTourSrvCheck(){
     loadTour();
   });
 }
+
+// --- Turnier: Teams tauschen per Drag & Drop (Spielplan-Karten)
+let tDrag = null;
+document.addEventListener("dragstart", e => {
+  const r = e.target.closest && e.target.closest("[data-sm]");
+  if (r){ tDrag = {kind: "team", m: r.dataset.sm, s: r.dataset.ss}; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", "t"); r.classList.add("dragging"); return; }
+  const c = e.target.closest && e.target.closest("[data-lm]");
+  if (c){ tDrag = {kind: "match", m: c.dataset.lm}; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", "m"); c.classList.add("dragging"); }
+});
+document.addEventListener("dragend", () => { tDrag = null; $$(".dragging,.dropok").forEach(x => x.classList.remove("dragging", "dropok")); });
+document.addEventListener("dragover", e => {
+  if (!tDrag) return;
+  const t = tDrag.kind === "team" ? e.target.closest("[data-sm]") : (e.target.closest("[data-lm]") || e.target.closest("[data-lane]"));
+  if (!t) return;
+  e.preventDefault();
+  $$(".dropok").forEach(x => x !== t && x.classList.remove("dropok")); t.classList.add("dropok");
+});
+document.addEventListener("drop", async e => {
+  if (!tDrag) return;
+  const d = tDrag; tDrag = null;
+  if (d.kind === "team"){
+    const t = e.target.closest("[data-sm]"); if (!t) return; e.preventDefault();
+    if (t.dataset.sm === d.m && t.dataset.ss === d.s) return;
+    await tourCall("/api/tournament/swap", {body: {a: d.m, a_slot: d.s, b: t.dataset.sm, b_slot: t.dataset.ss}}, "Teams getauscht");
+    return;
+  }
+  const card = e.target.closest("[data-lm]"), lane = e.target.closest("[data-lane]");
+  if (!card && !lane) return; e.preventDefault();
+  if (card && card.dataset.lm === d.m) return;
+  const server = lane ? lane.dataset.lane : null;
+  await tourCall("/api/tournament/move", {body: {mid: d.m, before: card ? card.dataset.lm : "", server: server === "_auto" ? "" : server}}, "Umgeplant");
+});
+
+// --- Ablaufplan: Spalten je Server, Spiele nach Zeit
+function tourLanesHtml(d){
+  const open = d.matches.filter(m => m.status !== "done" && !m.walkover);
+  if (!open.length) return `<div class="hint">Keine offenen Spiele.</div>`;
+  const lanes = [...d.pool.map(s => ({id: s.id, name: s.name, online: s.online}))];
+  open.forEach(m => { if (m.server && !lanes.find(l => l.id === m.server)) lanes.push({id: m.server, name: m.server_name || m.server}); });
+  const noSrv = open.filter(m => !m.server);
+  const card = m => {
+    const mv = m.status === "wait" || m.status === "ready";
+    return `<div class="lcard ${m.status}" ${mv ? `draggable="true" data-lm="${m.id}"` : ""} title="${esc(m.label)}">
+      <div class="lt">${m.status === "live" ? `<span class="livedot">LIVE</span>` : m.planned ? tTime(m.planned) : "–"} <span class="hint">#${m.no || ""}</span>
+        ${m.pin ? `<a href="#" class="pin" data-unpin="${m.id}" title="Feste Zuordnung lösen">📌</a>` : ""}</div>
+      <div class="ln">${esc(m.t1 || m.p1 || "?")} <span class="hint">vs</span> ${esc(m.t2 || m.p2 || "?")}</div>
+      <div class="hint">${esc((m.label || "").split(" · ").slice(-1)[0])}${m.map ? " · " + esc(m.map) : ""}</div></div>`;
+  };
+  const col = (id, name, ms, extra) => `<div class="lane" data-lane="${esc(id)}"><div class="lh">${name}${extra || ""}</div>${ms.sort((a, b) => (a.planned || 0) - (b.planned || 0)).map(card).join("") || `<div class="hint" style="padding:8px">hierher ziehen</div>`}</div>`;
+  return `<div class="lanes">${lanes.map(l => col(l.id, `${l.online === false ? "⚪" : l.online ? "🟢" : ""} ${esc(l.name)}`, open.filter(m => m.server === l.id))).join("")}
+    ${noSrv.length ? col("_auto", "ohne Server", noSrv) : ""}</div>`;
+}
+document.addEventListener("click", e => {
+  const u = e.target.closest && e.target.closest("[data-unpin]");
+  if (!u) return; e.preventDefault();
+  tourCall("/api/tournament/move", {body: {mid: u.dataset.unpin, server: ""}}, "Server wieder automatisch");
+});
+
+// --- Gespeicherte Turniere und Vorlagen
+async function loadTourLib(){
+  let r; try { r = await api("/api/tournament/library"); } catch { return; }
+  const cur = r.current;
+  $("#tlSel").innerHTML = r.tournaments.length ? r.tournaments.map(t => `<option value="${esc(t.id)}" ${t.id === cur ? "selected" : ""}>${esc(t.name)}${t.id === cur ? " (aktuell)" : ""} · ${t.teams} Teams${t.matches ? ` · ${t.done}/${t.matches} Spiele` : ""} · ${new Date(t.saved * 1000).toLocaleDateString("de-DE")}</option>`).join("")
+    : `<option value="">– noch keine gespeichert –</option>`;
+  $("#tlTpl").innerHTML = `<option value="">ohne Vorlage</option>` + r.templates.map(t => `<option value="${esc(t.id)}">Vorlage: ${esc(t.name)}</option>`).join("");
+  $("#tlTpls").innerHTML = r.templates.map(t => `<span class="pill">${esc(t.name)} <a href="#" data-tpldel="${esc(t.id)}" title="Vorlage löschen">✕</a></span>`).join(" ") || "keine";
+  $$("[data-tpldel]").forEach(a => a.onclick = async e => { e.preventDefault(); if (!confirm("Vorlage löschen?")) return; await api(`/api/tournament/templates/${a.dataset.tpldel}`, {method: "DELETE"}); loadTourLib(); });
+}
+$("#tlSave").onclick = async () => {
+  const name = prompt("Name für das gespeicherte Turnier:", $("#tourName").value || "Turnier"); if (!name) return;
+  await tourCall("/api/tournament/library/save", {body: {name}}, "Gespeichert"); tourLoaded = false; loadTourLib();
+};
+$("#tlLoad").onclick = async () => {
+  const id = $("#tlSel").value; if (!id) return;
+  if (!confirm("Dieses Turnier laden? Das aktuelle wird vorher automatisch in der Liste gespeichert.")) return;
+  await tourCall(`/api/tournament/library/${id}/load`, {method: "POST"}, "Geladen"); tourLoaded = false; loadTourLib();
+};
+$("#tlDel").onclick = async () => {
+  const id = $("#tlSel").value; if (!id) return;
+  if (!confirm("Gespeichertes Turnier endgültig löschen? (Das aktuell geöffnete bleibt offen.)")) return;
+  try { await api(`/api/tournament/library/${id}`, {method: "DELETE"}); toast("Gelöscht"); } catch (e) { toast(e.message, true); }
+  loadTourLib();
+};
+$("#tlNew").onclick = async () => {
+  const name = prompt("Name des neuen Turniers:", "Groh LAN Wingman-Turnier"); if (name === null) return;
+  await tourCall("/api/tournament/new", {body: {template: $("#tlTpl").value || null, name: name || null}}, "Neues Turnier angelegt – das vorige ist gespeichert");
+  tourLoaded = false; loadTourLib();
+};
+$("#tlTplSave").onclick = async () => {
+  const name = prompt("Name der Vorlage (speichert die aktuellen Einstellungen – vorher „Speichern“ in den Einstellungen klicken):", $("#tourMode").selectedOptions[0].text); if (!name) return;
+  try { await api("/api/tournament/templates", {body: {name}}); toast("Vorlage gespeichert"); } catch (e) { toast(e.message, true); }
+  loadTourLib();
+};
 let tourData = null, tourLoaded = false;
 const toLocalInput = t => { if (!t) return ""; const d = new Date(t * 1000); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 async function loadTour(){
@@ -3707,7 +3801,9 @@ async function loadTour(){
   $("#tourTeams").innerHTML = d.teams.map(t => `<div class="row" style="gap:6px;margin:4px 0;flex-wrap:wrap" data-tteam="${esc(t.id)}">
     <input value="${esc(t.name)}" maxlength="24" style="width:150px" data-tn><select data-tp1>${opts(t.steamids[0])}</select><select data-tp2>${opts(t.steamids[1])}</select>
     <button class="small" data-tsave>Speichern</button><button class="small danger" data-tdel>✕</button>${t.steamids.length < 2 ? ` <span class="pill warn">sucht Partner</span>` : ""}</div>`).join("") || `<div class="hint">Noch keine Teams.</div>`;
+  if (tDrag) return;                       // nicht mitten im Ziehen neu zeichnen
   $("#tourBoard").innerHTML = tourBoardHtml(d, true);
+  $("#tourLanes").innerHTML = tourLanesHtml(d);
   $("#tourGen").disabled = d.status === "running"; $("#tourStart").disabled = d.status === "running" || !d.matches.length; $("#tourStop").disabled = d.status !== "running";
   // Aktionen
   $$("[data-tdelp]").forEach(b => b.onclick = async () => { await tourCall(`/api/tournament/players/${b.dataset.tdelp}`, {method: "DELETE"}); });

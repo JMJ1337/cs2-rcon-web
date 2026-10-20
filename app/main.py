@@ -3521,6 +3521,140 @@ class TourResult(BaseModel):
     s2: int = Field(ge=0, le=99)
 
 
+# --- Spielplan per Drag & Drop bearbeiten
+class TourSwapIn(BaseModel):
+    a: str
+    a_slot: str
+    b: str
+    b_slot: str
+
+
+@app.post("/api/tournament/swap", dependencies=auth)
+async def tour_swap(data: TourSwapIn, request: Request):
+    _need_admin(request)
+    d = tour.load()
+    try:
+        tour.swap(d, data.a, data.a_slot, data.b, data.b_slot)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if d["matches"]:
+        tour.plan(d)
+    tour.save(d)
+    return {"ok": True}
+
+
+class TourMoveIn(BaseModel):
+    mid: str
+    before: str | None = None       # vor dieses Spiel setzen ("" = ans Ende)
+    server: str | None = None       # fest auf diesen Server ("" = automatisch, None = unverändert)
+
+
+@app.post("/api/tournament/move", dependencies=auth)
+async def tour_move(data: TourMoveIn, request: Request):
+    _need_admin(request)
+    d = tour.load()
+    try:
+        tour.move(d, data.mid, data.before, data.server)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    tour.plan(d)
+    tour.save(d)
+    return {"ok": True}
+
+
+# --- Bibliothek: mehrere Turniere speichern/laden, Vorlagen
+def _tour_busy(d: dict) -> bool:
+    return d.get("status") in ("running", "waiting") and not _tour_test(d)
+
+
+def _tour_has_content(d: dict) -> bool:
+    return bool(d.get("players") or d.get("teams") or d.get("matches"))
+
+
+@app.get("/api/tournament/library", dependencies=auth)
+async def tour_library(request: Request):
+    _need_admin(request)
+    d = tour.load()
+    return {"tournaments": tour.library(), "templates": tour.templates(), "current": d.get("lib_id")}
+
+
+class TourNameIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+
+
+@app.post("/api/tournament/library/save", dependencies=auth)
+async def tour_lib_save(data: TourNameIn, request: Request):
+    _need_admin(request)
+    d = tour.load()
+    if _tour_test(d):
+        raise HTTPException(409, "Während eines Tests nicht speichern – erst Test beenden")
+    lid = tour.lib_save(d, data.name)
+    tour.save(d)
+    return {"ok": True, "id": lid}
+
+
+@app.post("/api/tournament/library/{lid}/load", dependencies=auth)
+async def tour_lib_load(lid: str, request: Request):
+    _need_admin(request)
+    d = tour.load()
+    if _tour_busy(d) or _tour_test(d):
+        raise HTTPException(409, "Das aktuelle Turnier läuft – erst anhalten bzw. Test beenden")
+    try:
+        new = tour.lib_load(lid)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    if _tour_has_content(d):
+        tour.lib_save(d)                      # aktuelles vorher sichern
+    _tour_names.clear()
+    tour.save(new)
+    return {"ok": True}
+
+
+@app.delete("/api/tournament/library/{lid}", dependencies=auth)
+async def tour_lib_delete(lid: str, request: Request):
+    _need_admin(request)
+    d = tour.load()
+    tour.lib_delete(lid)
+    if d.get("lib_id") == lid:
+        d.pop("lib_id", None)
+        tour.save(d)
+    return {"ok": True}
+
+
+class TourNewIn(BaseModel):
+    template: str | None = None
+    name: str | None = Field(None, max_length=60)
+
+
+@app.post("/api/tournament/new", dependencies=auth)
+async def tour_new(data: TourNewIn, request: Request):
+    _need_admin(request)
+    d = tour.load()
+    if _tour_busy(d) or _tour_test(d):
+        raise HTTPException(409, "Das aktuelle Turnier läuft – erst anhalten bzw. Test beenden")
+    if _tour_has_content(d):
+        tour.lib_save(d)
+    new = tour.new_from(data.template)
+    if data.name:
+        new["name"] = data.name.strip()
+    _tour_names.clear()
+    tour.save(new)
+    return {"ok": True}
+
+
+@app.post("/api/tournament/templates", dependencies=auth)
+async def tour_tpl_save(data: TourNameIn, request: Request):
+    _need_admin(request)
+    return {"ok": True, "template": tour.template_save(tour.load(), data.name)}
+
+
+@app.delete("/api/tournament/templates/{tid}", dependencies=auth)
+async def tour_tpl_delete(tid: str, request: Request):
+    _need_admin(request)
+    tour.template_delete(tid)
+    return {"ok": True}
+
+
 @app.post("/api/tournament/match/{mid}/result", dependencies=auth)
 async def tour_result(mid: str, data: TourResult, request: Request):
     _need_admin(request)

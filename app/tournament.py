@@ -9,6 +9,7 @@ Ein Match: {id, stage, round, label, t1, t2, src1, src2, winner, loser, s1, s2, 
 import itertools
 import math
 import random
+import re
 import secrets
 import time
 
@@ -289,7 +290,7 @@ def plan(d: dict) -> None:
             if m["status"] == "live" and m.get("server") in free:
                 free[m["server"]] = max(free[m["server"]], t_end)
             ends[m["id"]] = t_end
-    order = sorted(d["matches"], key=lambda m: (m["round"], {"G": 0, "R": 0, "L": 0, "W": 1, "K": 1, "F": 2}.get(m["stage"], 0), m["id"]))
+    order = ordered(d)
     block, all_end = 0.0, 0.0
     now = time.time() if d.get("status") == "running" else start
     for m in order:
@@ -312,7 +313,8 @@ def plan(d: dict) -> None:
             m["planned"], m["server"] = earliest, None
             ends[m["id"]] = earliest + dur
         else:
-            srv = min(servers, key=lambda s: max(free[s], earliest))
+            pin = m.get("pin")
+            srv = pin if pin in free else min(servers, key=lambda s: max(free[s], earliest))
             t0 = max(free[srv], earliest)
             m["planned"], m["server"] = t0, srv
             free[srv] = t0 + dur
@@ -366,7 +368,8 @@ def public_view(d: dict) -> dict:
     out["matches"] = [{**{k: m.get(k) for k in ("id", "stage", "round", "label", "group", "s1", "s2", "status", "planned",
                                                  "started", "ended", "map", "server", "walkover")},
                        "t1": tn(m["t1"]), "t2": tn(m["t2"]), "winner": tn(m["winner"]), "t1_id": m["t1"], "t2_id": m["t2"],
-                       "p1": _ph(m.get("src1")), "p2": _ph(m.get("src2")), "no": int(m["id"][1:]) if m["id"][1:].isdigit() else None}
+                       "p1": _ph(m.get("src1")), "p2": _ph(m.get("src2")), "no": int(m["id"][1:]) if m["id"][1:].isdigit() else None,
+                       "f1": _direct(m, "1"), "f2": _direct(m, "2"), "pin": m.get("pin")}
                       for m in d["matches"]]
     out["groups"] = {g: standings(d, g) for g in (d.get("groups") or {})}
     if d.get("mode") == "rr" and d["matches"]:
@@ -392,3 +395,159 @@ def _pname(d: dict, sid: str) -> str:
 
 def new_team_id() -> str:
     return "t" + secrets.token_hex(3)
+
+
+def _base_key(m: dict):
+    return (m["round"], {"G": 0, "R": 0, "L": 0, "W": 1, "K": 1, "F": 2}.get(m["stage"], 0), int(m["id"][1:]) if m["id"][1:].isdigit() else 0)
+
+
+def ordered(d: dict) -> list[dict]:
+    """Spiel-Reihenfolge: Standard nach Runde, von Hand per Drag & Drop umsortierbar (Feld „order“)."""
+    base = sorted(d["matches"], key=_base_key)
+    idx = {m["id"]: i for i, m in enumerate(base)}
+    return sorted(d["matches"], key=lambda m: (m["order"] if m.get("order") is not None else idx[m["id"]], idx[m["id"]]))
+
+
+def move(d: dict, mid: str, before: str | None, server: str | None) -> None:
+    """Spiel vor ein anderes ziehen und/oder fest einem Server zuordnen ("" = automatisch)."""
+    m = next((x for x in d["matches"] if x["id"] == mid), None)
+    if not m:
+        raise ValueError("Spiel nicht gefunden")
+    if m["status"] in ("live", "done"):
+        raise ValueError("Läuft schon oder ist fertig – nicht verschiebbar")
+    if server is not None:
+        if server:
+            m["pin"] = server
+        else:
+            m.pop("pin", None)
+    if before is not None:
+        lst = [x for x in ordered(d) if x["id"] != mid]
+        pos = next((i for i, x in enumerate(lst) if x["id"] == before), len(lst))
+        lst.insert(pos, m)
+        for i, x in enumerate(lst):
+            x["order"] = i
+
+
+def _direct(m: dict, k: str) -> bool:
+    return m.get("src" + k) is None and m.get("t" + k) is not None
+
+
+def swap(d: dict, a_mid: str, a_slot: str, b_mid: str, b_slot: str) -> None:
+    """Zwei Teams tauschen (Drag & Drop). Gruppen/Jeder-gegen-jeden: die Teams tauschen ihren Platz in allen
+    Gruppenspielen (und die Gruppe). K.-o.: die beiden Plätze der ersten Runde tauschen, Freilose neu auswerten."""
+    ms = {m["id"]: m for m in d["matches"]}
+    a, b = ms.get(a_mid), ms.get(b_mid)
+    if not a or not b or a_slot not in ("1", "2") or b_slot not in ("1", "2"):
+        raise ValueError("Ungültig")
+    if not _direct(a, a_slot) or not _direct(b, b_slot):
+        raise ValueError("Nur Teams mit festem Platz (erste Runde/Gruppen) lassen sich tauschen")
+    ta, tb = a["t" + a_slot], b["t" + b_slot]
+    if ta == tb:
+        return
+    if a["stage"] in ("G", "R") and b["stage"] in ("G", "R"):
+        gm = [m for m in d["matches"] if m["stage"] in ("G", "R")]
+        if any(m["status"] in ("live", "done") and {ta, tb} & {m["t1"], m["t2"]} for m in gm):
+            raise ValueError("Eines der Teams hat in der Gruppe schon gespielt")
+        sw = {ta: tb, tb: ta}
+        for m in gm:
+            m["t1"], m["t2"] = sw.get(m["t1"], m["t1"]), sw.get(m["t2"], m["t2"])
+        for g, ids in (d.get("groups") or {}).items():
+            d["groups"][g] = [sw.get(x, x) for x in ids]
+        return
+    if a["stage"] in ("G", "R") or b["stage"] in ("G", "R"):
+        raise ValueError("Gruppen- und K.-o.-Plätze lassen sich nicht tauschen")
+    for m in (a, b):
+        if m["status"] == "live" or (m["status"] == "done" and not m.get("walkover")):
+            raise ValueError("Dieses Spiel läuft schon oder ist gespielt")
+        if m.get("walkover") and any(x["status"] in ("live", "done") and not x.get("walkover")
+                                     for x in d["matches"] for k in ("1", "2") if (x.get("src" + k) or {}).get("m") == m["id"]):
+            raise ValueError("Das Folgespiel des Freiloses läuft schon")
+    a["t" + a_slot], b["t" + b_slot] = tb, ta
+    _rederive(d)
+
+
+def _rederive(d: dict) -> None:
+    """Nach einem Tausch: Freilose und daraus abgeleitete Plätze neu berechnen (echte Ergebnisse bleiben)."""
+    real = {m["id"] for m in d["matches"] if m["status"] in ("live", "done") and not m.get("walkover")}
+    for m in d["matches"]:
+        if m["id"] in real:
+            continue
+        if m.get("walkover"):
+            m.update(status="wait", winner=None, loser=None, walkover=False, s1=None, s2=None)
+        for k in ("1", "2"):
+            src = m.get("src" + k)
+            if src and not (("m" in src and src["m"] in real)):
+                m["t" + k] = None
+        m["status"] = "wait"
+    resolve(d)
+
+
+# ---------------------------------------------------------------- Bibliothek: gespeicherte Turniere und Vorlagen
+LIB = "tournaments"
+TEMPLATES = "tournament_templates.json"
+TEMPLATE_KEYS = ("name", "mode", "match_min", "pause_min", "maps", "par_qf", "par_sf", "auto_servers", "invite", "registration")
+
+
+def library() -> list[dict]:
+    out = []
+    for f in sorted((store.DATA_DIR / LIB).glob("*.json")) if (store.DATA_DIR / LIB).exists() else []:
+        x = store.load(f"{LIB}/{f.name}", None)
+        if not x:
+            continue
+        dd = x.get("data") or {}
+        ms = dd.get("matches") or []
+        out.append({"id": x["id"], "name": x.get("name"), "saved": x.get("saved"), "mode": dd.get("mode"),
+                    "teams": len(dd.get("teams") or []), "players": len(dd.get("players") or []),
+                    "matches": len(ms), "done": sum(1 for m in ms if m.get("status") == "done"), "status": dd.get("status")})
+    return sorted(out, key=lambda x: -(x.get("saved") or 0))
+
+
+def lib_save(d: dict, name: str | None = None) -> str:
+    """Aktuelles Turnier in die Bibliothek (überschreibt seinen eigenen Eintrag)."""
+    lid = d.get("lib_id") or secrets.token_hex(4)
+    d["lib_id"] = lid
+    nm = (name or d.get("name") or "Turnier").strip()[:60]
+    if name:
+        d["name"] = nm
+    store.save(f"{LIB}/{lid}.json", {"id": lid, "name": nm, "saved": time.time(), "data": d})
+    return lid
+
+
+def lib_load(lid: str) -> dict:
+    x = store.load(f"{LIB}/{re.sub(r'[^a-f0-9]', '', lid)}.json", None)
+    if not x:
+        raise ValueError("Turnier nicht gefunden")
+    d = {**DEFAULTS, **(x.get("data") or {})}
+    d["lib_id"] = x["id"]
+    if d.get("status") in ("running", "waiting"):
+        d["status"] = "setup"                      # geladene Turniere laufen nicht von selbst weiter
+    return d
+
+
+def lib_delete(lid: str) -> None:
+    p = store.DATA_DIR / LIB / f"{re.sub(r'[^a-f0-9]', '', lid)}.json"
+    if p.exists():
+        p.unlink()
+
+
+def templates() -> list[dict]:
+    return store.load(TEMPLATES, [])
+
+
+def template_save(d: dict, name: str) -> dict:
+    lst = [t for t in templates() if t["name"] != name]
+    t = {"id": secrets.token_hex(4), "name": name.strip()[:60], "settings": {k: d.get(k) for k in TEMPLATE_KEYS}, "saved": time.time()}
+    store.save(TEMPLATES, lst + [t])
+    return t
+
+
+def template_delete(tid: str) -> None:
+    store.save(TEMPLATES, [t for t in templates() if t["id"] != tid])
+
+
+def new_from(template_id: str | None = None) -> dict:
+    d = {**DEFAULTS, "players": [], "teams": [], "matches": [], "groups": {}, "servers": [], "created": time.time()}
+    t = next((x for x in templates() if x["id"] == template_id), None) if template_id else None
+    if t:
+        d.update({k: v for k, v in t["settings"].items() if v is not None})
+    return d

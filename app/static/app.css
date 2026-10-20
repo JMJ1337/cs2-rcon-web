@@ -718,3 +718,16 @@ main .topbar{top:34px}
 @media (min-width:821px){ #app>aside{zoom:1.15} }
 
 .tourline{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:8px 14px;margin:0 0 14px;font-size:13px}
+
+/* Turnier: Drag & Drop */
+.tm .tr.drag{cursor:grab}.tm .tr.drag:hover{background:rgba(255,255,255,.04)}
+.dragging{opacity:.45}
+.dropok{outline:2px dashed var(--accent);outline-offset:1px}
+.lanes{display:flex;gap:12px;overflow-x:auto;padding-bottom:6px;align-items:flex-start}
+.lane{flex:0 0 220px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:6px;min-height:80px;display:flex;flex-direction:column;gap:6px}
+.lane .lh{font-size:12px;font-weight:600;padding:2px 4px 4px;border-bottom:1px solid var(--line)}
+.lcard{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12.5px}
+.lcard[draggable="true"]{cursor:grab}.lcard.live{border-color:var(--ok)}.lcard.wait{opacity:.85}
+.lcard .lt{display:flex;gap:6px;align-items:center;font-family:var(--mono);font-size:12px}
+.lcard .lt .pin{margin-left:auto;text-decoration:none}
+.lcard .ln{font-weight:600;margin:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

@@ -6,7 +6,7 @@
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap">
-<link rel="stylesheet" href="/static/app.css?v=110">
+<link rel="stylesheet" href="/static/app.css?v=111">
 </head>
 <body>
 
@@ -385,6 +385,22 @@
       <div class="topbar"><div><div class="title">🏆 Turnier <span class="hint" id="tourStatus"></span></div><div class="sub">CS2 Wingman (2 gegen 2) – Teams, Spielplan, Server und Ergebnisse automatisch. CS #1 bleibt unberührt.</div></div>
         <div style="margin-left:auto" class="row" id="tourBtns"><button id="tourGen">Spielplan erstellen</button><button class="primary" id="tourStart">▶ Turnier starten</button><button id="tourStop">⏸ Anhalten</button><button class="danger small" id="tourReset">Spielplan löschen</button></div></div>
       <div class="content" style="max-width:1300px">
+        <div class="panel" id="tourLib" style="margin-bottom:16px">
+          <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+            <b>Gespeicherte Turniere</b>
+            <select id="tlSel" style="min-width:260px"></select>
+            <button class="small" id="tlLoad">Laden</button>
+            <button class="small danger" id="tlDel">Löschen</button>
+            <span style="flex:1"></span>
+            <button class="small" id="tlSave" title="Aktuelles Turnier (Einstellungen, Teilnehmer, Teams, Spielplan, Ergebnisse) in der Liste speichern">💾 Speichern unter …</button>
+            <select id="tlTpl" title="Vorlage für ein neues Turnier"><option value="">ohne Vorlage</option></select>
+            <button class="small primary" id="tlNew" title="Neues, leeres Turnier – das aktuelle wird vorher gespeichert">+ Neues Turnier</button>
+          </div>
+          <div class="row hint" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
+            Vorlagen (nur Einstellungen: Modus, Maps, Zeiten, Parallel-Optionen …): <span id="tlTpls"></span>
+            <button class="small" id="tlTplSave">Einstellungen als Vorlage speichern</button>
+          </div>
+        </div>
         <div class="grid2">
           <div class="panel">
             <h2>Einstellungen</h2>
@@ -439,7 +455,8 @@
             <li>Neuer Streamschlüssel? Dann die exe neu herunterladen (die Einstellungen stecken in der Datei).</li>
           </ol></details>
         </div>
-        <div class="panel" style="margin-top:16px"><h2>Spielplan &amp; Ergebnisse</h2><div id="tourBoard"></div></div>
+        <div class="panel" style="margin-top:16px"><h2>Ablaufplan <span class="hint">– Spiele ziehen: auf ein anderes Spiel = davor einplanen (und auf dessen Server), in eine Spalte = fest auf diesen Server. 📌 = fest zugeordnet (Klick löst)</span></h2><div id="tourLanes"></div></div>
+        <div class="panel" style="margin-top:16px"><h2>Spielplan &amp; Ergebnisse <span class="hint">– Teams lassen sich per Drag &amp; Drop tauschen (erste Runde / Gruppen, solange nicht gespielt)</span></h2><div id="tourBoard"></div></div>
       </div>
     </section>
 
@@ -949,6 +966,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=142"></script>
+<script src="/static/app.js?v=143"></script>
 </body>
 </html>
