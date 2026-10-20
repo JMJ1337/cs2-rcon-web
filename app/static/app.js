@@ -1413,6 +1413,10 @@ const GQ = {
     quick: [["Runde neu starten","mp_restartgame 1","primary"]], hint: "nmo_ = Objective, nms_ = Survival – der Modus ergibt sich aus der Map."},
   zps: {...GQ_SRC, maps: ["zpo_biotec","zps_cinema","zps_harvest"], quick: [["Runde neu starten","mp_restartgame 1","primary"]]},
   fof: {...GQ_SRC, maps: ["fof_fistful","fof_depot","fof_robertlee","fof_tortuga"], quick: [["Runde neu starten","mp_restartgame 1","primary"]],
+    bots: {teams: null, classes: null, diffs: null, add: null, kick: "fof_sv_bot_slotpct 0; fof_sv_bot_dynamicjoin 0",
+      quota: q => `fof_sv_bot_dynamicjoin ${q ? 1 : 0}; fof_sv_bot_slotpct ${(Math.min(100, q) / 100).toFixed(2)}`,
+      quotaLabel: ["Bots füllen", "% der Slots (0 = aus)"], quotaDefault: 40,
+      hint: "FoF-Bots kommen, sobald ein Spieler drauf ist, und gehen nach und nach, wenn mehr Spieler joinen."},
     limits: [["mp_timelimit","Zeitlimit (Min.)"],["mp_fraglimit","Fraglimit"]]},
   pvkii: {...GQ_SRC, maps: ["bt_island"], quick: [["Runde neu starten","mp_restartgame 1","primary"]]},
   asrd: {maps: ["lobby"], quick: [], hint: "Missionen startet der Lobby-Leiter im Spiel."},
@@ -1424,7 +1428,7 @@ const GQ = {
       "cs_italy_cz","cs_office_cz","cs_militia_cz","cs_havana_cz","cs_siege_cz","as_oilrig"],
     quick: [["Runde neu starten","sv_restartround 1","primary"], ["Match neu starten","sv_restart 1"], ["Friendly Fire an","mp_friendlyfire 1"], ["Friendly Fire aus","mp_friendlyfire 0"]],
     bots: GQ_CSBOTS, limits: [["mp_timelimit","Zeitlimit (Min.)"],["mp_maxrounds","Runden"],["mp_winlimit","Siege"]]},
-  dod: {maps: ["dod_anzio","dod_avalanche","dod_caen","dod_charlie","dod_chemille","dod_donner","dod_escape","dod_falaise","dod_flash","dod_flugplatz","dod_forest",
+  dod: {hint: "DoD hat keine eingebauten Bots – die alten Bot-Plugins (Sturmbot …) laufen mit dem heutigen Steam-HLDS nicht mehr.", maps: ["dod_anzio","dod_avalanche","dod_caen","dod_charlie","dod_chemille","dod_donner","dod_escape","dod_falaise","dod_flash","dod_flugplatz","dod_forest",
       "dod_glider","dod_jagd","dod_kalt","dod_kraftstoff","dod_merderet","dod_northbound","dod_saints","dod_sturm","dod_switch","dod_vicenza","dod_zalec"],
     quick: [["Runde neu starten","sv_restartround 1","primary"]], limits: [["mp_timelimit","Zeitlimit (Min.)"]]},
   tfc: {maps: ["2fort","well","rock2","dustbowl","hunted","warpath","cz2","avanti","badlands","crossover2","epicenter","flagrun","push","ravelin","casbah"],
@@ -1492,8 +1496,12 @@ function renderGq(){
   $("#gqBotBox").classList.toggle("hidden", !b);
   if (b){
     const opt = (sel, arr) => { $(sel).classList.toggle("hidden", !arr); if (arr) $(sel).innerHTML = arr.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join(""); };
-    opt("#gqBotTeam", b.teams); opt("#gqBotClass", b.classes); opt("#gqBotDiff", b.diffs);
+    opt("#gqBotTeam", b.add && b.teams); opt("#gqBotClass", b.add && b.classes); opt("#gqBotDiff", b.add && b.diffs);
+    ["#gqBotN", "#btnGqBotAdd"].forEach(x => $(x).classList.toggle("hidden", !b.add));
     $("#gqQuotaRow").classList.toggle("hidden", !b.quota);
+    const ql = b.quotaLabel || ["Auffüllen auf", "Spieler (0 = aus)"];
+    $("#gqQuotaRow .hint:first-child").textContent = ql[0]; $("#gqQuotaRow .hint:nth-of-type(2)").textContent = ql[1];
+    $("#gqBotQuota").max = b.quotaLabel ? 100 : 31; $("#gqBotQuota").value = b.quotaDefault || 10;
     $("#gqBotHint").textContent = b.hint || "";
   }
   $("#gqLimitBox").classList.toggle("hidden", !d.limits);
@@ -1539,8 +1547,8 @@ function renderGq(){
   $("#btnGqBotKick").onclick = () => { const b = gqDef()?.bots; if (b && confirm("Alle Bots entfernen?")) gqSend(b.kick, "Bots entfernt"); };
   $("#btnGqBotQuota").onclick = () => {
     const b = gqDef()?.bots; if (!b?.quota) return;
-    const q = Math.max(0, Math.min(31, parseInt($("#gqBotQuota").value) || 0));
-    gqSend(b.quota(q), q ? `Bots füllen auf ${q} auf` : "Bot-Auffüllen aus");
+    const q = Math.max(0, Math.min(b.quotaLabel ? 100 : 31, parseInt($("#gqBotQuota").value) || 0));
+    gqSend(b.quota(q), q ? `Bots: ${q}${b.quotaLabel ? " %" : ""}` : "Bot-Auffüllen aus");
   };
   $("#btnGqSay").onclick = async () => {
     const t = $("#gqSayText").value.trim().replace(/[";]/g, ""); if (!t) return;
