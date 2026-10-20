@@ -3771,10 +3771,32 @@ async def tour_test(data: TourTestIn, request: Request):
         d["servers"] = [f"sim-{i + 1}" for i in range(tour.needed_servers(d))]
         d["match_min"], d["pause_min"] = max(1, round(data.match_sec / 60)), 0
     else:
-        d["servers"] = [s["id"] for s in _tour_pool()]
-        if not d["servers"]:
-            raise HTTPException(400, "Keine CS-Server außer CS #1 – für den Bot-Test mindestens einen weiteren CS-Server anlegen")
         d["match_min"], d["pause_min"] = 20, 2
+        pool = _tour_pool()
+        need = tour.needed_servers(d)
+        missing = need - len(pool) - _cs2_creating()
+        creating = 0
+        if missing > 0:                                    # fehlende Server anlegen wie beim echten Start
+            try:
+                if await _tour_create_servers(min(10, missing)):
+                    creating = min(10, missing)
+            except HTTPException as e:
+                raise HTTPException(e.status_code, f"Server anlegen: {e.detail}")
+        if not pool and not creating and not _cs2_creating():
+            raise HTTPException(400, "Konnte keine CS2-Server anlegen (Vorlage fehlt?) – bitte einen CS2-Server von Hand anlegen")
+        for s in pool:                                     # ausgeschaltete starten
+            if not (_state.get(s["id"]) or {}).get("online"):
+                try:
+                    await wake_server(s)
+                except HTTPException:
+                    pass
+        d["servers"] = [s["id"] for s in pool]
+        d.update(registration=False, start=time.time(), active=True)
+        if not _tour_servercheck(d, pool)["ok"]:
+            d["status"] = "waiting"                        # startet automatisch, sobald alle Server online sind
+            tour.save(d)
+            return {"ok": True, "matches": len(d["matches"]), "servers": len(pool), "waiting": True, "need": need,
+                    "creating": creating}
     d.update(status="running", registration=False, start=time.time(), active=True)
     tour.plan(d)
     tour.save(d)

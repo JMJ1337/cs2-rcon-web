@@ -3757,7 +3757,8 @@ $("#ttStart").onclick = async () => {
   if (!confirm(`Test mit ${n} Bot-Teams starten (${kind === "sim" ? "simuliert" : "Bots auf den Servern"})? Dein Turnier wird gesichert und danach wiederhergestellt.`)) return;
   await saveTourSettingsSilently();
   const r = await tourCall("/api/tournament/test", {body: {teams: n, kind, match_sec: +$("#ttSec").value || 60, mode: $("#tourMode").value}});
-  if (r) toast(`Test läuft: ${r.matches} Matches auf ${r.servers} ${kind === "sim" ? "Testservern" : "Servern"}`);
+  if (r) toast(r.waiting ? `Test wartet auf Server: ${r.servers} da, ${r.need} nötig${r.creating ? `, ${r.creating} werden angelegt` : ""} – startet dann automatisch`
+                         : `Test läuft: ${r.matches} Matches auf ${r.servers} ${kind === "sim" ? "Testservern" : "Servern"}`);
 };
 $("#ttEnd").onclick = () => confirm("Test beenden und echtes Turnier wiederherstellen?") && tourCall("/api/tournament/test/end", {method: "POST"}, "Test beendet").then(() => { tourLoaded = false; });
 async function saveTourSettingsSilently(){

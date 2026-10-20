@@ -420,7 +420,7 @@
             <label id="ttSecL">Spielzeit je Match bis <input type="number" id="ttSec" min="15" max="600" value="60" style="width:70px"> s</label>
             <button class="primary" id="ttStart">Test starten</button><button class="danger" id="ttEnd">Test beenden</button>
           </div>
-          <div class="hint" style="margin-top:6px">Modus wie oben eingestellt. „Bots auf den Servern“ nutzt die CS-Server außer CS #1: je Match wird wie echt über MatchZy geladen, 4 Bots füllen die Teams und das Match wird automatisch gestartet (Bots melden sich nie „bereit“). Ergebnis wie im echten Turnier (ca. 15–20 min pro Match).</div>
+          <div class="hint" style="margin-top:6px">Modus wie oben eingestellt. „Bots auf den Servern“ nutzt die CS-Server außer CS #1 (fehlende werden angelegt, ausgeschaltete gestartet; der Test beginnt, sobald alle online sind): je Match wird wie echt über MatchZy geladen, 4 Bots füllen die Teams und das Match wird automatisch gestartet (Bots melden sich nie „bereit“). Ergebnis wie im echten Turnier (ca. 15–20 min pro Match).</div>
         </div>
         <div class="panel" style="margin-top:16px" id="streamPanel"><h2>📺 Live-Stream im Browser <span class="hint" id="stStatus"></span></h2>
           <div class="pfopts">
@@ -947,6 +947,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=136"></script>
+<script src="/static/app.js?v=137"></script>
 </body>
 </html>
