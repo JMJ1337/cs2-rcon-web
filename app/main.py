@@ -2892,11 +2892,18 @@ async def _monitor_once() -> None:
                 notify.fire(f"🔴 {name} antwortet seit {int((now - m['down_since']) // 60)} min nicht." + (f" ({err})" if err else ""),
                             event="server_down", key=f"down-{sid}")
         # Installation fertig
+        # nur melden, wenn wirklich etwas heruntergeladen wurde – nicht beim bloßen Prüfen der Dateien
+        # (SteamCMD „verifying install“ bei jedem Start, Aufwachen aus dem Ruhemodus usw.)
         if inst:
             m["inst"] = True
+            if inst.get("phase") == "downloading" and (inst.get("total") or 0) > 50 * 2**20:
+                m["inst_dl"] = max(m.get("inst_dl") or 0, inst.get("total") or 0)
         elif m["inst"] and st.get("online"):
             m["inst"] = False
-            notify.fire(f"✅ {name}: Installation/Update fertig, Server läuft.", event="install_done", key=f"inst-{sid}-{int(now // 600)}")
+            dl = m.pop("inst_dl", 0)
+            if dl:
+                notify.fire(f"✅ {name}: Update installiert ({dl / 2**30:.1f} GB), Server läuft.", event="install_done",
+                            key=f"inst-{sid}-{int(now // 600)}")
         # neue Fehler im Log
         probs = {p.get("title") for p in diagnostics.relevant((diagnostics.state.get(c or "") or {}).get("problems") or [],
                                                               bool(st.get("online")))} if c else set()
