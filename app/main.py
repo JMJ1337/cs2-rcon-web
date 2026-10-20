@@ -5290,7 +5290,9 @@ class MatchIn(BaseModel):
 
 
 def build_match(data: MatchIn) -> dict:
-    db = {p["steamid"]: playerdb.display(p) for p in playerdb.all_players() if p.get("steamid")}
+    # MatchZy/Get5 setzen den Spielernamen im Spiel auf den Namen aus der Match-Konfiguration. Ein leerer Name heißt
+    # „nicht erzwingen“ – so behält jeder seinen eigenen Steam-Namen.
+    db: dict = {}
     maps = [re.sub(r"[^\w\-/]", "", m) for m in data.maplist if m.strip()]
     if len(maps) < data.num_maps:
         raise HTTPException(400, f"Mindestens {data.num_maps} Map(s) in der Mapliste nötig")
@@ -5308,8 +5310,8 @@ def build_match(data: MatchIn) -> dict:
              for k, v in merged.items() if re.fullmatch(r"[A-Za-z0-9_]+", k) and str(v).strip() != ""}
     cfg = {
         "matchid": int(time.time()) % 10_000_000,
-        "team1": {"name": data.team1.name, "players": {p: db.get(p, p) for p in data.team1.players}},
-        "team2": {"name": data.team2.name, "players": {p: db.get(p, p) for p in data.team2.players}},
+        "team1": {"name": data.team1.name, "players": {p: db.get(p, "") for p in data.team1.players}},
+        "team2": {"name": data.team2.name, "players": {p: db.get(p, "") for p in data.team2.players}},
         "num_maps": data.num_maps,
         "maplist": maps,
         "skip_veto": data.skip_veto,
@@ -5321,7 +5323,7 @@ def build_match(data: MatchIn) -> dict:
     if data.players_per_team == 2:
         cfg["wingman"] = True
     if data.spectators:
-        cfg["spectators"] = {"players": {p: db.get(p, p) for p in data.spectators}}
+        cfg["spectators"] = {"players": {p: db.get(p, "") for p in data.spectators}}
     return cfg
 
 
