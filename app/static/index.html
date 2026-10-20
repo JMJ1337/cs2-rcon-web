@@ -6,7 +6,7 @@
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap">
-<link rel="stylesheet" href="/static/app.css?v=115">
+<link rel="stylesheet" href="/static/app.css?v=116">
 </head>
 <body>
 
@@ -82,7 +82,7 @@
       <button data-view="storage" class="adminonly">🖴 Speicher (iSCSI)</button>
       <button data-view="scan">⌕ Netzwerk-Scan <span class="pill hidden" id="scanBadge"></span></button>
       <button data-view="create" class="createonly">＋ Neuen Server anlegen</button>
-      <button data-view="tour" class="adminonly">🏆 Turnier</button>
+      <button data-view="tour" class="touronly">🏆 Turnier</button>
       <button data-view="bot" class="adminonly">🤖 Steam-Bot</button>
       <button data-view="api" class="adminonly">🔌 API</button>
       <button data-view="users" class="adminonly">☰ Benutzer</button>
@@ -278,7 +278,14 @@
             <span class="row" style="gap:8px;align-items:center"><label class="hint" style="display:flex;gap:4px;align-items:center"><input type="checkbox" id="plOnlyOn" style="width:auto"> nur online</label><input id="plFilter" placeholder="Suchen (Name, SteamID, IP) …" style="max-width:240px"></span></div>
           <div id="plOnline" class="ploverview"></div>
           <div class="row" style="gap:8px;margin-bottom:8px;align-items:center"><button class="small" id="btnPlSyncAdmins" title="Admins (mit SteamID) in die Admin-Listen der Server schreiben: CS2 (CounterStrikeSharp + MatchZy), Wreckfest, Valheim">Admin-Listen jetzt abgleichen</button><span class="hint" id="plAdminLog"></span></div>
-          <div style="overflow:auto"><table class="pltable"><thead><tr><th></th><th>Nickname</th><th>Erkannt als</th><th>Gerade auf</th><th>SteamID64</th><th title="Auf der LAN? Automatisch nach IP (LAN-IP = ja, Internet-IP = nein) – Haken setzen/entfernen überschreibt das">LAN</th><th>LAN-IP</th><th>Online-IP</th><th>Admin</th><th>Zuletzt</th><th></th></tr></thead><tbody id="plRows"></tbody></table></div>
+          <div class="row plbulk" id="plBulk" style="gap:6px;margin-bottom:8px;align-items:center;flex-wrap:wrap">
+            <span class="hint" id="plSelCount">0 ausgewählt</span>
+            <button class="small" data-plbulk="lan">LAN an</button><button class="small" data-plbulk="nolan">LAN aus</button><button class="small" data-plbulk="lanauto">LAN automatisch</button>
+            <button class="small danger" data-plbulk="delete">Löschen</button>
+            <button class="small danger" data-plbulk="ignore" title="Löschen und nicht wieder automatisch eintragen, wenn sie erneut auf einem Server gesehen werden">Löschen + nicht mehr erfassen</button>
+            <a href="#" class="hint" id="plUnignore" style="margin-left:auto" title="Ignorierte Spieler werden wieder automatisch erfasst">Ignorierliste leeren</a>
+          </div>
+          <div style="overflow:auto"><table class="pltable"><thead><tr><th><input type="checkbox" id="plSelAll" style="width:auto" title="alle (gefilterten) auswählen"></th><th></th><th>Nickname</th><th>Erkannt als</th><th>Gerade auf</th><th>SteamID64</th><th title="Auf der LAN? Automatisch nach IP (LAN-IP = ja, Internet-IP = nein) – Haken setzen/entfernen überschreibt das">LAN</th><th>LAN-IP</th><th>Online-IP</th><th>Admin</th><th>Zuletzt</th><th></th></tr></thead><tbody id="plRows"></tbody></table></div>
           <div class="hint" style="margin-top:6px">Nickname leer lassen = automatischer Name (TeamSpeak-Name, sonst Spielname). „⇄“ führt zwei Einträge derselben Person zusammen (z. B. TeamSpeak-Eintrag + Steam-Eintrag).</div>
         </div>
       </div>
@@ -974,6 +981,8 @@
     <h2>Rechte für <span id="permUser"></span></h2>
     <div class="hint" id="permHints" style="margin-bottom:10px"></div>
     <div class="permgrid" id="permGrid"></div>
+    <h3 style="margin:14px 0 6px">Sonderrechte</h3>
+    <div id="permRights" class="pfopts"></div>
     <div class="row" style="justify-content:flex-end;margin-top:12px"><button type="button" id="btnPermCancel">Abbrechen</button><button class="primary" type="submit">Speichern</button></div>
   </form>
 </dialog>
@@ -999,6 +1008,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=155"></script>
+<script src="/static/app.js?v=157"></script>
 </body>
 </html>

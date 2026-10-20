@@ -138,6 +138,8 @@ def seen(*, steamid: str = "", name: str = "", ip: str = "", sid: str = "", serv
         return None
     if name in ("", "?", "(verbindet …)", "(lädt …)") and not steamid and not ts_uid:
         return None
+    if _ignored_key(steamid, ts_uid, name, game):     # gelöscht mit „nicht mehr erfassen“
+        return None
     ip = _ip_only(ip)
     t = t or time.time()
     p = _find(steamid, "" if ts_uid else name, ip, ts_uid, game)
@@ -239,11 +241,35 @@ def set_nick(pid: str, nick: str) -> dict:
     return p
 
 
-def remove(pid: str) -> None:
+IGNORE_FILE = "players_ignored.json"
+
+
+def ignored() -> list[str]:
+    return store.load(IGNORE_FILE, [])
+
+
+def _ignored_key(steamid: str = "", ts_uid: str = "", name: str = "", game: str = "") -> bool:
+    ig = set(ignored())
+    return bool(ig) and ((steamid and steamid in ig) or (ts_uid and f"ts:{ts_uid}" in ig) or (name and f"n:{game}:{name}" in ig))
+
+
+def remove(pid: str, ignore: bool = False) -> None:
+    """Spieler löschen. ignore=True: nicht wieder automatisch eintragen, wenn er erneut gesehen wird."""
     global _cache
+    if ignore:
+        p = get(pid)
+        keys = {pid}
+        if p:
+            keys |= {k for k in (p.get("steamid"), f"ts:{p['ts_uid']}" if p.get("ts_uid") else None) if k}
+            keys |= {f"n:{g}:{n}" for g in (p.get("games") or []) for n in (p.get("names") or [])}
+        store.save(IGNORE_FILE, sorted(set(ignored()) | keys)[-2000:])
     _cache = [x for x in _load() if x["id"] != pid and x.get("steamid") != pid]
     _mark()
     save(True)
+
+
+def unignore_all() -> None:
+    store.save(IGNORE_FILE, [])
 
 
 def add_manual(steamid: str, name: str, avatar: str) -> dict:

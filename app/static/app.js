@@ -1550,6 +1550,25 @@ async function loadHistory(){
 
 /* ================= Spieler-Verwaltung ================= */
 let plTimer = null, plMerge = null;
+// Mehrfachauswahl in der Spielerliste
+const plSel = new Set(); let plVisible = [];
+function plSelInfo(){
+  $("#plSelCount").textContent = `${plSel.size} ausgewählt`;
+  $$("[data-plbulk]").forEach(b => b.disabled = !plSel.size);
+  const all = $("#plSelAll"); if (all){ const vis = plVisible.filter(id => plSel.has(id)).length; all.checked = !!plVisible.length && vis === plVisible.length; all.indeterminate = vis > 0 && vis < plVisible.length; }
+}
+$("#plSelAll").onchange = e => { plVisible.forEach(id => e.target.checked ? plSel.add(id) : plSel.delete(id)); renderPlayerRows(); };
+$$("[data-plbulk]").forEach(b => b.onclick = async () => {
+  const a = b.dataset.plbulk, n = plSel.size; if (!n) return;
+  const txt = {lan: "als „auf der LAN“ markieren", nolan: "als „nicht auf der LAN“ markieren", lanauto: "LAN-Erkennung wieder automatisch (nach IP)",
+               delete: "löschen", ignore: "löschen und nicht mehr automatisch erfassen"}[a];
+  if (!confirm(`${n} Spieler ${txt}?`)) return;
+  try { players = await api("/api/players-bulk", {body: {ids: [...plSel], action: a}}); if (a === "delete" || a === "ignore") plSel.clear(); toast("Erledigt"); }
+  catch (e) { toast(e.message, true); }
+  renderPlayerRows();
+});
+$("#plUnignore").onclick = async e => { e.preventDefault(); if (!confirm("Ignorierliste leeren? Gelöschte Spieler werden dann wieder erfasst, sobald sie auftauchen.")) return;
+  try { await api("/api/players-ignored/clear", {method: "POST"}); toast("Ignorierliste geleert"); } catch (er) { toast(er.message, true); } };
 async function loadPlayers(){
   clearTimeout(plTimer);
   try { players = await api("/api/players"); } catch(err){ toast(err.message, true); }
@@ -1568,7 +1587,10 @@ function renderPlayerRows(){
   on.forEach(p => p.online.forEach(o => { (bySrv[o.sid] = bySrv[o.sid] || {o, list: []}).list.push(p); }));
   $("#plOnline").innerHTML = Object.values(bySrv).map(({o, list}) => `<div class="plsrv">${gameTile(o.game, 16)}<b>${esc(o.server)}</b><span class="hint">${list.length}</span>
     <div>${list.map(p => `<span class="pill ok" title="${esc([p.steamid, p.lan_ip, p.wan_ip].filter(Boolean).join(" · "))}">${esc(p.name)}</span>`).join(" ")}</div></div>`).join("") || `<div class="hint">Gerade ist niemand auf einem Server.</div>`;
-  $("#plRows").innerHTML = list.length ? list.map(p => `<tr class="${(p.online || []).length ? "plon" : ""}${plMerge === p.id ? " plmerge" : ""}">
+  plVisible = list.map(p => p.id);
+  for (const id of [...plSel]) if (!players.some(p => p.id === id)) plSel.delete(id);
+  $("#plRows").innerHTML = list.length ? list.map(p => `<tr class="${(p.online || []).length ? "plon" : ""}${plMerge === p.id ? " plmerge" : ""}${plSel.has(p.id) ? " plsel" : ""}">
+    <td><input type="checkbox" data-plsel="${esc(p.id)}" ${plSel.has(p.id) ? "checked" : ""} style="width:auto"></td>
     <td>${p.avatar ? `<img class="avatar" src="${esc(p.avatar)}" alt="">` : `<span class="avatar" style="display:inline-block"></span>`}</td>
     <td><input value="${esc(p.nick || "")}" placeholder="${esc(p.name)}" data-rename="${esc(p.id)}" style="max-width:180px"></td>
     <td class="hint">${(p.names || []).slice(-3).map(esc).join(", ")}${p.ts_name ? ` <span class="pill" title="TeamSpeak">🎧 ${esc(p.ts_name)}</span>` : ""}</td>
@@ -1579,12 +1601,14 @@ function renderPlayerRows(){
     <td>${(p.admin_eff || []).length ? `<span class="pill warn" title="${esc((p.admin_eff || []).map(g => g === "*" ? "alle Spiele" : (GAMES[g]?.label || g)).join(", "))}${p.user ? " · Konto " + esc(p.user) : ""}">★ ${(p.admin_eff || []).includes("*") ? "alle" : (p.admin_eff || []).map(g => GAMES[g]?.short || g).join(", ")}</span>` : ""}</td>
     <td class="hint" title="${p.last_seen ? new Date(p.last_seen * 1000).toLocaleString("de-DE") : ""}">${agoTxt(p.last_seen)}</td>
     <td style="white-space:nowrap"><button class="small" data-pledit="${esc(p.id)}" title="bearbeiten">✎</button><button class="small" data-plmerge="${esc(p.id)}" title="${plMerge ? (plMerge === p.id ? "Zusammenführen abbrechen" : "in den markierten Eintrag übernehmen") : "mit anderem Eintrag zusammenführen"}">⇄</button><button class="small danger" data-pldel="${esc(p.id)}">✕</button></td></tr>`).join("")
-    : `<tr><td colspan="11" class="muted">${players.length ? "Keine Treffer." : "Noch keine Spieler – sie erscheinen automatisch, sobald jemand auf einen Server kommt."}</td></tr>`;
+    : `<tr><td colspan="12" class="muted">${players.length ? "Keine Treffer." : "Noch keine Spieler – sie erscheinen automatisch, sobald jemand auf einen Server kommt."}</td></tr>`;
+  $$("[data-plsel]").forEach(c => c.onchange = () => { c.checked ? plSel.add(c.dataset.plsel) : plSel.delete(c.dataset.plsel); c.closest("tr").classList.toggle("plsel", c.checked); plSelInfo(); });
+  plSelInfo();
   $$("[data-rename]").forEach(i => i.onchange = async () => { players = await api(`/api/players/${encodeURIComponent(i.dataset.rename)}`, {method: "PUT", body: {name: i.value.trim()}}); toast("Nickname gespeichert"); renderPlayerRows(); });
   $$("[data-pledit]").forEach(b => b.onclick = () => openPlayerEdit(b.dataset.pledit, b.closest("tr")));
   $$("[data-pllan]").forEach(c => c.onchange = async () => { try { players = await api(`/api/players/${encodeURIComponent(c.dataset.pllan)}/lan`, {body: {lan: c.checked}}); renderPlayerRows(); } catch (e) { toast(e.message, true); } });
   $$("[data-pllanauto]").forEach(a => a.onclick = async e => { e.preventDefault(); try { players = await api(`/api/players/${encodeURIComponent(a.dataset.pllanauto)}/lan`, {body: {lan: null}}); renderPlayerRows(); } catch (er) { toast(er.message, true); } });
-  $$("[data-pldel]").forEach(b => b.onclick = async () => { if (!confirm("Spieler löschen?")) return; players = await api(`/api/players/${encodeURIComponent(b.dataset.pldel)}`, {method: "DELETE"}); renderPlayerRows(); });
+  $$("[data-pldel]").forEach(b => b.onclick = async () => { if (!confirm("Spieler löschen? (Taucht er wieder auf einem Server auf, wird er neu erfasst – dauerhaft: Haken setzen und „Löschen + nicht mehr erfassen“.)")) return; players = await api(`/api/players/${encodeURIComponent(b.dataset.pldel)}`, {method: "DELETE"}); renderPlayerRows(); });
   $$("[data-plmerge]").forEach(b => b.onclick = async () => {
     const id = b.dataset.plmerge;
     if (!plMerge || plMerge === id){ plMerge = plMerge === id ? null : id; if (plMerge) toast("Jetzt beim zweiten Eintrag derselben Person auf ⇄ klicken"); return renderPlayerRows(); }
@@ -2268,7 +2292,7 @@ async function loadUsers(){
     $("#uRows").innerHTML = r.users.map(u => `<tr>
       <td><b>${esc(u.username)}</b>${me && u.username === me.username ? ' <span class="pill">du</span>' : ""}${u.player ? `<div class="hint">🎮 ${esc(u.player)}</div>` : ""}</td>
       <td><select data-urole="${esc(u.username)}">${Object.entries(r.roles).map(([k,l]) => `<option value="${k}" ${k===u.role?"selected":""}>${esc(l)}</option>`).join("")}</select></td>
-      <td>${u.role === "admin" ? `<span class="hint">alles</span>` : `<span class="hint">${esc(permSummary(u.perms, r.levels))}</span> <button class="small" data-uperm="${esc(u.username)}">Rechte …</button>`}</td>
+      <td>${u.role === "admin" ? `<span class="hint">alles</span>` : `<span class="hint">${esc(permSummary(u.perms, r.levels))}${(u.rights || []).includes("tournament") ? " · 🏆 Turnier" : ""}</span> <button class="small" data-uperm="${esc(u.username)}">Rechte …</button>`}</td>
       <td>${u.created ? fmtDate(u.created) : "–"}</td><td>${u.last_login ? fmtDate(u.last_login) : "nie"}</td>
       <td><button class="small" data-upw="${esc(u.username)}">Passwort setzen</button> <button class="small danger" data-udel="${esc(u.username)}">Löschen</button></td></tr>`).join("");
     $$("[data-urole]").forEach(sel => sel.onchange = async () => {
@@ -2305,6 +2329,8 @@ function openPerms(u, r){
   const games = Object.entries(GAMES).sort((a, b) => a[1].label.localeCompare(b[1].label));
   $("#permGrid").innerHTML = `<label class="permrow permall"><span><b>Alle Spiele (Standard)</b></span><select data-pg="*">${opts(p["*"] ?? 0, false)}</select></label>` +
     games.map(([k, g]) => `<label class="permrow"><span><span class="gtile" style="background:${g.color};width:16px;height:16px">${gicon(k, 11)}</span>${esc(g.label)}</span><select data-pg="${k}">${opts(k in p ? p[k] : null, true)}</select></label>`).join("");
+  const rr = r.rights || {};
+  $("#permRights").innerHTML = Object.entries(rr).map(([k, l]) => `<label><input type="checkbox" data-pr="${k}" ${(u.rights || []).includes(k) ? "checked" : ""}> ${esc(l)}</label>`).join("") || `<span class="hint">–</span>`;
   $("#dlgPerm").showModal();
 }
 $("#btnPermCancel").onclick = () => $("#dlgPerm").close();
@@ -2313,7 +2339,8 @@ $("#permForm").addEventListener("submit", async e => {
   const perms = {};
   $$("#permGrid [data-pg]").forEach(sel => { if (sel.value !== "") perms[sel.dataset.pg] = +sel.value; });
   try {
-    await api(`/api/users/${permEditing}`, {method: "PUT", body: {username: permEditing, perms}});
+    const rights = $$("#permRights [data-pr]").filter(c => c.checked).map(c => c.dataset.pr);
+    await api(`/api/users/${permEditing}`, {method: "PUT", body: {username: permEditing, perms, rights}});
     $("#dlgPerm").close(); toast("Rechte gespeichert"); loadUsers();
   } catch(err){ toast(err.message, true); }
 });
@@ -2431,6 +2458,7 @@ async function start(){
     me = m.user; GAMES = g.games; dockerOn = g.docker;
     loadGameIcons().then(() => { renderServerList(); if (view === "dash") refreshDash(); });
     document.body.classList.toggle("not-admin", !me || me.role !== "admin");
+    document.body.classList.toggle("no-tour", !me || !(me.role === "admin" || (me.rights || []).includes("tournament")));
     const allGames = Object.keys(GAMES);
     document.body.classList.toggle("no-create", !allGames.some(g => permFor(g) >= 4));
     applyPerm(4);

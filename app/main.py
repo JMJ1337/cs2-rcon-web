@@ -152,6 +152,8 @@ def require_auth(request: Request):
     path, method = request.url.path, request.method
     if path.startswith("/api/me"):
         return u
+    if path.startswith(("/api/tournament", "/api/stream")) and "tournament" in (u.get("rights") or []):
+        return u                                  # Sonderrecht Turnier (Prüfung im Endpunkt)
     if path.startswith(ADMIN_PATHS) and not (path in ("/api/settings", "/api/scan") and method == "GET"):
         raise HTTPException(403, "Nur für Administratoren")
     m = re.fullmatch(r"/api/servers/([\w-]+)(/.*)?", path)
@@ -497,18 +499,26 @@ def _need_admin(request: Request) -> None:
         raise HTTPException(403, "Nur für Administratoren")
 
 
+def _need_right(request: Request, right: str) -> None:
+    """Sonderrecht (z. B. „tournament“: Turniere anlegen/bearbeiten, Live-Stream) – Admins haben alles."""
+    u = getattr(request.state, "user", None) or {}
+    if u.get("role") != "admin" and right not in (u.get("rights") or []):
+        raise HTTPException(403, "Keine Berechtigung für diesen Bereich")
+
+
 class UserIn(BaseModel):
     username: str = Field(min_length=1, max_length=32)
     password: str | None = Field(None, max_length=128)
     role: str | None = None
     perms: dict[str, int] | None = None
+    rights: list[str] | None = None
 
 
 @app.get("/api/users", dependencies=auth)
 async def list_users():
     linked = {p.get("user"): playerdb.display(p) for p in playerdb.all_players() if p.get("user")}
     return {"users": [{**users.public(u), "player": linked.get(u["username"])} for u in users.load()], "roles": users.ROLE_LABELS,
-            "levels": users.LEVELS, "level_hints": users.LEVEL_HINTS}
+            "levels": users.LEVELS, "level_hints": users.LEVEL_HINTS, "rights": users.RIGHTS}
 
 
 @app.post("/api/users", dependencies=auth)
@@ -516,7 +526,7 @@ async def add_user(data: UserIn):
     if users.find(data.username):
         raise HTTPException(400, "Benutzer existiert bereits")
     try:
-        return users.public(users.upsert(data.username, data.password, data.role or "user", data.perms))
+        return users.public(users.upsert(data.username, data.password, data.role or "user", data.perms, data.rights))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -526,7 +536,7 @@ async def update_user(username: str, data: UserIn):
     if not users.find(username):
         raise HTTPException(404, "Benutzer nicht gefunden")
     try:
-        return users.public(users.upsert(username, data.password or None, data.role, data.perms))
+        return users.public(users.upsert(username, data.password or None, data.role, data.perms, data.rights))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -3285,7 +3295,7 @@ class TourSettings(BaseModel):
 
 @app.get("/api/tournament", dependencies=auth)
 async def tour_get(request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     pool = _tour_pool()
     lan = [{"steamid": p["steamid"], "name": playerdb.display(p), "avatar": p.get("avatar")}
@@ -3330,7 +3340,7 @@ class TourServersIn(BaseModel):
 @app.post("/api/tournament/servers", dependencies=auth)
 async def tour_servers(data: TourServersIn, request: Request):
     """Vorschlag umsetzen: ausgeschaltete Turnier-Server starten und/oder fehlende neu anlegen."""
-    _need_admin(request)
+    _need_right(request, "tournament")
     _need_docker()
     started, errors = [], []
     if data.start_offline:
@@ -3348,7 +3358,7 @@ async def tour_servers(data: TourServersIn, request: Request):
 
 @app.put("/api/tournament", dependencies=auth)
 async def tour_put(data: TourSettings, request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     for k, v in data.model_dump(exclude_none=True).items():
         if k == "mode" and v not in tour.MODES:
@@ -3370,7 +3380,7 @@ class TourPlayerIn(BaseModel):
 
 @app.post("/api/tournament/players", dependencies=auth)
 async def tour_add_player(data: TourPlayerIn, request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     if not any(p["steamid"] == data.steamid for p in d["players"]):
         p = playerdb.get(data.steamid)
@@ -3382,7 +3392,7 @@ async def tour_add_player(data: TourPlayerIn, request: Request):
 
 @app.delete("/api/tournament/players/{steamid}", dependencies=auth)
 async def tour_del_player(steamid: str, request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     d["players"] = [p for p in d["players"] if p["steamid"] != steamid]
     for t in d["teams"]:
@@ -3400,7 +3410,7 @@ class TourTeamAdmin(BaseModel):
 
 @app.post("/api/tournament/teams", dependencies=auth)
 async def tour_team_save(data: TourTeamAdmin, request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     reg = {p["steamid"] for p in d["players"]}
     pl = [x for x in data.players if x in reg]
@@ -3419,7 +3429,7 @@ async def tour_team_save(data: TourTeamAdmin, request: Request):
 
 @app.delete("/api/tournament/teams/{tid}", dependencies=auth)
 async def tour_team_del(tid: str, request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     d["teams"] = [t for t in d["teams"] if t["id"] != tid]
     tour.save(d)
@@ -3429,7 +3439,7 @@ async def tour_team_del(tid: str, request: Request):
 @app.post("/api/tournament/generate", dependencies=auth)
 async def tour_generate(request: Request):
     """Spielplan erzeugen (Turnierbaum + Zeitplan). Geht nur, solange das Turnier nicht läuft."""
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     if d["status"] == "running":
         raise HTTPException(409, "Turnier läuft schon")
@@ -3466,7 +3476,7 @@ class TourStartIn(BaseModel):
 
 @app.post("/api/tournament/start", dependencies=auth)
 async def tour_start(request: Request, data: TourStartIn | None = None):
-    _need_admin(request)
+    _need_right(request, "tournament")
     data = data or TourStartIn()
     d = tour.load()
     if not d["matches"]:
@@ -3512,7 +3522,7 @@ def _tour_go(d: dict) -> None:
 @app.post("/api/tournament/stop", dependencies=auth)
 async def tour_stop(request: Request):
     """Turnier anhalten (zurück in die Vorbereitung) – Ergebnisse bleiben."""
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     d["status"] = "setup"
     _tour_names.clear()
@@ -3523,7 +3533,7 @@ async def tour_stop(request: Request):
 @app.post("/api/tournament/reset", dependencies=auth)
 async def tour_reset(request: Request):
     """Spielplan und Ergebnisse löschen (Teilnehmer und Teams bleiben)."""
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     d.update(matches=[], groups={}, status="setup", registration=True)
     _tour_names.clear()
@@ -3546,7 +3556,7 @@ class TourSwapIn(BaseModel):
 
 @app.post("/api/tournament/swap", dependencies=auth)
 async def tour_swap(data: TourSwapIn, request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     try:
         tour.swap(d, data.a, data.a_slot, data.b, data.b_slot)
@@ -3566,7 +3576,7 @@ class TourMoveIn(BaseModel):
 
 @app.post("/api/tournament/move", dependencies=auth)
 async def tour_move(data: TourMoveIn, request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     try:
         tour.move(d, data.mid, data.before, data.server)
@@ -3588,7 +3598,7 @@ def _tour_has_content(d: dict) -> bool:
 
 @app.get("/api/tournament/library", dependencies=auth)
 async def tour_library(request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     return {"tournaments": tour.library(), "templates": tour.templates(), "current": d.get("lib_id")}
 
@@ -3599,7 +3609,7 @@ class TourNameIn(BaseModel):
 
 @app.post("/api/tournament/library/save", dependencies=auth)
 async def tour_lib_save(data: TourNameIn, request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     if _tour_test(d):
         raise HTTPException(409, "Während eines Tests nicht speichern – erst Test beenden")
@@ -3610,7 +3620,7 @@ async def tour_lib_save(data: TourNameIn, request: Request):
 
 @app.post("/api/tournament/library/{lid}/load", dependencies=auth)
 async def tour_lib_load(lid: str, request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     if _tour_busy(d) or _tour_test(d):
         raise HTTPException(409, "Das aktuelle Turnier läuft – erst anhalten bzw. Test beenden")
@@ -3627,7 +3637,7 @@ async def tour_lib_load(lid: str, request: Request):
 
 @app.delete("/api/tournament/library/{lid}", dependencies=auth)
 async def tour_lib_delete(lid: str, request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     tour.lib_delete(lid)
     if d.get("lib_id") == lid:
@@ -3643,7 +3653,7 @@ class TourNewIn(BaseModel):
 
 @app.post("/api/tournament/new", dependencies=auth)
 async def tour_new(data: TourNewIn, request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     if _tour_busy(d) or _tour_test(d):
         raise HTTPException(409, "Das aktuelle Turnier läuft – erst anhalten bzw. Test beenden")
@@ -3659,20 +3669,20 @@ async def tour_new(data: TourNewIn, request: Request):
 
 @app.post("/api/tournament/templates", dependencies=auth)
 async def tour_tpl_save(data: TourNameIn, request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     return {"ok": True, "template": tour.template_save(tour.load(), data.name)}
 
 
 @app.delete("/api/tournament/templates/{tid}", dependencies=auth)
 async def tour_tpl_delete(tid: str, request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     tour.template_delete(tid)
     return {"ok": True}
 
 
 @app.post("/api/tournament/match/{mid}/result", dependencies=auth)
 async def tour_result(mid: str, data: TourResult, request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     try:
         m = tour.set_result(d, mid, data.s1, data.s2)
@@ -3686,7 +3696,7 @@ async def tour_result(mid: str, data: TourResult, request: Request):
 
 @app.post("/api/tournament/match/{mid}/reset", dependencies=auth)
 async def tour_match_reset(mid: str, request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     tour.reset_match(d, mid)
     tour.plan(d)
@@ -3697,7 +3707,7 @@ async def tour_match_reset(mid: str, request: Request):
 @app.post("/api/tournament/match/{mid}/load", dependencies=auth)
 async def tour_match_load(mid: str, request: Request):
     """Match sofort auf seinem Server laden (statt auf die geplante Zeit zu warten)."""
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     m = next((x for x in d["matches"] if x["id"] == mid), None)
     if not m or m["status"] not in ("ready", "live"):
@@ -3958,7 +3968,7 @@ class TourTestIn(BaseModel):
 @app.post("/api/tournament/test", dependencies=auth)
 async def tour_test(data: TourTestIn, request: Request):
     """Testturnier mit x Bot-Teams – das echte Turnier (Teilnehmer, Teams, Spielplan) wird vorher gesichert."""
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     if _tour_test(d):
         raise HTTPException(409, "Es läuft schon ein Test – erst beenden")
@@ -4022,7 +4032,7 @@ async def tour_test(data: TourTestIn, request: Request):
 @app.post("/api/tournament/test/end", dependencies=auth)
 async def tour_test_end(request: Request):
     """Test beenden: echtes Turnier wiederherstellen, Bots von den Servern werfen."""
-    _need_admin(request)
+    _need_right(request, "tournament")
     d = tour.load()
     kind = _tour_test(d)
     if kind == "bots":     # MatchZy-Matches beenden (sonst bleibt der Server im Aufwärmen hängen) und Bots runter
@@ -4130,7 +4140,7 @@ def _stream_lan_host() -> str:
 
 @app.get("/api/stream", dependencies=auth)
 async def stream_get(request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     st = stream_ctl.settings()
     host = _stream_lan_host()
     return {"settings": {k: st.get(k) for k in ("enabled", "title", "server", "netcon_port")}, "container": await stream_ctl.state(),
@@ -4141,7 +4151,7 @@ async def stream_get(request: Request):
 
 @app.put("/api/stream", dependencies=auth)
 async def stream_put(data: StreamIn, request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     _need_docker()
     old = stream_ctl.settings()
     d = stream_ctl.save(data.model_dump())
@@ -4161,7 +4171,7 @@ async def stream_put(data: StreamIn, request: Request):
 async def stream_helper_exe(request: Request):
     """Alles-in-einem für den Stream-PC: richtet OBS ein, startet CS2 + Stream und folgt dem laufenden Spiel.
     Die Einstellungen werden ans Ende der exe gehängt (Windows ignoriert angehängte Daten)."""
-    _need_admin(request)
+    _need_right(request, "tournament")
     exe = Path(__file__).parent / "bin" / "grohlan-stream.exe"
     if not exe.exists():
         raise HTTPException(404, "Stream-Helfer ist in diesem Build nicht enthalten")
@@ -4177,7 +4187,7 @@ async def stream_helper_exe(request: Request):
 @app.get("/api/stream/helper.cmd", dependencies=auth)
 async def stream_helper_cmd(request: Request):
     """Doppelklick-Version: startet das Skript ohne Signatur-Sperre (ExecutionPolicy nur für diesen Aufruf)."""
-    _need_admin(request)
+    _need_right(request, "tournament")
     import base64 as _b64
     base = str(request.base_url).rstrip("/")
     enc = _b64.b64encode(stream_ctl.helper_script(f"{base}/api/public/stream/state").encode("utf-16-le")).decode()
@@ -4188,7 +4198,7 @@ async def stream_helper_cmd(request: Request):
 
 @app.get("/api/stream/helper.ps1", dependencies=auth)
 async def stream_helper(request: Request):
-    _need_admin(request)
+    _need_right(request, "tournament")
     base = str(request.base_url).rstrip("/")
     return _Resp(content=stream_ctl.helper_script(f"{base}/api/public/stream/state").encode("utf-8-sig"), media_type="text/plain",
                  headers={"Content-Disposition": 'attachment; filename="grohlan-stream-helfer.ps1"'})
@@ -4935,11 +4945,41 @@ async def merge_player(pid: str, data: MergeIn, request: Request):
     return _players_out(request)
 
 
-@app.delete("/api/players/{pid}", dependencies=auth)
-async def delete_player(pid: str, request: Request):
+@app.delete("/api/players/{pid:path}", dependencies=auth)
+async def delete_player(pid: str, request: Request, ignore: bool = False):
     _need_admin(request)
-    playerdb.remove(pid)
+    playerdb.remove(pid, ignore)
     return _players_out(request)
+
+
+class PlayersBulkIn(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=2000)
+    action: str                     # delete | ignore | lan | nolan | lanauto
+
+
+@app.post("/api/players-bulk", dependencies=auth)
+async def players_bulk(data: PlayersBulkIn, request: Request):
+    """Mehrere Spieler auf einmal: löschen (optional dauerhaft ignorieren) oder LAN-Markierung setzen."""
+    _need_admin(request)
+    if data.action not in ("delete", "ignore", "lan", "nolan", "lanauto"):
+        raise HTTPException(400, "Unbekannte Aktion")
+    for pid in data.ids:
+        try:
+            if data.action in ("delete", "ignore"):
+                playerdb.remove(pid, data.action == "ignore")
+            else:
+                playerdb.set_lan(pid, {"lan": True, "nolan": False, "lanauto": None}[data.action])
+        except (ValueError, KeyError):
+            continue
+    playerdb.save(True)
+    return _players_out(request)
+
+
+@app.post("/api/players-ignored/clear", dependencies=auth)
+async def players_unignore(request: Request):
+    _need_admin(request)
+    playerdb.unignore_all()
+    return {"ok": True}
 
 
 @app.post("/api/servers/{sid}/players/import", dependencies=auth)

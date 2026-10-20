@@ -174,6 +174,7 @@ body.no-console .needconsole{display:none!important}
 body.no-container .needcontainer{display:none!important}
 
 body.not-admin .adminonly{display:none!important}
+body.no-tour .touronly{display:none!important}
 body.perm-lt2 .opsonly,body.perm-lt3 .mgronly,body.perm-lt4 .delonly,body.no-create .createonly{display:none!important}
 
 /* ---------- v4: Last ---------- */
@@ -756,3 +757,5 @@ main .topbar{top:34px}
 .glleaders tr.top .rk{color:var(--ggold)}.glleaders tr.top td:first-child{border-left:4px solid var(--ggold)}
 .glleaders .kd{font-family:var(--mono);font-weight:800;color:var(--glime)}
 .glleaders .tmn{display:block;font-size:11px;color:var(--gmut)}
+
+.pltable tr.plsel td{background:rgba(240,164,58,.07)}

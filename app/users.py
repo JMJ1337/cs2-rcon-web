@@ -16,6 +16,8 @@ LEVEL_HINTS = {1: "Status, Spieler, Verlauf und Log ansehen",
                3: "zusätzlich Konfiguration, Dateien, Spielstände laden, Container-Einstellungen, Server bearbeiten",
                4: "zusätzlich neue Server dieses Spiels anlegen und löschen"}
 ROLE_DEFAULT = {"user": 2, "viewer": 1}
+# Sonderrechte (zusätzlich zu den Spiel-Rechten)
+RIGHTS = {"tournament": "Turniere anlegen/bearbeiten (inkl. Live-Stream)"}
 
 
 def level(u: dict | None, game: str | None) -> int:
@@ -66,6 +68,7 @@ def load() -> list[dict]:
 
 def public(u: dict) -> dict:
     return {k: u.get(k) for k in ("username", "role", "created", "last_login")} | {
+        "rights": list(RIGHTS) if u.get("role") == "admin" else [r for r in (u.get("rights") or []) if r in RIGHTS],
         "role_label": ROLE_LABELS.get(u.get("role"), ""),
         "perms": {"*": level(u, None)} if u.get("role") == "admin" else ({"*": ROLE_DEFAULT.get(u.get("role"), 0)} | (u.get("perms") or {}))}
 
@@ -87,7 +90,7 @@ def verify(username: str, password: str) -> dict | None:
     return None
 
 
-def upsert(username: str, password: str | None, role: str | None, perms: dict | None = None) -> dict:
+def upsert(username: str, password: str | None, role: str | None, perms: dict | None = None, rights: list | None = None) -> dict:
     username = (username or "").strip().lower()
     if not username or len(username) > 32 or not username.replace("_", "").replace("-", "").replace(".", "").isalnum():
         raise ValueError("Benutzername: 1–32 Zeichen, Buchstaben/Ziffern/._-")
@@ -111,6 +114,8 @@ def upsert(username: str, password: str | None, role: str | None, perms: dict | 
         u["role"] = role
     if perms is not None:
         u["perms"] = clean_perms(perms)
+    if rights is not None:
+        u["rights"] = [r for r in rights if r in RIGHTS]
     store.save(FILE, users)
     return u
 
