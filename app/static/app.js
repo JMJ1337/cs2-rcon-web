@@ -1571,13 +1571,16 @@ function renderPlayerRows(){
     <td class="hint">${(p.names || []).slice(-3).map(esc).join(", ")}${p.ts_name ? ` <span class="pill" title="TeamSpeak">🎧 ${esc(p.ts_name)}</span>` : ""}</td>
     <td>${(p.online || []).map(o => `<span class="pill ok">${gameTile(o.game, 12)} ${esc(o.server)}</span>`).join(" ") || `<span class="hint">${esc(Object.values(p.servers || {}).sort((a, b) => b.last - a.last).slice(0, 1).map(x => x.name).join("") || "")}</span>`}</td>
     <td class="mono">${p.steamid ? `<a href="https://steamcommunity.com/profiles/${esc(p.steamid)}" target="_blank" rel="noopener" style="color:inherit">${esc(p.steamid)}</a>` : "–"}</td>
+    <td style="white-space:nowrap"><input type="checkbox" data-pllan="${esc(p.id)}" ${p.on_lan ? "checked" : ""} style="width:auto" title="${p.lan_manual ? "von Hand gesetzt" : "automatisch nach IP"}">${p.lan_manual ? ` <a href="#" class="hint" data-pllanauto="${esc(p.id)}" title="wieder automatisch nach IP">auto</a>` : ""}</td>
     <td class="mono">${esc(p.lan_ip || "–")}</td><td class="mono">${esc(p.wan_ip || "–")}</td>
     <td>${(p.admin_eff || []).length ? `<span class="pill warn" title="${esc((p.admin_eff || []).map(g => g === "*" ? "alle Spiele" : (GAMES[g]?.label || g)).join(", "))}${p.user ? " · Konto " + esc(p.user) : ""}">★ ${(p.admin_eff || []).includes("*") ? "alle" : (p.admin_eff || []).map(g => GAMES[g]?.short || g).join(", ")}</span>` : ""}</td>
     <td class="hint" title="${p.last_seen ? new Date(p.last_seen * 1000).toLocaleString("de-DE") : ""}">${agoTxt(p.last_seen)}</td>
     <td style="white-space:nowrap"><button class="small" data-pledit="${esc(p.id)}" title="bearbeiten">✎</button><button class="small" data-plmerge="${esc(p.id)}" title="${plMerge ? (plMerge === p.id ? "Zusammenführen abbrechen" : "in den markierten Eintrag übernehmen") : "mit anderem Eintrag zusammenführen"}">⇄</button><button class="small danger" data-pldel="${esc(p.id)}">✕</button></td></tr>`).join("")
-    : `<tr><td colspan="10" class="muted">${players.length ? "Keine Treffer." : "Noch keine Spieler – sie erscheinen automatisch, sobald jemand auf einen Server kommt."}</td></tr>`;
+    : `<tr><td colspan="11" class="muted">${players.length ? "Keine Treffer." : "Noch keine Spieler – sie erscheinen automatisch, sobald jemand auf einen Server kommt."}</td></tr>`;
   $$("[data-rename]").forEach(i => i.onchange = async () => { players = await api(`/api/players/${encodeURIComponent(i.dataset.rename)}`, {method: "PUT", body: {name: i.value.trim()}}); toast("Nickname gespeichert"); renderPlayerRows(); });
   $$("[data-pledit]").forEach(b => b.onclick = () => openPlayerEdit(b.dataset.pledit, b.closest("tr")));
+  $$("[data-pllan]").forEach(c => c.onchange = async () => { try { players = await api(`/api/players/${encodeURIComponent(c.dataset.pllan)}/lan`, {body: {lan: c.checked}}); renderPlayerRows(); } catch (e) { toast(e.message, true); } });
+  $$("[data-pllanauto]").forEach(a => a.onclick = async e => { e.preventDefault(); try { players = await api(`/api/players/${encodeURIComponent(a.dataset.pllanauto)}/lan`, {body: {lan: null}}); renderPlayerRows(); } catch (er) { toast(er.message, true); } });
   $$("[data-pldel]").forEach(b => b.onclick = async () => { if (!confirm("Spieler löschen?")) return; players = await api(`/api/players/${encodeURIComponent(b.dataset.pldel)}`, {method: "DELETE"}); renderPlayerRows(); });
   $$("[data-plmerge]").forEach(b => b.onclick = async () => {
     const id = b.dataset.plmerge;
@@ -3471,12 +3474,13 @@ async function loadBot(){
   const ago = t => { if (!t) return "–"; const m = (Date.now() / 1000 - t) / 60; return m < 60 ? Math.round(m) + " min" : m < 1440 ? Math.round(m / 60) + " h" : Math.round(m / 1440) + " Tage"; };
   $("#botPlayers").innerHTML = d.players.length ? `<table class="cachetable"><thead><tr><th></th><th>Spieler</th><th>zuletzt gesehen</th><th>Bot</th><th>Steam</th><th></th></tr></thead><tbody>${d.players.map(p => `<tr>
       <td><input type="checkbox" data-botsel="${esc(p.steamid)}" ${botSel.has(p.steamid) ? "checked" : ""} ${p.status === "Freund" ? "" : "disabled title=\"Erst wenn die Freundschaftsanfrage angenommen ist\""} style="width:auto"></td>
-      <td><b>${esc(p.name)}</b> <span class="hint mono">${esc(p.steamid)}</span>${p.recent ? ` <span class="pill ok">auf der LAN</span>` : ""}</td>
+      <td><div class="row" style="gap:8px;flex-wrap:nowrap">${p.avatar ? `<img class="avatar" src="${esc(p.avatar)}" alt="">` : `<span class="avatar" style="display:inline-block"></span>`}
+        <div><b>${esc(p.name)}</b>${p.recent ? ` <span class="pill ok">gerade auf der LAN</span>` : ""}<div class="hint mono">${esc(p.steamid)}${p.lan_manual ? " · von Hand als LAN markiert" : ""}</div></div></div></td>
       <td class="hint">vor ${ago(p.last_seen)}</td>
       <td>${p.status === "Freund" ? `<span style="color:var(--ok)">✓ Freund</span>` : esc(p.status)}</td>
       <td class="hint">${p.online == null ? "" : p.online ? (p.playing ? "spielt " + esc(p.playing) : "online") : "offline"}</td>
       <td>${p.status === "Freund" || p.status === "angefragt" ? "" : `<button class="small" data-botadd="${esc(p.steamid)}">Anfragen</button>`}</td></tr>`).join("")}</tbody></table>`
-    : `<div class="hint">Noch keine Spieler mit SteamID gesehen – sie erscheinen, sobald jemand auf einem Server spielt.</div>`;
+    : `<div class="hint">Noch keine LAN-Spieler mit SteamID – sie erscheinen, sobald jemand aus dem LAN auf einem Server spielt (oder unter „Spieler“ von Hand als LAN markiert wird).</div>`;
   $$("[data-botsel]").forEach(c => c.onchange = () => { c.checked ? botSel.add(c.dataset.botsel) : botSel.delete(c.dataset.botsel); $("#botSelN").textContent = botSel.size; });
   $$("[data-botadd]").forEach(btn => btn.onclick = async () => { try { await api(`/api/steambot/add/${btn.dataset.botadd}`, {method: "POST"}); toast("Freundschaftsanfrage gesendet"); loadBot(); } catch (e) { toast(e.message, true); } });
   $("#botSelN").textContent = botSel.size;

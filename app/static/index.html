@@ -271,7 +271,7 @@
             <span class="row" style="gap:8px;align-items:center"><label class="hint" style="display:flex;gap:4px;align-items:center"><input type="checkbox" id="plOnlyOn" style="width:auto"> nur online</label><input id="plFilter" placeholder="Suchen (Name, SteamID, IP) …" style="max-width:240px"></span></div>
           <div id="plOnline" class="ploverview"></div>
           <div class="row" style="gap:8px;margin-bottom:8px;align-items:center"><button class="small" id="btnPlSyncAdmins" title="Admins (mit SteamID) in die Admin-Listen der Server schreiben: CS2 (CounterStrikeSharp + MatchZy), Wreckfest, Valheim">Admin-Listen jetzt abgleichen</button><span class="hint" id="plAdminLog"></span></div>
-          <div style="overflow:auto"><table class="pltable"><thead><tr><th></th><th>Nickname</th><th>Erkannt als</th><th>Gerade auf</th><th>SteamID64</th><th>LAN-IP</th><th>Online-IP</th><th>Admin</th><th>Zuletzt</th><th></th></tr></thead><tbody id="plRows"></tbody></table></div>
+          <div style="overflow:auto"><table class="pltable"><thead><tr><th></th><th>Nickname</th><th>Erkannt als</th><th>Gerade auf</th><th>SteamID64</th><th title="Auf der LAN? Automatisch nach IP (LAN-IP = ja, Internet-IP = nein) – Haken setzen/entfernen überschreibt das">LAN</th><th>LAN-IP</th><th>Online-IP</th><th>Admin</th><th>Zuletzt</th><th></th></tr></thead><tbody id="plRows"></tbody></table></div>
           <div class="hint" style="margin-top:6px">Nickname leer lassen = automatischer Name (TeamSpeak-Name, sonst Spielname). „⇄“ führt zwei Einträge derselben Person zusammen (z. B. TeamSpeak-Eintrag + Steam-Eintrag).</div>
         </div>
       </div>
@@ -405,7 +405,7 @@
           </div>
         </div>
         <div class="panel" style="margin-top:16px">
-          <h2>Spieler auf der LAN <span class="hint">(aus der Spielerliste, mit SteamID)</span></h2>
+          <h2>Spieler auf der LAN <span class="hint">(automatisch: mit LAN-IP gesehen · unter „Spieler“ per Haken änderbar · wer übers Internet spielt, fehlt hier)</span></h2>
           <div id="botPlayers"></div>
         </div>
       </div>
@@ -882,6 +882,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=128"></script>
+<script src="/static/app.js?v=129"></script>
 </body>
 </html>

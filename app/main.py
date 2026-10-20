@@ -3657,6 +3657,20 @@ class PlayerEdit(BaseModel):
     user: str | None = Field(None, max_length=64)
 
 
+class LanIn(BaseModel):
+    lan: bool | None = None          # None = wieder automatisch (nach IP)
+
+
+@app.post("/api/players/{pid}/lan", dependencies=auth)
+async def player_lan(pid: str, data: LanIn, request: Request):
+    _need_admin(request)
+    try:
+        playerdb.set_lan(pid, data.lan)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return _players_out(request)
+
+
 @app.patch("/api/players/{pid}", dependencies=auth)
 async def edit_player(pid: str, data: PlayerEdit, request: Request):
     """Spieler bearbeiten: Nickname, SteamID (jedes Format), Notiz, Admin für Spiele, verknüpftes Tool-Konto."""
@@ -3734,7 +3748,8 @@ def _players_out(request: Request | None = None) -> list[dict]:
         if not p.get("steamid") and not p.get("names") and not p.get("ts_name") and not p.get("nick"):
             continue
         r = {**p, "steamid": p.get("steamid") or "", "name": playerdb.display(p), "online": on.get(p["id"], []),
-             "admin_eff": sorted(playerdb.admin_games(p, _user_admin_games))}
+             "admin_eff": sorted(playerdb.admin_games(p, _user_admin_games)), "on_lan": playerdb.on_lan(p),
+             "lan_manual": p.get("lan") is not None}
         if not admin:                       # IP-Adressen nur für Administratoren
             r.pop("lan_ip", None); r.pop("wan_ip", None)
         out.append(r)

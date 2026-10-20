@@ -169,7 +169,9 @@ def seen(*, steamid: str = "", name: str = "", ip: str = "", sid: str = "", serv
         names = [x for x in (p.get("names") or []) if x != name] + [name]
         p["names"] = names[-8:]
     if ip:
-        p["lan_ip" if is_private(ip) else "wan_ip"] = ip
+        lan = is_private(ip)
+        p["lan_ip" if lan else "wan_ip"] = ip
+        p["lan_seen" if lan else "wan_seen"] = t
     if sid:
         p.setdefault("servers", {})[sid] = {"name": server, "game": game, "last": t}
     if game and game not in (p.get("games") or []):
@@ -378,6 +380,30 @@ def update(pid: str, fields: dict) -> dict:
     if "admin" in fields and fields["admin"] is not None:
         p["admin"] = sorted({str(g) for g in fields["admin"] if g})
     _refresh_name(p)
+    _mark()
+    save(True)
+    return p
+
+
+def on_lan(p: dict) -> bool:
+    """Ist der Spieler auf der LAN? Von Hand gesetzt (Haken unter „Spieler“) oder automatisch:
+    zuletzt mit einer LAN-IP gesehen (wer aus dem Internet spielt, zählt nicht)."""
+    if p.get("lan") is not None:
+        return bool(p["lan"])
+    ls, ws = p.get("lan_seen"), p.get("wan_seen")
+    if ls or ws:
+        return bool(ls) and (not ws or ls >= ws)
+    return bool(p.get("lan_ip")) and not p.get("wan_ip")       # alte Einträge ohne Zeitstempel
+
+
+def set_lan(pid: str, value) -> dict:
+    p = get(pid)
+    if not p:
+        raise ValueError("Spieler nicht gefunden")
+    if value is None:
+        p.pop("lan", None)
+    else:
+        p["lan"] = bool(value)
     _mark()
     save(True)
     return p

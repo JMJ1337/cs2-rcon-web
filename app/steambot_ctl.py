@@ -147,8 +147,10 @@ def lan_players(hours: float | None = None) -> list[dict]:
         last = p.get("last_seen") or 0
         if hours and now - last > hours * 3600:
             continue
+        if not playerdb.on_lan(p):              # nur Spieler auf der LAN (nicht, wer übers Internet mitspielt)
+            continue
         out.append({"steamid": sid, "name": playerdb.display(p), "last_seen": last, "first_seen": p.get("first_seen"),
-                    "games": p.get("games") or []})
+                    "games": p.get("games") or [], "avatar": p.get("avatar"), "lan_manual": p.get("lan") is not None})
     return sorted(out, key=lambda x: -(x["last_seen"] or 0))
 
 
