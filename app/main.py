@@ -837,18 +837,29 @@ done
 echo ok
 """
 _jpw_applied: dict[str, str] = {}
+_jpw_try: dict[str, float] = {}
 
 
-async def _apply_join_pw(s: dict, pw: str) -> None:
-    """Beitritts-Passwort live per RCON setzen und in server.cfg festschreiben (überlebt Neustarts)."""
+async def _apply_join_pw(s: dict, pw: str, live_required: bool = True) -> bool:
+    """Beitritts-Passwort in server.cfg festschreiben (die ich777-Vorlage setzt sonst „Docker“) und live per RCON setzen."""
     pw = re.sub(r'["\s;]', "", pw or "")[:64]
-    await run(s, f'sv_password "{pw}"')
     if s.get("container") and docker_api.available():
         try:
             await docker_api.exec_cmd(s["container"], ["sh", "-c", CVARCFG_SH, "sh", "sv_password", pw], timeout=15)
         except docker_api.DockerError:
             pass
-    _jpw_applied[s["id"]] = pw
+    live = False
+    if s.get("password"):
+        try:
+            await run(s, f'sv_password "{pw}"')
+            live = True
+        except HTTPException:
+            if live_required:
+                raise
+    if live or not s.get("password"):
+        _jpw_applied[s["id"]] = pw
+    _jpw_try[s["id"]] = time.time()
+    return live
 
 
 async def run(s: dict, command: str) -> str:
@@ -1568,11 +1579,12 @@ async def collect_generic(s: dict) -> dict:
         if q:
             st["hostname"] = q["name"]
     pw = st.pop("password", None) if g == "wreckfest" else None
-    if (catmod.CATALOG.get(g) or {}).get("rcon") and s.get("password"):
-        pw = s.get("join_pw") or ""
-        if "join_pw" in s and _jpw_applied.get(s["id"]) != pw:
+    if (catmod.CATALOG.get(g) or {}).get("rcon"):
+        pw = s["join_pw"] if "join_pw" in s else templates.DEFAULT_JOIN_PW
+        if _jpw_applied.get(s["id"]) != pw and time.time() - _jpw_try.get(s["id"], 0) > 60:
             try:
-                await _apply_join_pw(s, pw)
+                if await _apply_join_pw(s, pw, live_required=False) and "join_pw" not in s:
+                    await _set_server_fields(s["id"], join_pw=pw)
             except Exception as e:  # noqa: BLE001
                 log.debug("Server-Passwort %s: %s", s.get("name"), e)
         pw = pw or None
@@ -7608,10 +7620,10 @@ async def set_join_password(sid: str, data: JoinPwIn):
     g = game_of(s)
     pw = re.sub(r'["\s;]', "", data.password or "")[:64]
     if (catmod.CATALOG.get(g) or {}).get("rcon"):
-        if not s.get("password"):
-            raise HTTPException(400, "Erst „Steuerung aktivieren“ (RCON)")
-        await _apply_join_pw(s, pw)
+        live = await _apply_join_pw(s, pw, live_required=False)
         await _set_server_fields(sid, join_pw=pw)
+        if not live:
+            return {"ok": True, "password": pw, "note": "In server.cfg gespeichert – gilt ab dem nächsten Mapwechsel/Neustart (RCON nicht erreichbar)"}
     elif g in ("cs2", "tf2"):
         await run(s, f'sv_password "{pw}"')
     else:

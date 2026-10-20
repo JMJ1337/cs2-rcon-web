@@ -1568,7 +1568,7 @@ function renderGq(){
     try {
       const r = await api(`/api/servers/${current.id}/join-password`, {body: {password: pw}});
       current.join_pw = r.password; $("#gqJoinPw").value = r.password;
-      toast(r.password ? `Server-Passwort: ${r.password}` : "Server ohne Passwort"); setTimeout(refreshStatus, 1000);
+      toast(r.note || (r.password ? `Server-Passwort: ${r.password}` : "Server ohne Passwort"), !!r.note); setTimeout(refreshStatus, 1000);
     } catch (e) { toast(e.message, true); }
   };
   $("#btnGqJoinPw").onclick = () => setPw($("#gqJoinPw").value.trim());
