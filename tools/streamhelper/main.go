@@ -393,8 +393,10 @@ func waitConnected(tv string, sec int) bool {
 }
 
 // laufendem CS2 über Steam „verbinde mit …“ schicken
+// steam://connect fragt den Port vorher per Steam-Query ab – CSTV antwortet darauf nicht („Anw.-ID ungültig“).
+// steam://run/730//+connect … reicht den Befehl dagegen an das laufende CS2 weiter.
 func steamConnect(steam, tv string) {
-	exec.Command(steam, "steam://connect/"+tv).Start()
+	exec.Command(steam, "steam://run/730//+connect%20"+tv).Start()
 }
 
 func watchConsole(steam string) {
