@@ -3790,15 +3790,20 @@ def _split_lan(steamids: list[str]) -> dict[bool, list[str]]:
 
 
 async def invite_join_text(s: dict, lan: bool) -> str:
-    """Adresse + klickbarer Link für Steam-Chat-Nachrichten. Steam macht steam://-Links nicht klickbar, darum ein
-    http-Link aufs Tool, der CS2 startet und verbindet (LAN: LAN-Adresse des Tools, sonst die öffentliche)."""
+    """Adresse + Steam-Connect-Link für Chat-Nachrichten (LAN-Spieler: LAN-Adresse, sonst die öffentliche),
+    mit Server-Passwort, falls eins gesetzt ist."""
     host = _join_host(s)
     addr = join_info(s)["address"]
     wan = None if lan else await wan_host()
     if wan:
         addr = addr.replace(host, wan)
-    base = f"http://{wan}:{TOOL_PORT}" if wan else f"http://{host}:{TOOL_PORT}"
-    return f"\nVerbinden: {addr}\nKlick zum Beitreten: {base}/j/{s['id']}"
+    try:
+        pw = (await _join_password(s) or "").strip()
+    except Exception:  # noqa: BLE001
+        pw = ""
+    link = f"steam://connect/{addr}" + (f"/{pw}" if pw else "")
+    con = f"connect {addr}" + (f"; password {pw}" if pw else "")
+    return f"\n▶ Beitreten: {link}\n⌨ Oder in der CS2-Konsole: {con}"
 
 
 @app.get("/j/{sid}")
