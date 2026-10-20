@@ -372,6 +372,7 @@ def public_view(d: dict) -> dict:
                        "f1": _direct(m, "1"), "f2": _direct(m, "2"), "pin": m.get("pin")}
                       for m in d["matches"]]
     out["groups"] = {g: standings(d, g) for g in (d.get("groups") or {})}
+    out["leaders"] = leaderboard(d)[:20]
     if d.get("mode") == "rr" and d["matches"]:
         out["table"] = rr_table(d)
     return out
@@ -386,6 +387,42 @@ def _ph(src) -> str | None:
     if "m" in src:
         return f"{'Sieger' if src.get('r') == 'W' else 'Verlierer'} #{str(src['m'])[1:]}"
     return None
+
+
+def match_stats(res: dict) -> list[dict]:
+    """Spielerwerte eines Matches aus dem MatchZy-Log (team1 = t1 des Turnier-Spiels)."""
+    out = []
+    for side, k in (("1", "team1"), ("2", "team2")):
+        for p in (res.get(k) or {}).get("players") or []:
+            out.append({"side": side, "steamid": p.get("steamid") or "", "name": p.get("name") or "?",
+                        "kills": int(p.get("kills") or 0), "deaths": int(p.get("deaths") or 0), "hs": int(p.get("hs") or 0),
+                        "assists": int(p.get("assists") or 0), "damage": int(p.get("damage") or 0)})
+    return out
+
+
+def leaderboard(d: dict) -> list[dict]:
+    """Beste Spieler des Turniers: Kills, Tode, K/D, HS-%, gespielte Matches und Siege (über alle Matches summiert)."""
+    names = {p["steamid"]: p["name"] for p in d.get("players") or []}
+    tab: dict[str, dict] = {}
+    for m in d.get("matches") or []:
+        for st in m.get("stats") or []:
+            sid = st.get("steamid") or ""
+            real = sid.isdigit() and len(sid) == 17
+            key = sid if real else "n:" + st["name"]
+            tid = m.get("t" + st["side"])
+            r = tab.setdefault(key, {"steamid": sid if real else None, "name": names.get(sid) or st["name"], "team": team_name(d, tid) if tid else None,
+                                     "kills": 0, "deaths": 0, "hs": 0, "assists": 0, "damage": 0, "matches": 0, "wins": 0})
+            for k in ("kills", "deaths", "hs", "assists", "damage"):
+                r[k] += st.get(k) or 0
+            r["matches"] += 1
+            if m.get("status") == "done" and m.get("winner") and m.get("winner") == tid:
+                r["wins"] += 1
+    out = []
+    for r in tab.values():
+        r["kd"] = round(r["kills"] / max(1, r["deaths"]), 2)
+        r["hs_pct"] = round(100 * r["hs"] / r["kills"]) if r["kills"] else 0
+        out.append(r)
+    return sorted(out, key=lambda r: (-r["kd"], -r["kills"], -r["wins"]))
 
 
 def _pname(d: dict, sid: str) -> str:

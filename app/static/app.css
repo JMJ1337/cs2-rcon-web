@@ -744,3 +744,15 @@ main .topbar{top:34px}
 
 #tvHelp{position:fixed;right:16px;bottom:16px;z-index:60;max-width:380px}
 .tvhelp{background:var(--panel);border:1px solid var(--accent);border-radius:10px;padding:12px 14px;font-size:13px;box-shadow:0 10px 30px #000a;display:flex;flex-direction:column;gap:4px}
+
+/* Bestenliste (GrohLAN-Look) */
+.glleaders{width:100%;max-width:900px;margin:0 auto;border-collapse:separate;border-spacing:0 4px;font-size:14px}
+.glleaders th{font-family:"Bebas Neue",Impact,sans-serif;font-weight:400;letter-spacing:.06em;color:var(--gmut);text-align:center;font-size:15px;padding:0 8px}
+.glleaders th:nth-child(2){text-align:left}
+.glleaders td{background:var(--gcard);padding:6px 10px;text-align:center;border-top:1px solid var(--gline);border-bottom:1px solid var(--gline)}
+.glleaders td:first-child{border-left:1px solid var(--gline);border-radius:8px 0 0 8px}.glleaders td:last-child{border-right:1px solid var(--gline);border-radius:0 8px 8px 0}
+.glleaders td:nth-child(2){text-align:left}
+.glleaders .rk{font-family:"Bebas Neue",Impact,sans-serif;font-size:20px;color:var(--gmut);width:36px}
+.glleaders tr.top .rk{color:var(--ggold)}.glleaders tr.top td:first-child{border-left:4px solid var(--ggold)}
+.glleaders .kd{font-family:var(--mono);font-weight:800;color:var(--glime)}
+.glleaders .tmn{display:block;font-size:11px;color:var(--gmut)}

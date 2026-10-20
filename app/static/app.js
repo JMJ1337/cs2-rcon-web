@@ -3559,6 +3559,8 @@ function tourBoardHtml(v, admin){
   if (K.length) h += bracketHtml("K.-o.-Phase", K, [], admin);
   if (W.length) h += bracketHtml(L.length ? "Winner-Bracket" : "K.-o.-Baum", W, F, admin);
   if (L.length) h += bracketHtml("Loser-Bracket", L, [], admin);
+  if (v.leaders && v.leaders.length) h += `<div class="tsec"><h3>Beste Spieler</h3><table class="cachetable"><thead><tr><th>#</th><th>Spieler</th><th>Team</th><th>K/D</th><th>Kills</th><th>Tode</th><th>HS %</th><th>Siege</th></tr></thead><tbody>
+    ${v.leaders.map((r, i) => `<tr><td>${i + 1}</td><td><b>${esc(r.name)}</b></td><td>${esc(r.team || "")}</td><td class="mono">${(r.kd ?? 0).toFixed(2)}</td><td class="mono">${r.kills}</td><td class="mono">${r.deaths}</td><td class="mono">${r.hs_pct}%</td><td class="mono">${r.wins}/${r.matches}</td></tr>`).join("")}</tbody></table></div>`;
   return h;
 }
 function groupBox(title, rows, ms, admin, rounds){
@@ -3668,6 +3670,11 @@ function glStreamAttach(s){
   slot.appendChild(glSt.el);
   if (glSt.el.paused) glSt.el.play().catch(() => {});
 }
+function glLeaders(L, n){
+  return `<table class="glleaders"><thead><tr><th>#</th><th>Spieler</th><th title="Kills / Tode">K/D</th><th>Kills</th><th>Tode</th><th title="Anteil Kopfschüsse an den Kills">HS %</th><th title="Gewonnene / gespielte Matches">Siege</th></tr></thead><tbody>
+    ${L.slice(0, n).map((r, i) => `<tr class="${i < 3 ? "top" : ""}"><td class="rk">${i + 1}</td><td><b>${esc(r.name)}</b>${r.team ? `<span class="tmn">${esc(r.team)}</span>` : ""}</td>
+      <td class="kd">${(r.kd ?? 0).toFixed(2)}</td><td>${r.kills}</td><td>${r.deaths}</td><td>${r.hs_pct}%</td><td>${r.wins}/${r.matches}</td></tr>`).join("")}</tbody></table>`;
+}
 function glShow(v){
   const by = st => v.matches.filter(m => st.includes(m.stage));
   const live = v.matches.filter(m => m.status === "live");
@@ -3695,6 +3702,7 @@ function glShow(v){
     <div class="glgh">${esc(title)}</div><div class="glgb">
       ${rows.map((r, i) => `<div class="glrow ${i < 2 && !v.table ? "adv" : ""}"><span class="glrk">${i + 1}</span><b>${esc(r.name)}</b><span title="Siege–Niederlagen">${r.won}–${r.lost}</span><span class="mono" title="Runden">${r.rf}:${r.ra}</span></div>`).join("")}
       <div class="glgm">${ms.sort((a, b) => a.round - b.round || (a.no || 0) - (b.no || 0)).map(tmMini).join("")}</div></div></div>`).join("")}</div></div>`;
+  if (v.leaders && v.leaders.length) h += `<div class="glsec"><h3>Beste Spieler</h3>${glLeaders(v.leaders, 10)}</div>`;
   return `<div class="gl">${h}</div>`;
 }
 

@@ -3879,6 +3879,7 @@ async def tour_tick() -> None:
         res = next((x for x in matchlog.recent(m.get("server"), 10) if str(x.get("matchid")) == str(m.get("mz_id"))), None)
         if res:
             m["s1"], m["s2"] = (res.get("team1") or {}).get("score"), (res.get("team2") or {}).get("score")
+            m["stats"] = tour.match_stats(res)          # K/D/HS je Spieler für die Bestenliste
             if res.get("finished"):
                 s1, s2 = m["s1"] or 0, m["s2"] or 0
                 if res.get("maps"):
@@ -8169,7 +8170,7 @@ async def homepage_cors(request: Request, call_next):
     return resp
 
 
-_EMBED_FUNCS = ("const esc", "const tTime", "const tStatus", "const GL_TROPHY", "function glPill", "function glMatch", "function glCols",
+_EMBED_FUNCS = ("const esc", "const tTime", "const tStatus", "const GL_TROPHY", "function glLeaders", "function glPill", "function glMatch", "function glCols",
                 "function glTree", "let glSt", "function glStreamAttach", "function glShow", "function tmMini", "function tvBtn")
 _embed_js: dict = {}
 
@@ -8231,7 +8232,10 @@ body[data-mode="bracket"] #curtain .t1{font-size:84px;white-space:nowrap;max-wid
 #bug .mid .live{color:#ff5a5a;font-size:22px}
 #next{position:absolute;left:24px;bottom:24px;display:none;background:hsl(120 18% 7% / .92);border:1px solid hsl(120 15% 20%);border-left:5px solid hsl(48 85% 58%);
   border-radius:10px;padding:10px 18px;font-size:22px;box-shadow:0 10px 30px #000a}
-#next .h{font-size:18px;color:hsl(48 85% 58%)}
+#next .h,#top .h{font-size:18px;color:hsl(48 85% 58%)}
+#top{position:absolute;right:24px;bottom:24px;display:none;background:hsl(120 18% 7% / .92);border:1px solid hsl(120 15% 20%);border-right:5px solid hsl(72 72% 48%);
+  border-radius:10px;padding:10px 18px;font-size:19px;box-shadow:0 10px 30px #000a;min-width:330px}
+#top .r{display:flex;gap:12px;justify-content:space-between}#top .r span{color:#aaa;font-size:16px}#top .r b.kd{color:hsl(72 72% 48%)}
 </style></head><body>"""
 
 _OVERLAY_JS = r"""
@@ -8260,7 +8264,7 @@ function render(v,s,now){
   const c=document.getElementById('curtain');
   if(curtain){
     c.style.display='flex';
-    document.getElementById('bug').style.display='none';document.getElementById('next').style.display='none';
+    document.getElementById('bug').style.display='none';document.getElementById('next').style.display='none';document.getElementById('top').style.display='none';
     const up=cur?cur:nx;
     c.querySelector('.t1').textContent=MODE==='bracket'?(v.name||'Turnier'):'GLEICH LIVE';
     c.querySelector('.t2').innerHTML=MODE==='bracket'?esc(v.mode_label||''):esc(v.name||'GrohLAN')+'<span class="dots"></span>';
@@ -8276,6 +8280,9 @@ function render(v,s,now){
   const n=document.getElementById('next');
   if(nx){n.style.display='block';n.innerHTML='<div class="h bb">Als Nächstes</div><b>'+nm(nx,1)+'</b> vs <b>'+nm(nx,2)+'</b><div style="font-size:16px;color:#aaa">'+esc((nx.label||'').split(' · ').pop())+(nx.planned?' · '+tTime(nx.planned)+' Uhr':'')+'</div>';}
   else n.style.display='none';
+  const tp=document.getElementById('top'), L=(v.leaders||[]).slice(0,3);
+  if(L.length&&P.get('top')!=='0'){tp.style.display='block';tp.innerHTML='<div class="h bb">Beste Spieler</div>'+L.map((r,i)=>'<div class="r"><b>'+(i+1)+'. '+esc(r.name)+'</b><span>K/D <b class="kd">'+(r.kd||0).toFixed(2)+'</b> · HS '+r.hs_pct+'% · '+r.wins+' Siege</span></div>').join('');}
+  else tp.style.display='none';
 }
 poll();setInterval(poll,3000);window.addEventListener('resize',fit);
 """
@@ -8284,7 +8291,7 @@ poll();setInterval(poll,3000);window.addEventListener('resize',fit);
 def _overlay_page(mode: str) -> str:
     return (_OVERLAY_HEAD.replace("<body>", f'<body data-mode="{mode}">') +
             '<div id="curtain"><div class="t1 bb">GLEICH LIVE</div><div class="t2 bb"></div><div class="nx bb"></div><div id="tree"></div></div>'
-            '<div id="bug"></div><div id="next"></div><script>' + _embed_script() + _OVERLAY_JS + "</script></body></html>")
+            '<div id="bug"></div><div id="next"></div><div id="top"></div><script>' + _embed_script() + _OVERLAY_JS + "</script></body></html>")
 
 
 @app.get("/overlay/game")
