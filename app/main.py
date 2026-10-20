@@ -3845,8 +3845,86 @@ def _tour_test(d: dict) -> str | None:
     return (d.get("test") or {}).get("kind")
 
 
+ANNOUNCE_MIN = 15          # so viele Minuten vor dem Start bekommen alle Teilnehmer die Ankündigung
+
+
+def _hhmm(ts: float) -> str:
+    """Uhrzeit in der LAN-Zeitzone (Container läuft sonst in UTC)."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.fromtimestamp(ts, ZoneInfo(os.getenv("TZ") or "Europe/Berlin")).strftime("%H:%M")
+    except Exception:  # noqa: BLE001
+        return datetime.fromtimestamp(ts).astimezone().strftime("%H:%M")
+
+
+async def _tour_announce(d: dict, force: bool = False) -> dict:
+    """„Gleich geht's los“-Nachricht an alle Teilnehmer (Steam-Bot, nur Freunde): Startzeit, Team, erstes Match, Link."""
+    start = d.get("start") or 0
+    if not force:
+        if not d.get("active") or not d.get("players") or not start or d.get("test") or d.get("announced") == start:
+            return {}
+        if not (0 <= start - time.time() <= ANNOUNCE_MIN * 60) or d.get("status") == "done":
+            return {}
+    if not steambot_ctl.settings().get("enabled"):
+        return {"error": "Steam-Bot ist aus"}
+    st = await steambot_ctl.status()
+    friends = {f["steamid"] for f in ((st.get("bot") or {}).get("friends") or []) if f.get("rel") == "Friend"}
+    if (st.get("bot") or {}).get("state") != "angemeldet":
+        return {"error": "Steam-Bot ist nicht angemeldet"}
+    d["announced"] = start
+    tour.save(d)
+    lan_host, wan = _stream_lan_host(), await wan_host()
+    when = _hhmm(start) if start else ""
+    mins = max(0, round((start - time.time()) / 60)) if start else 0
+    sent, skipped = [], []
+    for p in d["players"]:
+        sid = p["steamid"]
+        if sid not in friends:
+            skipped.append(sid)
+            continue
+        pl = playerdb.get(sid)
+        url = f"http://{lan_host if (pl and playerdb.connects_from_lan(pl)) or not wan else wan}:{TOOL_PORT}/"
+        t = tour.player_team(d, sid)
+        lines = ["🏆🔥 GLEICH GEHT'S LOS! 🔥🏆", "",
+                 f"„{d.get('name') or 'Turnier'}“ startet {'in ' + str(mins) + ' Minuten' if mins else 'jetzt'}" + (f" ({when} Uhr)!" if when else "!")]
+        if t:
+            mate = [tour._pname(d, x) for x in t["players"] if x != sid]
+            lines.append(f"👥 Dein Team: {t['name']}" + (f" – zusammen mit {mate[0]}" if mate else " – dir fehlt noch ein Partner!"))
+            m = next((x for x in tour.ordered(d) if t["id"] in (x.get("t1"), x.get("t2")) and x["status"] in ("ready", "wait")), None)
+            if m:
+                opp = tour.team_name(d, m["t2"] if m["t1"] == t["id"] else m["t1"])
+                at = _hhmm(m["planned"]) if m.get("planned") else ""
+                lines.append(f"⚔️ Erstes Match: {m['label'].split(' · ')[-1]} gegen {opp} · 🗺️ {m.get('map')}" + (f" · ⏰ ca. {at} Uhr" if at else ""))
+        else:
+            lines.append("⚠️ Du hast noch kein Team – such dir schnell einen Partner (Wingman, 2 gegen 2)!")
+        lines += [f"📺 Turnierbaum, Ergebnisse & Live-Stream: {url}", "",
+                  "Sobald dein Match startet, schicke ich dir die Einladung mit Server-Link. Bereit machen, Headset auf – GL HF! 🍀🎯"]
+        try:
+            await steambot_ctl.api("POST", "/msg", {"steamids": [sid], "text": "\n".join(lines)}, timeout=30)
+            sent.append(sid)
+        except Exception as e:  # noqa: BLE001
+            log.info("Turnier-Ankündigung an %s: %s", sid, e)
+            skipped.append(sid)
+    log.info("Turnier-Ankündigung: %s gesendet, %s übersprungen", len(sent), len(skipped))
+    return {"sent": len(sent), "skipped": len(skipped)}
+
+
+@app.post("/api/tournament/announce", dependencies=auth)
+async def tour_announce_now(request: Request):
+    """Ankündigung sofort an alle Teilnehmer schicken (sonst automatisch 15 min vor dem Start)."""
+    _need_right(request, "tournament")
+    r = await _tour_announce(tour.load(), force=True)
+    if r.get("error"):
+        raise HTTPException(409, r["error"])
+    return r
+
+
 async def tour_tick() -> None:
     d = tour.load()
+    try:
+        await _tour_announce(d)
+    except Exception as e:  # noqa: BLE001
+        log.info("Turnier-Ankündigung: %s", e)
     if d.get("status") == "waiting":                         # wartet auf die Server (gestartet/angelegt beim Start)
         pool = _tour_pool()
         d["servers"] = [s["id"] for s in pool]

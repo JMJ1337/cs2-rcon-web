@@ -3919,6 +3919,12 @@ $("#tourAddTeam").onclick = async () => {
   const r = await tourCall("/api/tournament/teams", {body: {name, players: [$("#tourNewP1").value, $("#tourNewP2").value].filter(Boolean)}}, "Team angelegt");
   if (r){ $("#tourNewTeam").value = ""; document.activeElement.blur(); loadTour(); }
 };
+$("#tourAnnounce").onclick = async e => {
+  e.preventDefault();
+  if (!confirm("Ankündigung „Gleich geht's los“ jetzt an alle Teilnehmer schicken (Steam-Bot, nur an Freunde des Bots)?")) return;
+  const r = await tourCall("/api/tournament/announce", {method: "POST"});
+  if (r) toast(`Gesendet an ${r.sent} Spieler${r.skipped ? ` · ${r.skipped} übersprungen (kein Freund des Bots)` : ""}`);
+};
 $("#tourAddManual").onclick = async () => {
   const id = $("#tourAddId").value.trim(); if (!id) return toast("SteamID64 oder Profil-Link eingeben", true);
   const r = await tourCall("/api/tournament/players", {body: {steamid: id, name: $("#tourAddName").value.trim() || null}}, "Spieler hinzugefügt");
