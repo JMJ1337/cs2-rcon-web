@@ -89,8 +89,9 @@ function gameLogo(g){
   return src ? `<span class="glogo"><img src="${src}" alt="${esc(GAMES[g]?.label || g)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add('fail')">${gbadge(g)}</span>` : gbadge(g);
 }
 // Map-Vorschaubilder: CS2 aus cs2-map-icons, Source-Spiele über GameTracker (fehlt ein Bild -> Spielbild)
-const GT_MAPS = {tf2: "tf2", garrysmod: "garrysmod", l4d2: "left4dead2", quakelive: "ql", insurgency: "ins"};
-const MAP_GAMES = new Set(["cs2", "wreckfest", "killingfloor2", ...Object.keys(GT_MAPS)]);
+const GT_MAPS = {tf2: "tf2", garrysmod: "garrysmod", l4d2: "left4dead2", quakelive: "ql", insurgency: "ins",
+  cs16: "cs", czero: "czero", dod: "dod", dods: "dods", tfc: "tfc", hldm: "hl", hl2dm: "hl2dm", l4d: "l4d"};
+const MAP_GAMES = new Set(["cs2", "wreckfest", "killingfloor2", ...Object.keys(GT_MAPS), "nmrih", "zps", "fof", "pvkii", "svencoop", "asrd"]);
 function mapThumb(o, g){
   let src = o.map_image || "", title = o.map_title || o.track_name || o.map || "";
   if (!src && GT_MAPS[g] && o.map && o.map !== "–"){
@@ -1054,6 +1055,7 @@ function applyGameClasses(s){
   wfLoadedFor = null;
   document.body.classList.toggle("no-console", !meta.console);
   document.body.classList.toggle("no-container", !(dockerOn && s.container));
+  try { renderGq(); } catch (e) { console.warn(e); }
 }
 // Rechte pro Spiel: 1 sehen, 2 bedienen, 3 verwalten, 4 anlegen/löschen
 function permFor(game){
@@ -1122,7 +1124,7 @@ async function refreshStatus(){
     lastStatus = st;
     setJoin(st.join);
     if (st.hostname && current.name_from_game !== false && st.hostname !== current.name){ current.name = st.hostname; $("#svTitle").innerHTML = `${gbadge(gameOf(current))} ${esc(current.name)}`; }
-    if (gameOf(current) === "tf2") $("#tfHost").textContent = `${st.hostname || ""} · Map ${st.map || "?"} · ${st.humans ?? "?"} Spieler + ${st.bots ?? 0} Bots / ${st.max_players ?? "?"} Slots`;
+    if (gqDef()) $("#gqHost").textContent = `${st.hostname || ""} · ${st.map && st.map !== "–" ? "Map " + st.map + " · " : ""}${st.humans ?? "?"} Spieler${st.bots ? " + " + st.bots + " Bots" : ""} / ${st.max_players ?? "?"} Slots`;
     if (gameOf(current) !== "cs2") return renderGeneric(st);
     $("#stMapLabel").textContent = "Map";
     $("#stOnline").textContent = st.hibernating ? "Online (idle)" : "Online";
@@ -1349,50 +1351,195 @@ const TF2_SETTINGS = [
     ["tf_bot_quota_mode","Bot-Modus","select", [["normal","fest"],["fill","auffüllen"],["match","je Spieler"]]],
     ["tf_bot_join_after_player","Bots erst mit Spielern","bool"]]],
 ];
-/* ---------- TF2: Schnellaktionen, Bots, Map ---------- */
-const TF2_QUICK = [
-  ["Warten auf Spieler beenden","mp_waitingforplayers_cancel 1","primary"], ["Match neu starten","mp_restartgame 1"],
-  ["Runde neu starten","mp_restartround 1"], ["Teams mischen","mp_scrambleteams 1"],
-  ["Turniermodus an","mp_tournament 1; mp_tournament_restart"], ["Turniermodus aus","mp_tournament 0; mp_restartgame 1"],
-  ["Bots neu spawnen","tf_bot_kill all"], ["Bots kicken","tf_bot_quota 0; tf_bot_kick all","danger"],
-];
+/* ---------- Schnellsteuerung für alle Spiele mit Konsole (live, ohne Neustart) ---------- */
 const TF2_MODES = {ctf:"Capture the Flag", cp:"Control Point", pl:"Payload", plr:"Payload Race", koth:"King of the Hill",
   arena:"Arena", pd:"Player Destruction", sd:"Special Delivery", mvm:"Mann vs. Machine", tr:"Training"};
-(function initTf2(){
-  if (!$("#tf2Actions")) return;
-  $("#tf2Actions").innerHTML = TF2_QUICK.map(([l,c,cls]) => `<button class="${cls||""}" data-cmd="${esc(c)}" title="${esc(c)}">${esc(l)}</button>`).join("");
-  $$("#tf2Actions [data-cmd]").forEach(b => b.onclick = () => {
-    if (b.classList.contains("danger") && !confirm("Alle Bots entfernen?")) return;
-    send(b.dataset.cmd).then(() => setTimeout(refreshStatus, 800));
-  });
+const PFX = {de:"Bombe entschärfen", cs:"Geiselrettung", as:"Assassination", dm:"Deathmatch", dod:"Day of Defeat", gm:"Garry's Mod",
+  nmo:"Objective", nms:"Survival", zpo:"Objective", zps:"Survival", fof:"Shootout", bt:"Booty", tw:"Territorial War", lts:"Last Team Standing", ...TF2_MODES};
+const GQ_SRC = {limits: [["mp_timelimit","Zeitlimit (Min.)"]]};
+const GQ_CSBOTS = {teams: [["","Team: auto"],["t","T"],["ct","CT"]], classes: null,
+  diffs: [["","Stärke: Standard"],["0","Leicht"],["1","Normal"],["2","Schwer"],["3","Experte"]],
+  add: (n, team, _c, d) => (d ? `bot_difficulty ${d}; ` : "") + Array(n).fill(team ? `bot_add_${team}` : "bot_add").join("; "),
+  kick: "bot_quota 0; bot_kick", quota: q => `bot_quota ${q}`,
+  hint: "Bots brauchen Wegpunkte (.nav) – auf den Standard-Maps vorhanden."};
+const GQ = {
+  tf2: {maps: TF2_MAPS, groupBy: TF2_MODES, quick: [
+      ["Warten auf Spieler beenden","mp_waitingforplayers_cancel 1","primary"], ["Match neu starten","mp_restartgame 1"],
+      ["Runde neu starten","mp_restartround 1"], ["Teams mischen","mp_scrambleteams 1"],
+      ["Turniermodus an","mp_tournament 1; mp_tournament_restart"], ["Turniermodus aus","mp_tournament 0; mp_restartgame 1"],
+      ["Bots neu spawnen","tf_bot_kill all"]],
+    bots: {teams: [["","Team: auto"],["red","RED"],["blue","BLU"]],
+      classes: [["","Klasse: zufällig"],...["scout","soldier","pyro","demoman","heavyweapons","engineer","medic","sniper","spy"].map(c => [c,c])],
+      diffs: [["","Stärke: Standard"],["easy","Leicht"],["normal","Normal"],["hard","Schwer"],["expert","Experte"]],
+      add: (n, t, c, d) => `tf_bot_add ${[n, c, t, d].filter(Boolean).join(" ")}`, kick: "tf_bot_quota 0; tf_bot_kick all",
+      quota: q => `tf_bot_quota_mode fill; tf_bot_quota ${q}`,
+      hint: "Bots brauchen ein Navmesh – auf allen offiziellen Maps vorhanden, auf Community-Maps oft nicht (dann stehen sie still)."},
+    limits: [["mp_timelimit","Zeitlimit (Min.)"],["mp_winlimit","Siege"],["mp_maxrounds","Runden"]],
+    hint: "Der Spielmodus ergibt sich bei TF2 aus der Map (ctf_ Capture the Flag, cp_ Control Point, pl_ Payload, koth_ King of the Hill …)."},
+  hl2dm: {...GQ_SRC, maps: ["dm_lockdown","dm_overwatch","dm_powerhouse","dm_resistance","dm_runoff","dm_steamlab","dm_underpass","halls3"],
+    quick: [["Match neu starten","mp_restartgame 1","primary"]],
+    mode: {title: "Spielart", opts: [["0","Deathmatch (jeder gegen jeden)"],["1","Team-Deathmatch (Combine vs. Rebellen)"]], cmd: v => `mp_teamplay ${v}`, reload: true},
+    limits: [["mp_timelimit","Zeitlimit (Min.)"],["mp_fraglimit","Fraglimit"]]},
+  dods: {...GQ_SRC, maps: ["dod_anzio","dod_argentan","dod_avalanche","dod_colmar","dod_donner","dod_flash","dod_jagd","dod_kalt","dod_palermo"],
+    quick: [["Match neu starten","mp_restartgame 1","primary"], ["Teamausgleich an","mp_autoteambalance 1"], ["Teamausgleich aus","mp_autoteambalance 0"]],
+    limits: [["mp_timelimit","Zeitlimit (Min.)"],["mp_winlimit","Siege"]]},
+  l4d: {maps: ["l4d_hospital01_apartment","l4d_garage01_alleys","l4d_smalltown01_caves","l4d_airport01_greenhouse","l4d_farm01_hilltop","l4d_river01_docks",
+      "l4d_vs_hospital01_apartment","l4d_vs_smalltown01_caves","l4d_vs_airport01_greenhouse","l4d_vs_farm01_hilltop"],
+    quick: [["Nur-Bot-Spiel erlauben","sb_all_bot_game 1"], ["Nur-Bot-Spiel aus","sb_all_bot_game 0"]],
+    mode: {title: "Spielmodus", opts: [["coop","Kampagne (Koop)"],["versus","Versus"],["survival","Survival"]], cmd: v => `mp_gamemode ${v}`, reload: true},
+    hint: "Versus-Maps beginnen mit l4d_vs_. Überlebende ohne Spieler übernehmen automatisch Bots."},
+  l4d2: {maps: ["c1m1_hotel","c2m1_highway","c3m1_plankcountry","c4m1_milltown_a","c5m1_waterfront","c6m1_riverbank","c7m1_docks","c8m1_apartment",
+      "c9m1_alleys","c10m1_caves","c11m1_greenhouse","c12m1_hilltop","c13m1_alpinecreek","c14m1_junkyard"],
+    quick: [["Nur-Bot-Spiel erlauben","sb_all_bot_game 1"], ["Nur-Bot-Spiel aus","sb_all_bot_game 0"]],
+    mode: {title: "Spielmodus", opts: [["coop","Kampagne (Koop)"],["realism","Realismus"],["versus","Versus"],["survival","Survival"],["scavenge","Scavenge"]],
+      cmd: v => `mp_gamemode ${v}`, reload: true},
+    hint: "Überlebende ohne Spieler übernehmen automatisch Bots."},
+  garrysmod: {maps: ["gm_construct","gm_flatgrass"],
+    mode: {title: "Gamemode", opts: [["sandbox","Sandbox"],["terrortown","Trouble in Terrorist Town (falls installiert)"],["prop_hunt","Prop Hunt (falls installiert)"],["murder","Murder (falls installiert)"]],
+      cmd: v => `gamemode ${v}`, reload: true},
+    bots: {teams: null, classes: null, diffs: null, add: n => Array(n).fill("bot").join("; "),
+      kick: 'lua_run for _,b in ipairs(player.GetBots()) do b:Kick("") end', quota: null, hint: "Bots stehen in Sandbox nur herum."}},
+  nmrih: {...GQ_SRC, maps: ["nmo_broadway","nmo_chinatown","nmo_toxteth","nmo_suzhou","nmo_cabin","nmo_fema","nmo_junction","nmo_lakeside","nms_isolated","nms_midwest"],
+    quick: [["Runde neu starten","mp_restartgame 1","primary"]], hint: "nmo_ = Objective, nms_ = Survival – der Modus ergibt sich aus der Map."},
+  zps: {...GQ_SRC, maps: ["zpo_biotec","zps_cinema","zps_harvest"], quick: [["Runde neu starten","mp_restartgame 1","primary"]]},
+  fof: {...GQ_SRC, maps: ["fof_fistful","fof_depot","fof_robertlee","fof_tortuga"], quick: [["Runde neu starten","mp_restartgame 1","primary"]],
+    limits: [["mp_timelimit","Zeitlimit (Min.)"],["mp_fraglimit","Fraglimit"]]},
+  pvkii: {...GQ_SRC, maps: ["bt_island"], quick: [["Runde neu starten","mp_restartgame 1","primary"]]},
+  asrd: {maps: ["lobby"], quick: [], hint: "Missionen startet der Lobby-Leiter im Spiel."},
+  cs16: {maps: ["de_dust2","de_dust","de_inferno","de_nuke","de_train","de_aztec","de_cbble","de_prodigy","de_chateau","de_vertigo","de_piranesi","de_torn","de_storm","de_airstrip","de_survivor",
+      "cs_office","cs_italy","cs_assault","cs_militia","cs_estate","cs_747","cs_backalley","cs_havana","cs_siege","as_oilrig"],
+    quick: [["Runde neu starten","sv_restartround 1","primary"], ["Match neu starten","sv_restart 1"], ["Friendly Fire an","mp_friendlyfire 1"], ["Friendly Fire aus","mp_friendlyfire 0"]],
+    bots: GQ_CSBOTS, limits: [["mp_timelimit","Zeitlimit (Min.)"],["mp_maxrounds","Runden"],["mp_winlimit","Siege"]]},
+  czero: {maps: ["de_dust2_cz","de_dust_cz","de_aztec_cz","de_cbble_cz","de_chateau_cz","de_inferno_cz","de_piranesi_cz","de_prodigy_cz","de_train_cz",
+      "cs_italy_cz","cs_office_cz","cs_militia_cz","cs_havana_cz","cs_siege_cz","as_oilrig"],
+    quick: [["Runde neu starten","sv_restartround 1","primary"], ["Match neu starten","sv_restart 1"], ["Friendly Fire an","mp_friendlyfire 1"], ["Friendly Fire aus","mp_friendlyfire 0"]],
+    bots: GQ_CSBOTS, limits: [["mp_timelimit","Zeitlimit (Min.)"],["mp_maxrounds","Runden"],["mp_winlimit","Siege"]]},
+  dod: {maps: ["dod_anzio","dod_avalanche","dod_caen","dod_charlie","dod_chemille","dod_donner","dod_escape","dod_falaise","dod_flash","dod_flugplatz","dod_forest",
+      "dod_glider","dod_jagd","dod_kalt","dod_kraftstoff","dod_merderet","dod_northbound","dod_saints","dod_sturm","dod_switch","dod_vicenza","dod_zalec"],
+    quick: [["Runde neu starten","sv_restartround 1","primary"]], limits: [["mp_timelimit","Zeitlimit (Min.)"]]},
+  tfc: {maps: ["2fort","well","rock2","dustbowl","hunted","warpath","cz2","avanti","badlands","crossover2","epicenter","flagrun","push","ravelin","casbah"],
+    quick: [], limits: [["mp_timelimit","Zeitlimit (Min.)"],["mp_fraglimit","Fraglimit"]]},
+  hldm: {maps: ["crossfire","bounce","datacore","frenzy","gasworks","lambda_bunker","rapidcore","snark_pit","stalkyard","subtransit","undertow","boot_camp"],
+    quick: [], mode: {title: "Spielart", opts: [["0","Deathmatch"],["1","Teamplay"]], cmd: v => `mp_teamplay ${v}`, reload: true},
+    limits: [["mp_timelimit","Zeitlimit (Min.)"],["mp_fraglimit","Fraglimit"]]},
+  svencoop: {maps: ["hl_c00","svencoop1","svencoop2","stadium4"], quick: [], limits: [["mp_timelimit","Zeitlimit (Min.)"]]},
+  minecraft: {noMaps: true, noExec: true, quick: [
+      ["Tag","time set day","primary"], ["Nacht","time set night"], ["Wetter klar","weather clear"], ["Regen","weather rain"],
+      ["Speichern","save-all"], ["Alle heilen","effect give @a minecraft:instant_health 1 10"]],
+    mode: {title: "Spielmodus (alle Spieler + Standard)", opts: [["survival","Überleben"],["creative","Kreativ"],["adventure","Abenteuer"],["spectator","Zuschauer"]],
+      cmd: v => `defaultgamemode ${v}`, extra: v => `gamemode ${v} @a`},
+    mode2: {title: "Schwierigkeit", opts: [["peaceful","Friedlich"],["easy","Leicht"],["normal","Normal"],["hard","Schwer"]], cmd: v => `difficulty ${v}`}},
+};
+let gqMapsFor = null, gqMapsLive = [];
+const gqDef = () => current && GQ[gameOf(current)];
+function gqThumb(m){
+  const g = gameOf(current);
+  $("#gqThumb").innerHTML = m ? (mapThumb({map: m}, g) || "") : "";
+}
+function gqFillMaps(){
+  const d = gqDef(); if (!d || d.noMaps) return;
+  const all = [...new Set([...(d.maps || []), ...gqMapsLive])];
   const groups = {};
-  TF2_MAPS.forEach(m => { const k = m.split("_")[0]; (groups[k] = groups[k] || []).push(m); });
-  $("#tfQMap").innerHTML = Object.entries(groups).map(([k, ms]) =>
-    `<optgroup label="${esc(TF2_MODES[k] || k)}">${ms.map(m => `<option value="${m}">${m}</option>`).join("")}</optgroup>`).join("");
-  const go = m => { m = (m || "").replace(/[^\w\-]/g, ""); if (m) send(`changelevel ${m}`, `Map wechselt zu ${m}`).then(() => setTimeout(refreshStatus, 4000)); };
-  $("#btnTfQMap").onclick = () => go($("#tfQMapCustom").value.trim() || $("#tfQMap").value);
-  $("#btnTfRandMap").onclick = () => { const pool = TF2_MAPS.filter(m => !/^(mvm|tr)_/.test(m)); go(pool[Math.floor(Math.random() * pool.length)]); };
-  $("#btnTfBotAdd").onclick = () => {
-    const n = Math.max(1, Math.min(24, parseInt($("#tfBotN").value) || 1));
-    const args = [n, $("#tfBotClass").value, $("#tfBotTeam").value, $("#tfBotDiff").value].filter(Boolean).join(" ");
-    send(`tf_bot_add ${args}`, `${n} Bot(s) hinzugefügt`).then(() => setTimeout(refreshStatus, 1500));
+  all.forEach(m => { const k = m.includes("_") ? m.split("_")[0] : ""; (groups[k] = groups[k] || []).push(m); });
+  const sel = $("#gqMap"), keep = sel.value;
+  sel.innerHTML = Object.entries(groups).sort((a, b) => b[1].length - a[1].length).map(([k, ms]) =>
+    `<optgroup label="${esc(PFX[k] || k || "Maps")}">${ms.sort().map(m => `<option value="${m}">${m}</option>`).join("")}</optgroup>`).join("");
+  if (keep && all.includes(keep)) sel.value = keep;
+  gqThumb(sel.value);
+}
+async function gqLoadMaps(quiet){
+  if (!current) return;
+  try {
+    const r = await api(`/api/servers/${current.id}/command`, {body: {command: "maps *"}});
+    const found = [...new Set([...(r.output || "").matchAll(/([A-Za-z0-9_\-\.]+)\.bsp\b/g)].map(m => m[1]))];
+    gqMapsLive = found; gqMapsFor = current.id; gqFillMaps();
+    if (!quiet) toast(`${found.length} Maps auf dem Server gefunden`);
+  } catch (e) { if (!quiet) toast("Maps konnten nicht gelesen werden: " + e.message, true); }
+}
+function gqSend(cmd, msg){ return send(cmd, msg).then(o => { setTimeout(refreshStatus, 1500); return o; }); }
+function gqMapNow(){ return lastStatus && lastStatus.map && lastStatus.map !== "–" ? String(lastStatus.map).split("/").pop().replace(/\.bsp$/, "") : ""; }
+function renderGq(){
+  const d = gqDef(), g = current && gameOf(current);
+  const needRcon = !!(d && GAMES[g]?.rcon && !current.has_password);
+  document.body.classList.toggle("g-gq", !!(d && (GAMES[g]?.console || GAMES[g]?.rcon)));
+  if (!d) return;
+  $("#gqNeedRcon").classList.toggle("hidden", !needRcon);
+  $$(".gqonly .gqbody").forEach(x => x.classList.toggle("hidden", needRcon));
+  if (needRcon) return;
+  $("#gqActions").innerHTML = (d.quick || []).map(([l, c, cls]) => `<button class="${cls || ""}" data-cmd="${esc(c)}" title="${esc(c)}">${esc(l)}</button>`).join("");
+  $$("#gqActions [data-cmd]").forEach(b => b.onclick = () => gqSend(b.dataset.cmd));
+  const md = d.mode;
+  $("#gqModeBox").classList.toggle("hidden", !md);
+  if (md){
+    $("#gqModeTitle").textContent = md.title;
+    $("#gqMode").innerHTML = md.opts.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("") +
+      (d.mode2 ? `<optgroup label="${esc(d.mode2.title)}">${d.mode2.opts.map(([v, l]) => `<option value="2:${v}">${esc(l)}</option>`).join("")}</optgroup>` : "");
+    $("#gqModeHint").textContent = md.reload ? "Wird mit einem Mapwechsel aktiv (aktuelle Map wird neu geladen, Spieler bleiben verbunden)." : "";
+  }
+  const b = d.bots;
+  $("#gqBotBox").classList.toggle("hidden", !b);
+  if (b){
+    const opt = (sel, arr) => { $(sel).classList.toggle("hidden", !arr); if (arr) $(sel).innerHTML = arr.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join(""); };
+    opt("#gqBotTeam", b.teams); opt("#gqBotClass", b.classes); opt("#gqBotDiff", b.diffs);
+    $("#gqQuotaRow").classList.toggle("hidden", !b.quota);
+    $("#gqBotHint").textContent = b.hint || "";
+  }
+  $("#gqLimitBox").classList.toggle("hidden", !d.limits);
+  $("#gqLimits").innerHTML = (d.limits || []).map(([cv, l]) => `<span class="hint">${esc(l)}</span><input data-gqlim="${cv}" type="number" min="0" style="width:70px" placeholder="–">`).join("") +
+    (d.limits ? `<button id="btnGqLimits">Setzen</button>` : "");
+  const bl = $("#btnGqLimits");
+  if (bl) bl.onclick = () => {
+    const cmds = $$("[data-gqlim]").filter(i => i.value !== "").map(i => `${i.dataset.gqlim} ${Math.max(0, parseInt(i.value) || 0)}`);
+    if (cmds.length) gqSend(cmds.join("; "), "Limits gesetzt");
   };
-  $("#btnTfBotQuota").onclick = () => {
-    const q = Math.max(0, Math.min(31, parseInt($("#tfBotQuota").value) || 0));
-    const mode = $("#tfBotQuotaMode").value === "normal" ? "normal" : "fill";
-    send(`tf_bot_quota_mode ${mode}; tf_bot_quota ${q}`, q ? `Bots: ${mode === "fill" ? "auffüllen auf" : "fest"} ${q}` : "Bot-Auffüllen aus")
-      .then(() => setTimeout(refreshStatus, 1500));
+  $("#gqExecBox").classList.toggle("hidden", !!d.noExec);
+  $("#gqMapPanel").classList.toggle("hidden", !!d.noMaps);
+  $("#gqMapHint").textContent = d.hint || "";
+  if (gqMapsFor !== current.id){ gqMapsLive = []; gqMapsFor = current.id; if (!d.noMaps) gqLoadMaps(true); }
+  gqFillMaps();
+}
+(function initGq(){
+  if (!$("#gqActions")) return;
+  const go = m => { m = (m || "").replace(/[^\w\-\.]/g, ""); if (m) gqSend(`changelevel ${m}`, `Map wechselt zu ${m}`); };
+  $("#gqMap").addEventListener("change", () => gqThumb($("#gqMap").value));
+  $("#gqMapCustom").addEventListener("input", () => gqThumb($("#gqMapCustom").value.trim() || $("#gqMap").value));
+  $("#btnGqMap").onclick = () => go($("#gqMapCustom").value.trim() || $("#gqMap").value);
+  $("#btnGqRandMap").onclick = () => { const o = $$("#gqMap option").map(x => x.value).filter(m => !/^(mvm|tr)_/.test(m) && m !== gqMapNow()); if (o.length) go(o[Math.floor(Math.random() * o.length)]); };
+  $("#btnGqReload").onclick = () => { const m = gqMapNow(); m ? go(m) : toast("Aktuelle Map unbekannt", true); };
+  $("#btnGqMapsLoad").onclick = () => gqLoadMaps(false);
+  $("#btnGqMode").onclick = async () => {
+    const d = gqDef(); let v = $("#gqMode").value;
+    if (v.startsWith("2:")) { v = v.slice(2); return gqSend(d.mode2.cmd(v), `${d.mode2.title}: ${v}`); }
+    const cmds = [d.mode.cmd(v)];
+    if (d.mode.extra) cmds.push(d.mode.extra(v));
+    const m = gqMapNow();
+    if (d.mode.reload && m) cmds.push(`changelevel ${m}`);
+    gqSend(cmds.join("; "), `${d.mode.title}: ${$("#gqMode").selectedOptions[0].textContent}`);
   };
-  $("#btnTfLimits").onclick = () => {
-    const t = Math.max(0, parseInt($("#tfTime").value) || 0), w = Math.max(0, parseInt($("#tfWin").value) || 0);
-    send(`mp_timelimit ${t}; mp_winlimit ${w}`, `Zeitlimit ${t || "aus"} · Siege ${w || "aus"}`);
+  $("#btnGqBotAdd").onclick = () => {
+    const b = gqDef()?.bots; if (!b) return;
+    const n = Math.max(1, Math.min(24, parseInt($("#gqBotN").value) || 1));
+    gqSend(b.add(n, b.teams ? $("#gqBotTeam").value : "", b.classes ? $("#gqBotClass").value : "", b.diffs ? $("#gqBotDiff").value : ""), `${n} Bot(s) hinzugefügt`);
   };
-  $("#btnTfSay").onclick = async () => {
-    const t = $("#tfSayText").value.trim().replace(/[";]/g, ""); if (!t) return;
-    await send(`say ${t}`, "Nachricht gesendet"); $("#tfSayText").value = "";
+  $("#btnGqBotKick").onclick = () => { const b = gqDef()?.bots; if (b && confirm("Alle Bots entfernen?")) gqSend(b.kick, "Bots entfernt"); };
+  $("#btnGqBotQuota").onclick = () => {
+    const b = gqDef()?.bots; if (!b?.quota) return;
+    const q = Math.max(0, Math.min(31, parseInt($("#gqBotQuota").value) || 0));
+    gqSend(b.quota(q), q ? `Bots füllen auf ${q} auf` : "Bot-Auffüllen aus");
   };
-  $("#tfSayText").addEventListener("keydown", e => { if (e.key === "Enter") $("#btnTfSay").click(); });
-  $("#btnTfExec").onclick = () => { const c = $("#tfExecCfg").value.trim().replace(/[^\w.\-\/]/g, ""); if (c) send(`exec ${c}`); };
+  $("#btnGqSay").onclick = async () => {
+    const t = $("#gqSayText").value.trim().replace(/[";]/g, ""); if (!t) return;
+    await send(gameOf(current) === "minecraft" ? `say ${t}` : `say ${t}`, "Nachricht gesendet"); $("#gqSayText").value = "";
+  };
+  $("#gqSayText").addEventListener("keydown", e => { if (e.key === "Enter") $("#btnGqSay").click(); });
+  $("#btnGqRcon").onclick = async () => {
+    if (!confirm("Steuerung aktivieren? Der Server wird dafür EINMAL neu gestartet (RCON-Passwort + Online-Modus). Danach geht alles live.")) return;
+    try {
+      await api(`/api/servers/${current.id}/rcon-enable`, {body: {password: ""}});
+      current.has_password = true; toast("Steuerung aktiv – Server startet einmal neu"); renderGq();
+    } catch (e) { toast(e.message, true); }
+  };
+  $("#btnGqExec").onclick = () => { const c = $("#gqExecCfg").value.trim().replace(/[^\w.\-\/]/g, ""); if (c) send(`exec ${c}`); };
 })();
 const settingsFor = () => (current && gameOf(current) === "tf2") ? TF2_SETTINGS : SETTINGS;
 let allSettings = SETTINGS.flatMap(([, f]) => f);

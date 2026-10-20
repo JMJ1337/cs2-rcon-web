@@ -6,7 +6,7 @@
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap">
-<link rel="stylesheet" href="/static/app.css?v=119">
+<link rel="stylesheet" href="/static/app.css?v=120">
 </head>
 <body>
 
@@ -676,43 +676,55 @@
           </div>
         </div>
 
-        <div class="grid2 tf2only">
+        <div class="panel gqonly hidden" id="gqNeedRcon">
+          <h2>Steuerung aktivieren</h2>
+          <div class="hint" style="margin-bottom:8px">Dieser Server wurde ohne RCON angelegt. Einmal aktivieren (ein Neustart), danach laufen Mapwechsel, Spielart, Bots, Limits und der Servername live ohne Neustart. Der Server geht dabei auch in den Online-Modus (sv_lan 0).</div>
+          <button class="primary" id="btnGqRcon">Steuerung aktivieren</button>
+        </div>
+        <div class="grid2 gqonly gqbody">
           <div class="panel">
-            <h2>Schnellaktionen</h2>
-            <div class="btns" id="tf2Actions"></div>
-            <h3>Bots hinzufügen</h3>
-            <div class="row" style="flex-wrap:wrap;gap:6px">
-              <input id="tfBotN" type="number" min="1" max="24" value="1" style="width:70px" title="Anzahl">
-              <select id="tfBotTeam"><option value="">Team: automatisch</option><option value="red">RED</option><option value="blue">BLU</option></select>
-              <select id="tfBotClass"><option value="">Klasse: zufällig</option><option>scout</option><option>soldier</option><option>pyro</option><option>demoman</option><option>heavyweapons</option><option>engineer</option><option>medic</option><option>sniper</option><option>spy</option></select>
-              <select id="tfBotDiff"><option value="">Stärke: Standard</option><option value="easy">Leicht</option><option value="normal">Normal</option><option value="hard">Schwer</option><option value="expert">Experte</option></select>
-              <button class="primary" id="btnTfBotAdd">＋ Bots</button>
+            <h2>Schnellaktionen <span class="hint">live per Konsole/RCON – kein Neustart</span></h2>
+            <div class="btns" id="gqActions"></div>
+            <div id="gqModeBox" class="hidden">
+              <h3 id="gqModeTitle">Spielart</h3>
+              <div class="row" style="gap:6px"><select id="gqMode" style="flex:1"></select><button class="primary" id="btnGqMode">Übernehmen</button></div>
+              <div class="hint" id="gqModeHint" style="margin-top:4px"></div>
             </div>
-            <div class="row" style="margin-top:6px;gap:6px;align-items:center">
-              <span class="hint">Auffüllen auf</span><input id="tfBotQuota" type="number" min="0" max="31" value="12" style="width:70px">
-              <select id="tfBotQuotaMode"><option value="fill">Slots (mit Spielern)</option><option value="normal">feste Anzahl Bots</option></select>
-              <button id="btnTfBotQuota">Setzen</button>
+            <div id="gqBotBox" class="hidden">
+              <h3>Bots</h3>
+              <div class="row" style="flex-wrap:wrap;gap:6px">
+                <input id="gqBotN" type="number" min="1" max="24" value="1" style="width:70px" title="Anzahl">
+                <select id="gqBotTeam"></select><select id="gqBotClass"></select><select id="gqBotDiff"></select>
+                <button class="primary" id="btnGqBotAdd">＋ Bots</button><button class="danger" id="btnGqBotKick">Bots kicken</button>
+              </div>
+              <div class="row" id="gqQuotaRow" style="margin-top:6px;gap:6px;align-items:center">
+                <span class="hint">Auffüllen auf</span><input id="gqBotQuota" type="number" min="0" max="31" value="10" style="width:70px">
+                <span class="hint">Spieler (0 = aus)</span><button id="btnGqBotQuota">Setzen</button>
+              </div>
+              <div class="hint" id="gqBotHint" style="margin-top:6px"></div>
             </div>
-            <div class="hint" style="margin-top:6px">Bots brauchen ein Navmesh – auf allen offiziellen Maps vorhanden, auf Community-Maps oft nicht (dann stehen sie still).</div>
+            <div id="gqLimitBox" class="hidden">
+              <h3>Limits</h3>
+              <div class="row" id="gqLimits" style="gap:6px;align-items:center;flex-wrap:wrap"></div>
+            </div>
             <h3>Chat-Nachricht</h3>
-            <div class="row"><input id="tfSayText" placeholder="Nachricht an alle Spieler"><button id="btnTfSay">Senden</button></div>
-            <h3>Config ausführen</h3>
-            <div class="row"><input id="tfExecCfg" placeholder="z. B. server.cfg"><button id="btnTfExec">exec</button></div>
+            <div class="row"><input id="gqSayText" placeholder="Nachricht an alle Spieler"><button id="btnGqSay">Senden</button></div>
+            <div id="gqExecBox"><h3>Config ausführen</h3>
+            <div class="row"><input id="gqExecCfg" placeholder="z. B. server.cfg"><button id="btnGqExec">exec</button></div></div>
           </div>
-          <div class="panel">
+          <div class="panel" id="gqMapPanel">
             <h2>Map wechseln</h2>
-            <div class="row" style="margin-bottom:10px"><select id="tfQMap" style="flex:1"></select></div>
-            <div class="row" style="margin-bottom:10px"><input id="tfQMapCustom" placeholder="oder eigener Mapname (z. B. cp_orange_x3)" style="flex:1"></div>
-            <div class="btns"><button class="primary" id="btnTfQMap">Map wechseln</button><button id="btnTfRandMap">🎲 Zufällige Map</button></div>
-            <div class="hint" id="tfQHint" style="margin-top:8px">Der Spielmodus ergibt sich aus der Map (ctf_ Capture the Flag, cp_ Control Point, pl_ Payload, koth_ King of the Hill, mvm_ Mann vs. Machine …).</div>
-            <h3>Rundenlimits</h3>
-            <div class="row" style="gap:6px;align-items:center;flex-wrap:wrap">
-              <span class="hint">Zeitlimit</span><input id="tfTime" type="number" min="0" value="30" style="width:70px"><span class="hint">Min.</span>
-              <span class="hint">Siege</span><input id="tfWin" type="number" min="0" value="0" style="width:70px">
-              <button id="btnTfLimits">Setzen</button>
+            <div class="row" style="gap:10px;align-items:flex-start;margin-bottom:10px">
+              <div class="gqthumb" id="gqThumb"></div>
+              <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+                <select id="gqMap"></select>
+                <input id="gqMapCustom" placeholder="oder eigener Mapname">
+              </div>
             </div>
+            <div class="btns"><button class="primary" id="btnGqMap">Map wechseln</button><button id="btnGqRandMap">🎲 Zufällige Map</button><button id="btnGqReload">Map neu laden</button><button class="small" id="btnGqMapsLoad" title="installierte Maps vom Server holen (maps *)">↻ Maps vom Server</button></div>
+            <div class="hint" id="gqMapHint" style="margin-top:8px"></div>
             <h3>Server-Info</h3>
-            <div class="hint" id="tfHost" style="font-size:13px"></div>
+            <div class="hint" id="gqHost" style="font-size:13px"></div>
           </div>
         </div>
 
@@ -1057,6 +1069,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=166"></script>
+<script src="/static/app.js?v=167"></script>
 </body>
 </html>

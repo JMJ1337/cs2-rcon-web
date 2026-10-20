@@ -32,7 +32,7 @@ from .games import minecraft as mcmod
 from .games import teamspeak as tsmod
 from .games import catalog as catmod
 from .games import wreckfest_data as wfd
-from .rcon import RconAuthError, RconClient, RconError
+from .rcon import GoldSrcRcon, RconAuthError, RconClient, RconError
 
 gslt.register_catalog(catmod.CATALOG)
 for _g in gslt.APPS:
@@ -721,7 +721,10 @@ def ts_query(s: dict):
 def client_for(s: dict) -> RconClient:
     c = _clients.get(s["id"])
     if c is None:
-        c = RconClient(s["host"], int(s["port"]), s.get("password", ""), RCON_TIMEOUT)
+        kind = (catmod.CATALOG.get(game_of(s)) or {}).get("rcon")
+        cls = GoldSrcRcon if kind == "goldsrc" else RconClient
+        port = int(s.get("game_port") or s["port"]) if kind else int(s["port"])
+        c = cls(s["host"], port, s.get("password", ""), RCON_TIMEOUT)
         _clients[s["id"]] = c
     return c
 
@@ -1091,8 +1094,27 @@ async def _apply_auto_name(s: dict, g: str, st: dict) -> None:
             if want and want != st.get("hostname"):
                 await sf_client(s).call("RenameServer", {"ServerName": want})
                 st["hostname"] = want
+        elif (catmod.CATALOG.get(g) or {}).get("rcon") and s.get("password"):
+            want = _auto_name(s, st.get("hostname"), "")
+            if want and want != st.get("hostname") and time.time() - _rename_try.get(s["id"], 0) > 120:
+                _rename_try[s["id"]] = time.time()
+                await client_for(s).execute(f'hostname "{want}"')
+                st["hostname"] = want
     except Exception as e:  # noqa: BLE001 – Umbenennen darf den Status nie verhindern
         log.debug("Umbenennen von %s fehlgeschlagen: %s", s.get("name"), e)
+    # Name in der Liste überall nach Schema (auch Spiele ohne Umbenennen im Spiel)
+    try:
+        if g not in ("cs2", "teamspeak", "tf2", "wreckfest", "satisfactory") and s["id"] not in _renaming:
+            want = _auto_name(s, st.get("hostname"), "")
+            live = bool((catmod.CATALOG.get(g) or {}).get("rcon") and s.get("password"))
+            if want and (want != s.get("name") or s.get("name_from_game", True) != live):
+                await _set_server_fields(s["id"], name=want, name_from_game=live)
+                s["name"], s["name_from_game"] = want, live
+    except Exception as e:  # noqa: BLE001
+        log.debug("Listenname %s: %s", s.get("name"), e)
+
+
+_rename_try: dict[str, float] = {}
 
 
 def _mode_hostname(s: dict, hostname: str | None, mode_label: str, settings: dict) -> str | None:
@@ -7398,6 +7420,40 @@ async def change_ports(sid: str, data: PortsIn):
     _rot_cache.pop(sid, None)
     log.info("%s: Ports geändert %s", name, res)
     return {"ok": True, **res}
+
+
+class RconEnableIn(BaseModel):
+    password: str = ""
+
+
+@app.post("/api/servers/{sid}/rcon-enable", dependencies=auth)
+async def rcon_enable(sid: str, data: RconEnableIn):
+    """Einmalig RCON (und Online-Modus sv_lan 0) für Source-/GoldSrc-Katalogserver einschalten – Container wird
+    einmal neu erstellt, danach laufen Map, Bots, Name … live über RCON."""
+    s = get_server(sid)
+    c = catmod.CATALOG.get(game_of(s)) or {}
+    if not c.get("rcon") or not s.get("container"):
+        raise HTTPException(400, "Für dieses Spiel nicht möglich")
+    pw = re.sub(r'["\s;]', "", data.password or s.get("password") or "") or templates.DEFAULT_ADMIN_PW
+    try:
+        info = await docker_api.inspect(s["container"])
+        if ((info.get("Config") or {}).get("Labels") or {}).get("gsm.managed") != "1":
+            raise HTTPException(400, "Container stammt nicht aus diesem Tool")
+
+        def mutate(cfg, hc):
+            env = []
+            for e in cfg.get("Env") or []:
+                if e.startswith("GAME_PARAMS="):
+                    prm = re.sub(r"\s*\+rcon_password\s+\S+", "", e.split("=", 1)[1])
+                    prm = re.sub(r"\+sv_lan\s+1\b", "+sv_lan 0", prm)
+                    e = "GAME_PARAMS=" + (prm + f" +rcon_password {pw}").strip()
+                env.append(e)
+            cfg["Env"] = env
+        await docker_api.recreate(s["container"], mutate)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    await _set_server_fields(sid, password=pw)
+    return {"ok": True}
 
 
 class CatPortsIn(BaseModel):

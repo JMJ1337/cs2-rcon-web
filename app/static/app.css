@@ -336,7 +336,10 @@ body:not(.g-wreckfest) #wfPanel{display:none!important}
 .pfbanner{border:1px solid color-mix(in srgb,var(--warn,#e5a50a) 60%,var(--line));background:color-mix(in srgb,var(--warn,#e5a50a) 12%,transparent);border-radius:9px;padding:10px 14px;margin-bottom:14px;font-size:14px}
 .pfbanner b{color:var(--warn,#e5a50a)}
 body.g-other:not(.g-tf2) .srconly{display:none!important}
-body:not(.g-tf2) .tf2only{display:none!important}
+body:not(.g-gq) .gqonly{display:none!important}
+.gqthumb{width:160px;height:120px;border-radius:8px;overflow:hidden;background:var(--panel2,#1a1f1a);flex:0 0 160px;display:flex;align-items:center;justify-content:center}
+.gqthumb img{width:100%;height:100%;object-fit:cover}
+.gqthumb .mthumb{width:100%;height:100%}
 .sparkbox{display:grid;grid-template-columns:auto 1fr;gap:4px;align-items:stretch}
 .sparkbox .spark{height:100%!important;width:100%}
 .yax{display:flex;flex-direction:column;justify-content:space-between;font-size:9.5px;line-height:1;color:var(--muted);text-align:right;font-family:var(--mono);min-width:34px;white-space:nowrap}

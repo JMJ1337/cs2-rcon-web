@@ -119,3 +119,71 @@ class RconClient:
                     if attempt:
                         raise RconError(f"Verbindung verloren: {e.__class__.__name__}") from e
             return ""
+
+
+class _UdpProto(asyncio.DatagramProtocol):
+    def __init__(self):
+        self.queue: asyncio.Queue = asyncio.Queue()
+
+    def datagram_received(self, data, addr):
+        self.queue.put_nowait(data)
+
+    def error_received(self, exc):
+        self.queue.put_nowait(exc)
+
+
+class GoldSrcRcon:
+    """RCON für GoldSrc-Server (CS 1.6, DoD, TFC, HLDM, Sven Co-op): UDP mit Challenge."""
+
+    def __init__(self, host: str, port: int, password: str, timeout: float = 4.0):
+        self.host, self.port, self.password, self.timeout = host, port, password, timeout
+        self.lock = asyncio.Lock()
+
+    def close(self) -> None:
+        pass
+
+    async def execute(self, command: str, gap: float = 0.3) -> str:
+        async with self.lock:
+            loop = asyncio.get_running_loop()
+            try:
+                tr, pr = await loop.create_datagram_endpoint(_UdpProto, remote_addr=(self.host, self.port))
+            except OSError as e:
+                raise RconError(f"Keine Verbindung zu {self.host}:{self.port} ({e.__class__.__name__})") from e
+            try:
+                async def recv(t):
+                    d = await asyncio.wait_for(pr.queue.get(), t)
+                    if isinstance(d, Exception):
+                        raise RconError(str(d))
+                    return d
+                tr.sendto(b"\xff\xff\xff\xffchallenge rcon\n")
+                try:
+                    d = await recv(self.timeout)
+                except asyncio.TimeoutError as e:
+                    raise RconError(f"Keine Antwort von {self.host}:{self.port} (UDP-RCON)") from e
+                txt = d[4:].decode("latin-1", "replace")
+                parts = txt.split()
+                if len(parts) < 3 or parts[0] != "challenge":
+                    raise RconError("Unerwartete Challenge-Antwort: " + txt[:60])
+                ch = parts[2]
+                pw = self.password.replace('"', "")
+                tr.sendto(b"\xff\xff\xff\xff" + f'rcon {ch} "{pw}" {command}\n'.encode("utf-8", "replace"))
+                out = []
+                t = self.timeout
+                while True:
+                    try:
+                        d = await recv(t)
+                    except asyncio.TimeoutError:
+                        break
+                    body = d[4:]
+                    if body[:1] == b"l":
+                        body = body[1:]
+                    out.append(body.rstrip(b"\x00").decode("utf-8", "replace"))
+                    t = gap
+                res = "".join(out)
+                if "Bad rcon_password" in res:
+                    raise RconAuthError("RCON-Passwort falsch")
+                if "No password set" in res:
+                    raise RconAuthError("Auf dem Server ist kein rcon_password gesetzt")
+                return res
+            finally:
+                tr.close()

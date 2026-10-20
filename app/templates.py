@@ -282,7 +282,7 @@ def build(game: str, v: dict, data_dir: str) -> dict:
         if len(pw) < 5:
             raise ValueError("Valheim-Passwort muss mindestens 5 Zeichen haben")
         env = [f"SERVER_NAME={v.get('server_name') or name}", f"WORLD_NAME={v.get('world') or 'Dedicated'}",
-               f"SERVER_PASS={pw}", f"SERVER_PORT={port}", "SERVER_PUBLIC=false", "TZ=Europe/Berlin"]
+               f"SERVER_PASS={pw}", f"SERVER_PORT={port}", "SERVER_PUBLIC=true", "TZ=Europe/Berlin"]
         pub(port, "udp"); pub(port + 1, "udp")
         host["Binds"] += [f"{data_dir}/config:/config", f"{data_dir}/server:/opt/valheim"]
         host["CapAdd"] = ["SYS_NICE"]
@@ -339,6 +339,11 @@ def build(game: str, v: dict, data_dir: str) -> dict:
                 base = re.sub(r"\s*" + re.escape(flag) + (r"\S*" if flag.endswith("=") else r"\s+\S+"), "", base)
             sub["params"] = (base + " " + " ".join((f"{pp[f]}{vals[f]}" if pp[f].endswith("=") else f"{pp[f]} {vals[f]}")
                                                    for f in pp if f in vals)).strip()
+        rcon_pw = ""
+        if c.get("rcon"):                    # RCON aktivieren: Steuerung (Map, Bots, Name …) live ohne Neustart
+            rcon_pw = re.sub(r'["\s;]', "", v.get("rcon_pw") or "") or DEFAULT_ADMIN_PW
+            base = re.sub(r"\s*\+rcon_password\s+\S+", "", sub["params"] or "")
+            sub["params"] = (base + f" +rcon_password {rcon_pw}").strip()
         env = [e.format(**sub) for e in c["env"]]
         for f, _lbl, _d, protos, cport in c["ports"]:
             if f in pp or c.get("port_env"):
@@ -359,7 +364,7 @@ def build(game: str, v: dict, data_dir: str) -> dict:
         st = c["status"]
         sp = vals.get(st[1]) if len(st) > 1 and st[1] in vals else vals.get("port")
         jp = vals.get(c["join"][1]) or vals.get("port")
-        srv = {"port": sp, "password": "", "game_port": jp}
+        srv = {"port": sp, "password": rcon_pw, "game_port": jp}
         if c.get("web"):
             srv["web_url"] = f"http://{{host}}:{wport}"
     elif game == "wreckfest":
