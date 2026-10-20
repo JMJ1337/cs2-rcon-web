@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=102">
+<link rel="stylesheet" href="/static/app.css?v=103">
 </head>
 <body>
 
@@ -17,6 +17,7 @@
     <button class="primary" id="btnPubLogin">Anmelden</button>
   </header>
   <div class="pubintro hint">Alle Spielserver im LAN. „Beitreten“ startet das Spiel und verbindet direkt (wo das Spiel es unterstützt), sonst Adresse kopieren und im Spiel eintragen.</div>
+  <div id="pubTour"></div>
   <div class="pubgrid" id="pubGrid"><div class="hint">Lade Server …</div></div>
   <div id="pubMatches"></div>
   <div id="pubCache" class="pubcachegames"></div>
@@ -80,6 +81,7 @@
       <button data-view="storage" class="adminonly">🖴 Speicher (iSCSI)</button>
       <button data-view="scan">⌕ Netzwerk-Scan <span class="pill hidden" id="scanBadge"></span></button>
       <button data-view="create" class="createonly">＋ Neuen Server anlegen</button>
+      <button data-view="tour" class="adminonly">🏆 Turnier</button>
       <button data-view="bot" class="adminonly">🤖 Steam-Bot</button>
       <button data-view="users" class="adminonly">☰ Benutzer</button>
       <button data-view="auto" class="adminonly">⚙ Automatik &amp; Einstellungen</button>
@@ -100,6 +102,7 @@
       <div class="topbar"><div><div class="title">Übersicht aller Server</div><div class="sub" id="dashSub">wird geladen …</div></div>
         <div style="margin-left:auto" class="row"><span class="hint">Verlauf</span><div class="seg" id="rangeSeg"><button data-range="5">Live</button><button data-range="60">1 h</button><button data-range="360">6 h</button><button data-range="1440">24 h</button></div></div></div>
       <div class="content" style="max-width:none">
+        <div id="dashTour"></div>
         <div id="hostPanel"></div>
         <div id="cachePanel"></div>
         <div id="dashGrid"></div>
@@ -376,6 +379,40 @@
     </section>
 
     <!-- Benutzer -->
+    <section id="view-tour" class="hidden">
+      <div class="topbar"><div><div class="title">🏆 Turnier <span class="hint" id="tourStatus"></span></div><div class="sub">CS2 Wingman (2 gegen 2) – Teams, Spielplan, Server und Ergebnisse automatisch. CS #1 bleibt unberührt.</div></div>
+        <div style="margin-left:auto" class="row" id="tourBtns"><button id="tourGen">Spielplan erstellen</button><button class="primary" id="tourStart">▶ Turnier starten</button><button id="tourStop">⏸ Anhalten</button><button class="danger small" id="tourReset">Spielplan löschen</button></div></div>
+      <div class="content" style="max-width:1300px">
+        <div class="grid2">
+          <div class="panel">
+            <h2>Einstellungen</h2>
+            <div class="pfopts">
+              <label><input type="checkbox" id="tourActive"> Turniermodus an (Turnier auf der Übersicht und der öffentlichen Seite zeigen)</label>
+              <label>Name <input id="tourName" maxlength="60" style="width:260px"></label>
+              <label>Modus <select id="tourMode"><option value="groups">Gruppen + K.-o.</option><option value="ko">K.-o.-System</option><option value="double">Doppel-K.-o.</option><option value="rr">Jeder gegen jeden</option></select></label>
+              <label>Start <input type="datetime-local" id="tourStartAt"></label>
+              <label>Dauer je Match <input type="number" id="tourMatchMin" min="10" style="width:70px"> min + Pause <input type="number" id="tourPauseMin" min="0" style="width:60px"> min</label>
+              <label>Maps (der Reihe nach) <input id="tourMaps" style="width:320px" placeholder="de_inferno, de_nuke, de_overpass, de_vertigo"></label>
+              <label><input type="checkbox" id="tourReg"> Anmeldung auf der öffentlichen Seite offen</label>
+              <label><input type="checkbox" id="tourAuto"> Fehlende Server beim Start automatisch anlegen</label>
+              <label><input type="checkbox" id="tourInvite"> Spieler per Steam-Bot zum Match einladen (10 min vorher und beim Start)</label>
+            </div>
+            <div class="row" style="margin-top:10px"><button class="primary" id="tourSave">Speichern</button></div>
+            <div class="hint" id="tourServers" style="margin-top:10px"></div>
+          </div>
+          <div class="panel">
+            <h2>Teilnehmer <span class="hint" id="tourPlN"></span></h2>
+            <div class="row" style="gap:6px;margin-bottom:8px"><select id="tourAddSel" style="flex:1"></select><button id="tourAdd">Hinzufügen</button></div>
+            <div id="tourPlayers"></div>
+            <h2 style="margin-top:14px">Teams <span class="hint">(je 2 Spieler – bilden die Spieler auf der öffentlichen Seite selbst, hier änderbar)</span></h2>
+            <div id="tourTeams"></div>
+            <div class="row" style="gap:6px;margin-top:8px"><input id="tourNewTeam" placeholder="Neues Team" maxlength="24" style="flex:1"><button id="tourAddTeam">Team anlegen</button></div>
+          </div>
+        </div>
+        <div class="panel" style="margin-top:16px"><h2>Spielplan &amp; Ergebnisse</h2><div id="tourBoard"></div></div>
+      </div>
+    </section>
+
     <section id="view-bot" class="hidden">
       <div class="topbar"><div><div class="title">Steam-Bot „<span id="botTitle">GrohLan</span>“</div><div class="sub">Neue Spieler automatisch als Freund hinzufügen und allen auf der LAN Nachrichten schicken</div></div></div>
       <div class="content" style="max-width:1100px">
@@ -882,6 +919,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=129"></script>
+<script src="/static/app.js?v=130"></script>
 </body>
 </html>

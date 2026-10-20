@@ -15,12 +15,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import mapimages, gslt, matchlog, steamlist, playerdb, notify, prefill_more
 from . import cache_model, cache_inventory, timings, steambot_ctl
+from . import tournament as tour
 from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
@@ -63,7 +64,7 @@ async def lifespan(_app):
              asyncio.create_task(load_loop()), asyncio.create_task(live_loop()),
              asyncio.create_task(player_loop()), asyncio.create_task(monitor_loop()),
              asyncio.create_task(gslt_loop()), asyncio.create_task(backup_loop()),
-             asyncio.create_task(_names_loop())] if WATCH_ENABLED else []
+             asyncio.create_task(_names_loop()), asyncio.create_task(tour_loop())] if WATCH_ENABLED else []
     _inv_watch()
     try:
         _resume_jobs()
@@ -1032,6 +1033,8 @@ async def _apply_auto_name(s: dict, g: str, st: dict) -> None:
 
 
 def _mode_hostname(s: dict, hostname: str | None, mode_label: str, settings: dict) -> str | None:
+    if _tour_names.get(s["id"]):                  # läuft gerade ein Turnier-Match: Name nach den Teams
+        return _tour_names[s["id"]]
     pattern = (settings.get("hostname_pattern") or "").strip()
     if not pattern:
         return None
@@ -3040,6 +3043,530 @@ async def _cache_autostart(lc: str) -> None:
         notify.fire(f"🔄 Lancache war nicht gestartet (Exit {d['exit_code']}) – automatisch gestartet.", event="cache_down", key="cache-heal")
     except docker_api.DockerError as e:
         _cache_heal["last_error"] = str(e)[:200]
+
+
+# ---------------------------------------------------------------- CS2-Wingman-Turnier
+_tour_names: dict[str, str] = {}          # Server-ID -> Name während eines Turnier-Matches („Turnier: A vs B“)
+
+
+def _tour_pool() -> list[dict]:
+    """CS2-Server fürs Turnier – CS #1 bleibt immer unberührt."""
+    cs = [s for s in load_servers() if game_of(s) == "cs2" and s.get("container")]
+    return [s for s in cs if _server_nr(s, (_state.get(s["id"]) or {}).get("hostname")) != 1]
+
+
+def _tour_server_label(sid: str | None) -> str | None:
+    s = next((x for x in load_servers() if x["id"] == sid), None) if sid else None
+    return s.get("name") if s else None
+
+
+def _tour_out(d: dict) -> dict:
+    v = tour.public_view(d)
+    names = {s["id"]: s.get("name") for s in load_servers()}
+    for m in v["matches"]:
+        m["server_name"] = names.get(m.get("server"))
+    return v
+
+
+# --- Steam-Anmeldung (OpenID) für die öffentliche Turnierseite: erkennt den Spieler ohne Passwort
+STEAM_OPENID = "https://steamcommunity.com/openid/login"
+
+
+def _sign_sid(steamid: str) -> str:
+    return steamid + "." + hmac.new(SECRET, ("steam:" + steamid).encode(), hashlib.sha256).hexdigest()[:24]
+
+
+def _visitor(request: Request) -> dict:
+    """Wer ist der Besucher? 1. per Steam angemeldet (Cookie) 2. erkannt über seine LAN-IP in der Spielerliste."""
+    c = request.cookies.get("gsm_steam") or ""
+    sid = c.split(".")[0]
+    if sid and hmac.compare_digest(c, _sign_sid(sid)):
+        p = playerdb.get(sid)
+        return {"steamid": sid, "name": playerdb.display(p) if p else sid, "avatar": (p or {}).get("avatar"), "via": "steam"}
+    ip = client_ip(request)
+    try:
+        if ipaddress.ip_address(ip).is_private:
+            cand = [p for p in playerdb.all_players() if p.get("lan_ip") == ip and str(p.get("steamid") or "").isdigit()]
+            if cand:
+                p = max(cand, key=lambda x: x.get("last_seen") or 0)
+                return {"steamid": p["steamid"], "name": playerdb.display(p), "avatar": p.get("avatar"), "via": "ip"}
+    except ValueError:
+        pass
+    return {}
+
+
+@app.get("/api/public/steam/login")
+async def steam_login(request: Request):
+    base = str(request.base_url).rstrip("/")
+    params = {"openid.ns": "http://specs.openid.net/auth/2.0", "openid.mode": "checkid_setup",
+              "openid.return_to": f"{base}/api/public/steam/return", "openid.realm": base + "/",
+              "openid.identity": "http://specs.openid.net/auth/2.0/identifier_select",
+              "openid.claimed_id": "http://specs.openid.net/auth/2.0/identifier_select"}
+    from urllib.parse import urlencode
+    return RedirectResponse(STEAM_OPENID + "?" + urlencode(params))
+
+
+@app.get("/api/public/steam/return")
+async def steam_return(request: Request):
+    q = dict(request.query_params)
+    m = re.fullmatch(r"https://steamcommunity\.com/openid/id/(\d{17})", q.get("openid.claimed_id", ""))
+    if not m:
+        raise HTTPException(400, "Steam-Anmeldung fehlgeschlagen")
+    q["openid.mode"] = "check_authentication"
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10) as cl:
+            r = await cl.post(STEAM_OPENID, data=q)
+        if "is_valid:true" not in r.text:
+            raise HTTPException(400, "Steam hat die Anmeldung nicht bestätigt")
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"Steam nicht erreichbar: {e}")
+    sid = m.group(1)
+    if not playerdb.get(sid):
+        playerdb.add_manual(sid, "", "")
+    resp = RedirectResponse("/#turnier")
+    resp.set_cookie("gsm_steam", _sign_sid(sid), max_age=30 * 86400, httponly=True, samesite="lax")
+    return resp
+
+
+@app.post("/api/public/steam/logout")
+async def steam_logout():
+    r = JSONResponse({"ok": True})
+    r.delete_cookie("gsm_steam")
+    return r
+
+
+@app.get("/api/public/tournament/state")
+async def public_tournament(request: Request):
+    d = tour.load()
+    if not d.get("active"):
+        return {"active": False}
+    me = _visitor(request)
+    if me:
+        me["registered"] = any(p["steamid"] == me["steamid"] for p in d["players"])
+        t = tour.player_team(d, me["steamid"])
+        me["team"] = t["id"] if t else None
+    return {**_tour_out(d), "me": me or None}
+
+
+def _tour_me(request: Request, d: dict) -> dict:
+    me = _visitor(request)
+    if not me:
+        raise HTTPException(401, "Nicht erkannt – bitte mit Steam anmelden")
+    if d.get("status") != "setup" or not d.get("registration"):
+        raise HTTPException(409, "Anmeldung ist geschlossen")
+    return me
+
+
+@app.post("/api/public/tournament/register")
+async def public_tour_register(request: Request):
+    d = tour.load()
+    me = _tour_me(request, d)
+    if not any(p["steamid"] == me["steamid"] for p in d["players"]):
+        d["players"].append({"steamid": me["steamid"], "name": me["name"], "avatar": me.get("avatar"), "t": time.time()})
+        tour.save(d)
+    return {"ok": True}
+
+
+@app.post("/api/public/tournament/unregister")
+async def public_tour_unregister(request: Request):
+    d = tour.load()
+    me = _tour_me(request, d)
+    d["players"] = [p for p in d["players"] if p["steamid"] != me["steamid"]]
+    for t in d["teams"]:
+        t["players"] = [x for x in t["players"] if x != me["steamid"]]
+    d["teams"] = [t for t in d["teams"] if t["players"]]
+    tour.save(d)
+    return {"ok": True}
+
+
+class TourTeamIn(BaseModel):
+    name: str = Field(min_length=1, max_length=24)
+
+
+def _clean_team_name(n: str) -> str:
+    return re.sub(r'["\;]', "", n).strip()[:24]
+
+
+@app.post("/api/public/tournament/team")
+async def public_tour_team(data: TourTeamIn, request: Request):
+    """Team gründen – der Partner tritt danach bei."""
+    d = tour.load()
+    me = _tour_me(request, d)
+    if not any(p["steamid"] == me["steamid"] for p in d["players"]):
+        raise HTTPException(400, "Erst anmelden")
+    if tour.player_team(d, me["steamid"]):
+        raise HTTPException(400, "Du bist schon in einem Team")
+    name = _clean_team_name(data.name)
+    if any(t["name"].lower() == name.lower() for t in d["teams"]):
+        raise HTTPException(400, "Den Teamnamen gibt es schon")
+    d["teams"].append({"id": tour.new_team_id(), "name": name, "players": [me["steamid"]]})
+    tour.save(d)
+    return {"ok": True}
+
+
+@app.post("/api/public/tournament/team/{tid}/join")
+async def public_tour_join(tid: str, request: Request):
+    d = tour.load()
+    me = _tour_me(request, d)
+    if not any(p["steamid"] == me["steamid"] for p in d["players"]):
+        raise HTTPException(400, "Erst anmelden")
+    if tour.player_team(d, me["steamid"]):
+        raise HTTPException(400, "Du bist schon in einem Team")
+    t = tour.team(d, tid)
+    if not t or len(t["players"]) >= 2:
+        raise HTTPException(400, "Team ist voll")
+    t["players"].append(me["steamid"])
+    tour.save(d)
+    return {"ok": True}
+
+
+@app.post("/api/public/tournament/team/leave")
+async def public_tour_leave(request: Request):
+    d = tour.load()
+    me = _tour_me(request, d)
+    for t in d["teams"]:
+        t["players"] = [x for x in t["players"] if x != me["steamid"]]
+    d["teams"] = [t for t in d["teams"] if t["players"]]
+    tour.save(d)
+    return {"ok": True}
+
+
+# --- Verwaltung
+class TourSettings(BaseModel):
+    active: bool | None = None
+    name: str | None = Field(None, max_length=60)
+    mode: str | None = None
+    start: float | None = None
+    match_min: int | None = Field(None, ge=10, le=180)
+    pause_min: int | None = Field(None, ge=0, le=60)
+    maps: list[str] | None = None
+    registration: bool | None = None
+    auto_servers: bool | None = None
+    invite: bool | None = None
+
+
+@app.get("/api/tournament", dependencies=auth)
+async def tour_get(request: Request):
+    _need_admin(request)
+    d = tour.load()
+    pool = _tour_pool()
+    lan = [{"steamid": p["steamid"], "name": playerdb.display(p), "avatar": p.get("avatar")}
+           for p in playerdb.all_players() if str(p.get("steamid") or "").isdigit() and playerdb.on_lan(p)]
+    return {**_tour_out(d), "settings": {k: d.get(k) for k in ("maps", "auto_servers", "invite")},
+            "pool": [{"id": s["id"], "name": s["name"], "online": bool((_state.get(s["id"]) or {}).get("online"))} for s in pool],
+            "needed": tour.needed_servers(d) if d["matches"] else None, "lan_players": lan,
+            "bot": steambot_ctl.settings().get("enabled")}
+
+
+@app.put("/api/tournament", dependencies=auth)
+async def tour_put(data: TourSettings, request: Request):
+    _need_admin(request)
+    d = tour.load()
+    for k, v in data.model_dump(exclude_none=True).items():
+        if k == "mode" and v not in tour.MODES:
+            raise HTTPException(400, "Unbekannter Modus")
+        if k == "maps":
+            v = [re.sub(r"[^\w\-/]", "", x) for x in v if x.strip()][:20] or tour.WINGMAN_MAPS
+        if k == "name":
+            v = _clean_team_name(v) if False else re.sub(r'["\;]', "", v).strip()[:60]
+        d[k] = v
+    if d["matches"] and d["status"] != "done":
+        tour.plan(d)
+    tour.save(d)
+    return {"ok": True}
+
+
+class TourPlayerIn(BaseModel):
+    steamid: str = Field(pattern=r"^\d{17}$")
+
+
+@app.post("/api/tournament/players", dependencies=auth)
+async def tour_add_player(data: TourPlayerIn, request: Request):
+    _need_admin(request)
+    d = tour.load()
+    if not any(p["steamid"] == data.steamid for p in d["players"]):
+        p = playerdb.get(data.steamid)
+        d["players"].append({"steamid": data.steamid, "name": playerdb.display(p) if p else data.steamid,
+                             "avatar": (p or {}).get("avatar"), "t": time.time()})
+        tour.save(d)
+    return {"ok": True}
+
+
+@app.delete("/api/tournament/players/{steamid}", dependencies=auth)
+async def tour_del_player(steamid: str, request: Request):
+    _need_admin(request)
+    d = tour.load()
+    d["players"] = [p for p in d["players"] if p["steamid"] != steamid]
+    for t in d["teams"]:
+        t["players"] = [x for x in t["players"] if x != steamid]
+    d["teams"] = [t for t in d["teams"] if t["players"]]
+    tour.save(d)
+    return {"ok": True}
+
+
+class TourTeamAdmin(BaseModel):
+    id: str | None = None
+    name: str = Field(min_length=1, max_length=24)
+    players: list[str] = Field(default_factory=list, max_length=2)
+
+
+@app.post("/api/tournament/teams", dependencies=auth)
+async def tour_team_save(data: TourTeamAdmin, request: Request):
+    _need_admin(request)
+    d = tour.load()
+    reg = {p["steamid"] for p in d["players"]}
+    pl = [x for x in data.players if x in reg]
+    t = tour.team(d, data.id) if data.id else None
+    for o in d["teams"]:
+        if o is not t:
+            o["players"] = [x for x in o["players"] if x not in pl]
+    if t:
+        t.update(name=_clean_team_name(data.name), players=pl)
+    else:
+        d["teams"].append({"id": tour.new_team_id(), "name": _clean_team_name(data.name), "players": pl})
+    d["teams"] = [x for x in d["teams"] if x["players"] or x is t]
+    tour.save(d)
+    return {"ok": True}
+
+
+@app.delete("/api/tournament/teams/{tid}", dependencies=auth)
+async def tour_team_del(tid: str, request: Request):
+    _need_admin(request)
+    d = tour.load()
+    d["teams"] = [t for t in d["teams"] if t["id"] != tid]
+    tour.save(d)
+    return {"ok": True}
+
+
+@app.post("/api/tournament/generate", dependencies=auth)
+async def tour_generate(request: Request):
+    """Spielplan erzeugen (Turnierbaum + Zeitplan). Geht nur, solange das Turnier nicht läuft."""
+    _need_admin(request)
+    d = tour.load()
+    if d["status"] == "running":
+        raise HTTPException(409, "Turnier läuft schon")
+    try:
+        tour.generate(d)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    d["servers"] = [s["id"] for s in _tour_pool()]
+    d["status"] = "setup"
+    tour.plan(d)
+    tour.save(d)
+    return {"ok": True, "needed": tour.needed_servers(d), "have": len(d["servers"])}
+
+
+async def _tour_create_servers(n: int) -> str | None:
+    """Fehlende CS2-Server fürs Turnier anlegen (wie „Neuen Server anlegen“, Spieldateien aus der Vorlage)."""
+    cs = [s for s in load_servers() if game_of(s) == "cs2"]
+    if not cs:
+        return None
+    nr = max([_server_nr(s, (_state.get(s["id"]) or {}).get("hostname")) for s in cs] + [1]) + 1
+    used = set(await _used_ports())
+    vals = {k: (dv.replace("{n}", str(nr)) if isinstance(dv, str) else dv) for k, _l, _t, dv, _h in templates.TEMPLATES["cs2"]["fields"]}
+    vals.update({k: str(v) for k, v in templates.suggest_ports("cs2", used, templates.parse_range(automation.get_settings().get("port_range"))).items()})
+    vals.update(server_name=f"Groh CS #{nr} Turnier", mode="wingman", token="", _copy_from="_local" if _tpl.get("last") else cs[0]["id"])
+    base = (automation.get_settings().get("games_base") or "/mnt/grohlan").rstrip("/")
+    data = BatchIn.model_construct(game="cs2", values=vals, data_dir=f"{base}/cs/server{nr}", host=cs[0]["host"], count=n, n=nr)
+    r = await _start_batch(data, cs[0]["host"])
+    return r.get("id")
+
+
+@app.post("/api/tournament/start", dependencies=auth)
+async def tour_start(request: Request):
+    _need_admin(request)
+    d = tour.load()
+    if not d["matches"]:
+        raise HTTPException(400, "Erst den Spielplan erstellen")
+    pool = _tour_pool()
+    need = tour.needed_servers(d)
+    job = None
+    if d.get("auto_servers") and len(pool) < need:
+        try:
+            job = await _tour_create_servers(min(10, need - len(pool)))
+        except HTTPException as e:
+            raise HTTPException(e.status_code, f"Server anlegen: {e.detail}")
+    d["servers"] = [s["id"] for s in pool]
+    d["status"] = "running"
+    d["registration"] = False
+    d["start"] = d.get("start") or time.time()
+    tour.plan(d)
+    tour.save(d)
+    return {"ok": True, "creating": need - len(pool) if job else 0, "job": job}
+
+
+@app.post("/api/tournament/stop", dependencies=auth)
+async def tour_stop(request: Request):
+    """Turnier anhalten (zurück in die Vorbereitung) – Ergebnisse bleiben."""
+    _need_admin(request)
+    d = tour.load()
+    d["status"] = "setup"
+    _tour_names.clear()
+    tour.save(d)
+    return {"ok": True}
+
+
+@app.post("/api/tournament/reset", dependencies=auth)
+async def tour_reset(request: Request):
+    """Spielplan und Ergebnisse löschen (Teilnehmer und Teams bleiben)."""
+    _need_admin(request)
+    d = tour.load()
+    d.update(matches=[], groups={}, status="setup", registration=True)
+    _tour_names.clear()
+    tour.save(d)
+    return {"ok": True}
+
+
+class TourResult(BaseModel):
+    s1: int = Field(ge=0, le=99)
+    s2: int = Field(ge=0, le=99)
+
+
+@app.post("/api/tournament/match/{mid}/result", dependencies=auth)
+async def tour_result(mid: str, data: TourResult, request: Request):
+    _need_admin(request)
+    d = tour.load()
+    try:
+        m = tour.set_result(d, mid, data.s1, data.s2)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    _tour_names.pop(m.get("server") or "", None)
+    tour.plan(d)
+    tour.save(d)
+    return {"ok": True}
+
+
+@app.post("/api/tournament/match/{mid}/reset", dependencies=auth)
+async def tour_match_reset(mid: str, request: Request):
+    _need_admin(request)
+    d = tour.load()
+    tour.reset_match(d, mid)
+    tour.plan(d)
+    tour.save(d)
+    return {"ok": True}
+
+
+@app.post("/api/tournament/match/{mid}/load", dependencies=auth)
+async def tour_match_load(mid: str, request: Request):
+    """Match sofort auf seinem Server laden (statt auf die geplante Zeit zu warten)."""
+    _need_admin(request)
+    d = tour.load()
+    m = next((x for x in d["matches"] if x["id"] == mid), None)
+    if not m or m["status"] not in ("ready", "live"):
+        raise HTTPException(400, "Match ist nicht bereit")
+    if not m.get("server"):
+        raise HTTPException(400, "Kein Server zugeteilt")
+    await _tour_load(d, m)
+    tour.save(d)
+    return {"ok": True}
+
+
+async def _tour_invite(d: dict, m: dict, s: dict, soon: bool = False) -> None:
+    """Spieler des Matches über den Steam-Bot einladen (nur, wenn der Bot an ist und sie Freunde sind)."""
+    if not d.get("invite") or not steambot_ctl.settings().get("enabled"):
+        return
+    ids = (tour.team(d, m["t1"]) or {}).get("players", []) + (tour.team(d, m["t2"]) or {}).get("players", [])
+    j = join_info(s)
+    when = "in 10 Minuten" if soon else "JETZT"
+    text = (f"🏆 {d['name']}: Dein Match {tour.team_name(d, m['t1'])} vs {tour.team_name(d, m['t2'])} ({m['label']}, "
+            f"Map {m.get('map')}) startet {when} auf {s['name']}.\nVerbinden: {j['address']}" + (f"\n{j['url']}" if j.get("url") else "")
+            + ("\nIm Spiel .ready schreiben, sobald ihr bereit seid." if not soon else ""))
+    try:
+        st = await steambot_ctl.status()
+        friends = {f["steamid"] for f in ((st.get("bot") or {}).get("friends") or []) if f.get("rel") == "Friend"}
+        send = [x for x in ids if x in friends]
+        if send:
+            await steambot_ctl.api("POST", "/msg", {"steamids": send, "text": text}, timeout=30)
+    except Exception as e:  # noqa: BLE001
+        log.info("Turnier-Einladung: %s", e)
+
+
+async def _tour_load(d: dict, m: dict) -> None:
+    s = get_server(m["server"])
+    await ensure_matchzy(s)
+    t1, t2 = tour.team(d, m["t1"]), tour.team(d, m["t2"])
+    data = MatchIn(team1=TeamIn(name=t1["name"], players=t1["players"]), team2=TeamIn(name=t2["name"], players=t2["players"]),
+                   num_maps=1, maplist=[m.get("map") or "de_inferno"], players_per_team=2, skip_veto=True, preset="wingman")
+    cfg = build_match(data)
+    mzid = int(time.time()) % 10_000_000
+    cfg["matchid"] = mzid
+    token = secrets.token_urlsafe(12)
+    store.save(f"matches/{token}.json", cfg)
+    base = (automation.get_settings().get("public_url") or f"http://{s['host']}:{TOOL_PORT}").rstrip("/")
+    url = f"{base}/match/{token}.json"
+    p = MATCH_PRESETS["wingman"]
+    title = f"Turnier: {t1['name']} vs {t2['name']}"[:63]
+    _tour_names[s["id"]] = title
+    await run(s, f'game_type {p["game_type"]}; game_mode {p["game_mode"]}; hostname "{title}"; matchzy_loadmatch_url "{url}"')
+    m.update(status="live", started=time.time(), mz_id=str(mzid), token=token)
+    asyncio.create_task(_tour_invite(d, m, s))
+
+
+async def tour_tick() -> None:
+    d = tour.load()
+    if d.get("status") != "running":
+        _tour_names.clear()
+        return
+    changed = False
+    # neue Server (z. B. gerade fürs Turnier angelegt) in den Pool aufnehmen
+    pool = [s["id"] for s in _tour_pool()]
+    if pool != d["servers"]:
+        d["servers"], changed = pool, True
+    # Ergebnisse von MatchZy übernehmen
+    for m in d["matches"]:
+        if m["status"] != "live":
+            continue
+        s = next((x for x in load_servers() if x["id"] == m.get("server")), None)
+        if s:
+            _tour_names[s["id"]] = f"Turnier: {tour.team_name(d, m['t1'])} vs {tour.team_name(d, m['t2'])}"[:63]
+        res = next((x for x in matchlog.recent(m.get("server"), 10) if str(x.get("matchid")) == str(m.get("mz_id"))), None)
+        if res:
+            m["s1"], m["s2"] = (res.get("team1") or {}).get("score"), (res.get("team2") or {}).get("score")
+            changed = True
+            if res.get("finished"):
+                s1, s2 = m["s1"] or 0, m["s2"] or 0
+                if res.get("maps"):
+                    lm = res["maps"][-1]
+                    s1, s2 = lm.get("t1") or s1, lm.get("t2") or s2
+                try:
+                    tour.set_result(d, m["id"], int(s1), int(s2))
+                except ValueError:
+                    pass
+                _tour_names.pop(m.get("server") or "", None)
+    tour.plan(d)
+    # fällige Matches laden, 10 Minuten vorher erinnern
+    busy = {m["server"] for m in d["matches"] if m["status"] == "live"}
+    now = time.time()
+    for m in sorted(d["matches"], key=lambda x: x.get("planned") or 0):
+        if m["status"] != "ready" or not m.get("server") or not m.get("planned"):
+            continue
+        s = next((x for x in load_servers() if x["id"] == m["server"]), None)
+        if not s:
+            continue
+        if not m.get("reminded") and m["planned"] - now <= 600 and m["planned"] - now > 60:
+            m["reminded"] = True
+            changed = True
+            asyncio.create_task(_tour_invite(d, m, s, soon=True))
+        if m["planned"] <= now + 30 and m["server"] not in busy and (_state.get(s["id"]) or {}).get("online"):
+            try:
+                await _tour_load(d, m)
+                busy.add(m["server"])
+                changed = True
+            except Exception as e:  # noqa: BLE001
+                log.warning("Turnier-Match %s laden: %s", m["id"], e)
+    if changed or True:
+        tour.save(d)
+
+
+async def tour_loop():
+    await asyncio.sleep(60)
+    while True:
+        try:
+            await tour_tick()
+        except Exception:  # noqa: BLE001
+            log.exception("Turnier")
+        await asyncio.sleep(20)
 
 
 # ---------------------------------------------------------------- Steam-Bot „GrohLan“
@@ -6773,6 +7300,10 @@ async def create_batch(data: BatchIn, request: Request):
     if data.game not in templates.TEMPLATES:
         raise HTTPException(400, "Unbekanntes Spiel")
     need_game(request, data.game, 4)
+    return await _start_batch(data, (data.host or "").strip() or _docker_host_ip(request))
+
+
+async def _start_batch(data: BatchIn, host: str) -> dict:
     used = set(await _used_ports())
     names = {x.get("container") for x in load_servers()} | {x["name"] for x in load_servers()}
     port_fields = {f for f, *_ in templates.PORT_PLAN.get(data.game, [])}
@@ -6805,7 +7336,6 @@ async def create_batch(data: BatchIn, request: Request):
             raise HTTPException(400, f"Server {i + 1}: Name {vals['name']} gibt es schon")
         names.add(vals.get("name"))
         plans.append({"values": vals, "data_dir": _renumber(data.data_dir, data.n, n) if i else data.data_dir})
-    host = (data.host or "").strip() or _docker_host_ip(request)
     bid = secrets.token_hex(6)
     job = {"id": bid, "game": data.game, "title": f"{data.count} × {templates.TEMPLATES[data.game]['label']} anlegen", "log": [],
            "step": "", "done": False, "error": None, "server_id": None, "batch": [], "req": None,

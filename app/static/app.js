@@ -219,6 +219,7 @@ function matchHtml(m){
 }
 function renderPublic(){
   const r = pubData; if (!r) return;
+  refreshPubTour();
   const on = r.servers.filter(x => x.online), pl = on.reduce((a, x) => a + (x.players || 0), 0);
   $("#pubStat").innerHTML = `<b>${on.length}</b> von ${r.servers.length} Servern online · <b>${pl}</b> Spieler · ` +
     (r.net === "internet" ? `<span class="pill" title="Du kommst aus dem Internet – Adressen zeigen die öffentliche IP">🌐 Internet${r.address ? " · " + esc(r.address) : ""}</span>`
@@ -339,6 +340,7 @@ function showView(v){
   if (v === "storage"){ loadStorage(true); loadFolders(); loadDocker().then(() => loadSysDisk()); }
   if (v === "game") renderGameView();
   if (v === "bot"){ botLoaded = false; loadBot(); }
+  if (v === "tour"){ tourLoaded = false; loadTour(); }
 }
 
 /* ================= Serverliste ================= */
@@ -995,7 +997,7 @@ function cacheGamesHtml(l){
 async function refreshDash(){
   try { overview = await api("/api/overview"); } catch { return; }
   await Promise.all([loadMetrics(), loadSizes()]);
-  if (view === "dash") $("#hostPanel").innerHTML = hostPanelHtml();
+  if (view === "dash"){ $("#hostPanel").innerHTML = hostPanelHtml(); refreshDashTour(); }
   renderServerList();
   if (view !== "dash") return;
   $("#dashEmpty").classList.toggle("hidden", overview.length > 0);
@@ -1042,7 +1044,7 @@ async function refreshDash(){
 }
 
 /* ================= Server-Ansicht ================= */
-const VIEWS = ["dash","players","auto","server","scan","create","users","cache","prefill","storage","game","bot"];
+const VIEWS = ["dash","players","auto","server","scan","create","users","cache","prefill","storage","game","bot","tour"];
 function applyGameClasses(s){
   const g = gameOf(s), meta = GAMES[g] || {};
   document.body.classList.toggle("g-other", g !== "cs2");
@@ -3508,3 +3510,130 @@ async function botSend(all){
 $("#botSendAll").onclick = () => botSend(true);
 $("#botSendSel").onclick = () => botSend(false);
 setInterval(() => { if (view === "bot" && !document.hidden) loadBot(); }, 5000);
+
+/* ================= Turnier ================= */
+const tTime = t => t ? new Date(t * 1000).toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit"}) : "–";
+const tStatus = {setup: "Vorbereitung", running: "läuft", done: "beendet"};
+// Turnierbaum/Spielplan: Spalten je Runde, Gruppentabellen, nächste Matches
+function tourBoardHtml(v, admin){
+  if (!v || !v.matches || !v.matches.length) return `<div class="hint">Noch kein Spielplan.</div>`;
+  let h = "";
+  const live = v.matches.filter(m => m.status === "live");
+  const next = v.matches.filter(m => m.status === "ready" || (m.status === "wait" && m.planned)).sort((a, b) => (a.planned || 0) - (b.planned || 0)).slice(0, 6);
+  if (live.length || next.length) h += `<div class="tnext">${[...live, ...next].map(m => tmCard(m, admin, true)).join("")}</div>`;
+  const tabs = Object.entries(v.groups || {});
+  if (v.table) tabs.push(["Tabelle", v.table]);
+  if (tabs.length) h += `<div class="tgroups">${tabs.map(([g, rows]) => `<table class="cachetable"><thead><tr><th>${g.length === 1 ? "Gruppe " + esc(g) : esc(g)}</th><th>Sp</th><th>S</th><th>N</th><th>Runden</th></tr></thead><tbody>
+    ${rows.map((r, i) => `<tr><td>${i + 1}. <b>${esc(r.name)}</b></td><td class="mono">${r.played}</td><td class="mono">${r.won}</td><td class="mono">${r.lost}</td><td class="mono">${r.rf}:${r.ra}</td></tr>`).join("")}</tbody></table>`).join("")}</div>`;
+  const cols = {};
+  v.matches.forEach(m => { const k = `${m.stage}|${String(m.round).padStart(3, "0")}`; (cols[k] = cols[k] || []).push(m); });
+  h += `<div class="tboard">${Object.keys(cols).sort((a, b) => a.split("|")[1].localeCompare(b.split("|")[1]) || a.localeCompare(b)).map(k =>
+    `<div class="tcol"><h4>${esc(cols[k][0].label.replace(/^Gruppe \w+ · /, "Gruppen · "))}</h4>${cols[k].map(m => tmCard(m, admin)).join("")}</div>`).join("")}</div>`;
+  return h;
+}
+function tmCard(m, admin, big){
+  const row = (t, s, win) => `<div class="tr ${win ? "win" : ""}"><b>${esc(t || "?")}</b><span>${s ?? (m.status === "done" ? "" : "")}</span></div>`;
+  const meta = m.status === "done" ? (m.walkover ? "Freilos" : "beendet") : m.status === "live" ? `🔴 LIVE · ${esc(m.server_name || "")} · ${esc(m.map || "")}` :
+    `${m.planned ? tTime(m.planned) + " Uhr" : ""}${m.server_name ? " · " + esc(m.server_name) : ""}${m.map ? " · " + esc(m.map) : ""}`;
+  return `<div class="tm ${m.status}">${big ? `<div class="meta" style="margin:0 0 3px">${esc(m.label)}</div>` : ""}
+    ${row(m.t1, m.s1, m.winner && m.winner === m.t1)}${row(m.t2, m.s2, m.winner && m.winner === m.t2)}
+    <div class="meta">${meta}</div>
+    ${admin && (m.status === "ready" || m.status === "live" || m.status === "done") && !m.walkover ? `<div class="row" style="gap:4px;margin-top:5px;flex-wrap:nowrap">
+      <input type="number" min="0" value="${m.s1 ?? ""}" data-ts1="${m.id}" style="width:48px;padding:2px 4px"><input type="number" min="0" value="${m.s2 ?? ""}" data-ts2="${m.id}" style="width:48px;padding:2px 4px">
+      <button class="small" data-tres="${m.id}" title="Ergebnis von Hand eintragen">✓</button>
+      ${m.status === "ready" ? `<button class="small" data-tload="${m.id}" title="Jetzt auf dem Server laden">▶</button>` : ""}
+      ${m.status !== "ready" ? `<button class="small" data-trst="${m.id}" title="Ergebnis zurücksetzen">↺</button>` : ""}</div>` : ""}</div>`;
+}
+let tourData = null, tourLoaded = false;
+const toLocalInput = t => { if (!t) return ""; const d = new Date(t * 1000); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+async function loadTour(){
+  try { tourData = await api("/api/tournament"); } catch (e) { $("#tourBoard").innerHTML = `<div class="hint">${esc(e.message)}</div>`; return; }
+  const d = tourData;
+  if (!tourLoaded || !$("#view-tour .grid2").contains(document.activeElement)){
+    $("#tourActive").checked = !!d.active; $("#tourName").value = d.name || ""; $("#tourMode").value = d.mode || "groups";
+    $("#tourStartAt").value = toLocalInput(d.start); $("#tourMatchMin").value = d.match_min || 35; $("#tourPauseMin").value = d.pause_min ?? 10;
+    $("#tourMaps").value = (d.settings.maps || []).join(", "); $("#tourReg").checked = !!d.registration;
+    $("#tourAuto").checked = d.settings.auto_servers !== false; $("#tourInvite").checked = d.settings.invite !== false;
+    tourLoaded = true;
+  }
+  $("#tourStatus").textContent = "· " + (tStatus[d.status] || d.status) + (d.active ? " · auf der Übersicht sichtbar" : "");
+  $("#tourServers").innerHTML = `Server fürs Turnier: ${d.pool.length ? d.pool.map(s => `${s.online ? "🟢" : "⚪"} ${esc(s.name)}`).join(", ") : "keine (außer CS #1)"}${d.needed ? ` · für die erste Runde gleichzeitig nötig: ${d.needed}` : ""}${d.needed && d.pool.length < d.needed ? (d.settings.auto_servers !== false ? ` – ${d.needed - d.pool.length} werden beim Start angelegt` : ` – zu wenige, Matches laufen nacheinander`) : ""}${d.bot ? "" : " · Steam-Bot ist aus (keine Einladungen)"}`;
+  const reg = new Set(d.players.map(p => p.steamid));
+  $("#tourAddSel").innerHTML = `<option value="">– LAN-Spieler hinzufügen –</option>` + d.lan_players.filter(p => !reg.has(p.steamid)).map(p => `<option value="${esc(p.steamid)}">${esc(p.name)}</option>`).join("");
+  $("#tourPlN").textContent = `(${d.players.length})`;
+  const tname = Object.fromEntries(d.teams.map(t => [t.id, t.name]));
+  $("#tourPlayers").innerHTML = d.players.length ? d.players.map(p => `<div class="row" style="gap:8px;margin:3px 0;flex-wrap:nowrap">${p.avatar ? `<img class="avatar" src="${esc(p.avatar)}" alt="">` : `<span class="avatar" style="display:inline-block"></span>`}<b style="flex:1">${esc(p.name)}</b><span class="hint">${p.team ? esc(tname[p.team] || "") : "kein Team"}</span><button class="small danger" data-tdelp="${esc(p.steamid)}">✕</button></div>`).join("") : `<div class="hint">Noch niemand angemeldet.</div>`;
+  const opts = sel => `<option value="">–</option>` + d.players.map(p => `<option value="${esc(p.steamid)}" ${p.steamid === sel ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+  $("#tourTeams").innerHTML = d.teams.map(t => `<div class="row" style="gap:6px;margin:4px 0;flex-wrap:wrap" data-tteam="${esc(t.id)}">
+    <input value="${esc(t.name)}" maxlength="24" style="width:150px" data-tn><select data-tp1>${opts(t.steamids[0])}</select><select data-tp2>${opts(t.steamids[1])}</select>
+    <button class="small" data-tsave>Speichern</button><button class="small danger" data-tdel>✕</button>${t.steamids.length < 2 ? ` <span class="pill warn">sucht Partner</span>` : ""}</div>`).join("") || `<div class="hint">Noch keine Teams.</div>`;
+  $("#tourBoard").innerHTML = tourBoardHtml(d, true);
+  $("#tourGen").disabled = d.status === "running"; $("#tourStart").disabled = d.status === "running" || !d.matches.length; $("#tourStop").disabled = d.status !== "running";
+  // Aktionen
+  $$("[data-tdelp]").forEach(b => b.onclick = async () => { await tourCall(`/api/tournament/players/${b.dataset.tdelp}`, {method: "DELETE"}); });
+  $$("[data-tteam]").forEach(row => {
+    const id = row.dataset.tteam;
+    row.querySelector("[data-tsave]").onclick = () => tourCall("/api/tournament/teams", {body: {id, name: row.querySelector("[data-tn]").value, players: [row.querySelector("[data-tp1]").value, row.querySelector("[data-tp2]").value].filter(Boolean)}});
+    row.querySelector("[data-tdel]").onclick = () => confirm("Team löschen?") && tourCall(`/api/tournament/teams/${id}`, {method: "DELETE"});
+  });
+  $$("[data-tres]").forEach(b => b.onclick = () => tourCall(`/api/tournament/match/${b.dataset.tres}/result`, {body: {s1: +$(`[data-ts1="${b.dataset.tres}"]`).value || 0, s2: +$(`[data-ts2="${b.dataset.tres}"]`).value || 0}}));
+  $$("[data-tload]").forEach(b => b.onclick = () => tourCall(`/api/tournament/match/${b.dataset.tload}/load`, {method: "POST"}, "Match wird auf dem Server geladen"));
+  $$("[data-trst]").forEach(b => b.onclick = () => confirm("Ergebnis zurücksetzen?") && tourCall(`/api/tournament/match/${b.dataset.trst}/reset`, {method: "POST"}));
+}
+async function tourCall(path, opts, msg){
+  try { const r = await api(path, opts); if (msg) toast(msg); loadTour(); return r; } catch (e) { toast(e.message, true); }
+}
+$("#tourSave").onclick = async () => {
+  const st = $("#tourStartAt").value ? new Date($("#tourStartAt").value).getTime() / 1000 : null;
+  await tourCall("/api/tournament", {method: "PUT", body: {active: $("#tourActive").checked, name: $("#tourName").value, mode: $("#tourMode").value, start: st,
+    match_min: +$("#tourMatchMin").value || 35, pause_min: +$("#tourPauseMin").value || 0, maps: $("#tourMaps").value.split(/[\s,]+/).filter(Boolean),
+    registration: $("#tourReg").checked, auto_servers: $("#tourAuto").checked, invite: $("#tourInvite").checked}}, "Gespeichert");
+  tourLoaded = false;
+};
+$("#tourAdd").onclick = () => $("#tourAddSel").value && tourCall("/api/tournament/players", {body: {steamid: $("#tourAddSel").value}});
+$("#tourAddTeam").onclick = () => $("#tourNewTeam").value.trim() && tourCall("/api/tournament/teams", {body: {name: $("#tourNewTeam").value.trim(), players: []}}).then(() => { $("#tourNewTeam").value = ""; });
+$("#tourGen").onclick = async () => { if (tourData && tourData.matches.length && !confirm("Spielplan neu erstellen? Bisherige Ergebnisse gehen verloren.")) return; const r = await tourCall("/api/tournament/generate", {method: "POST"}); if (r) toast(`Spielplan erstellt – ${r.needed} Server gleichzeitig nötig, ${r.have} vorhanden`); };
+$("#tourStart").onclick = async () => { if (!confirm("Turnier starten? Die Anmeldung schließt, Matches werden zur geplanten Zeit automatisch auf den Servern geladen.")) return; const r = await tourCall("/api/tournament/start", {method: "POST"}); if (r) toast(r.creating ? `Turnier läuft – ${r.creating} Server werden angelegt` : "Turnier läuft"); };
+$("#tourStop").onclick = () => tourCall("/api/tournament/stop", {method: "POST"}, "Angehalten");
+$("#tourReset").onclick = () => confirm("Spielplan und Ergebnisse löschen? Teilnehmer und Teams bleiben.") && tourCall("/api/tournament/reset", {method: "POST"}, "Spielplan gelöscht");
+setInterval(() => { if (view === "tour" && !document.hidden) loadTour(); }, 5000);
+
+// Übersicht (Verwaltung): Turnier oben, wenn der Turniermodus an ist
+let dashTourAt = 0;
+async function refreshDashTour(){
+  if (Date.now() - dashTourAt < 8000) return;
+  dashTourAt = Date.now();
+  let v; try { v = await api("/api/public/tournament/state"); } catch { return; }
+  $("#dashTour").innerHTML = v.active ? `<div class="dsect"><h3 class="dhead">🏆 ${esc(v.name)} <span class="hint">${esc(v.mode_label)} · ${tStatus[v.status] || v.status}${v.start ? " · Start " + new Date(v.start * 1000).toLocaleString("de-DE", {weekday: "short", hour: "2-digit", minute: "2-digit"}) : ""}</span> <a href="#" class="hint" style="margin-left:auto" onclick="showView('tour');return false">verwalten →</a></h3>
+    <div class="panel" style="padding:12px 16px">${tourBoardHtml(v)}</div></div>` : "";
+}
+
+// Öffentliche Seite: Anmeldung, Teams bilden, Spielplan und Ergebnisse
+let pubTourData = null;
+async function refreshPubTour(){
+  try { pubTourData = await (await fetch("/api/public/tournament/state", {cache: "no-store"})).json(); } catch { return; }
+  const v = pubTourData;
+  if (!v || !v.active){ $("#pubTour").innerHTML = ""; return; }
+  if ($("#pubTour").contains(document.activeElement) && document.activeElement.tagName === "INPUT") return;   // nicht beim Tippen neu zeichnen
+  const me = v.me, myTeam = me && me.team;
+  let reg = "";
+  if (v.status === "setup" && v.registration){
+    reg = `<div class="panel" style="margin-bottom:10px">${me ? `<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">${me.avatar ? `<img class="avatar" src="${esc(me.avatar)}" alt="">` : ""}<b>${esc(me.name)}</b><span class="hint">${me.via === "steam" ? "per Steam angemeldet" : "erkannt über deinen PC"} · <a href="/api/public/steam/login">nicht du?</a></span>
+        ${me.registered ? `<span class="pill ok">angemeldet</span><button class="small" data-pt="unregister">abmelden</button>` : `<button class="primary small" data-pt="register">Zum Turnier anmelden</button>`}</div>
+        ${me.registered && !myTeam ? `<div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap"><input id="ptTeam" placeholder="Teamname" maxlength="24" style="width:180px"><button class="small" data-pt="team">Team gründen</button>
+          <span class="hint">oder unten einem Team mit freiem Platz beitreten</span></div>` : ""}
+        ${myTeam ? `<div class="hint" style="margin-top:6px">Dein Team: <b>${esc((v.teams.find(t => t.id === myTeam) || {}).name || "")}</b> · <a href="#" data-pt="leave">Team verlassen</a></div>` : ""}`
+      : `<div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><span>Mitspielen? Melde dich mit Steam an, damit wir dich erkennen:</span><a class="btn primary" href="/api/public/steam/login">Mit Steam anmelden</a></div>`}</div>`;
+  }
+  const teams = v.teams.length ? `<div class="tnext">${v.teams.map(t => `<div class="tm"><div class="tr"><b>${esc(t.name)}</b><span>${t.players.length}/2</span></div><div class="meta">${t.players.map(esc).join(" & ") || "–"}</div>
+      ${v.status === "setup" && me && me.registered && !myTeam && t.players.length < 2 ? `<button class="small primary" style="margin-top:5px" data-ptjoin="${esc(t.id)}">Beitreten</button>` : ""}</div>`).join("")}</div>` : "";
+  $("#pubTour").innerHTML = `<div class="tourpub"><h3 class="pdsec">🏆 ${esc(v.name)} <span class="hint">${esc(v.mode_label)} · ${tStatus[v.status] || v.status}${v.start ? " · Start " + new Date(v.start * 1000).toLocaleString("de-DE", {weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"}) + " Uhr" : ""}</span></h3>
+    ${reg}${v.status === "setup" ? `<div class="hint" style="margin-bottom:6px">Teams (${v.teams.length}) · ${v.players.length} Spieler angemeldet</div>${teams}` : ""}
+    ${v.matches.length ? `<div class="panel">${tourBoardHtml(v)}</div>` : ""}</div>`;
+  const call = async (path, body) => { try { const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})}); if (!r.ok) throw new Error((await r.json()).detail || r.status); refreshPubTour(); } catch (e) { toast(e.message, true); } };
+  $$("[data-pt]").forEach(b => b.onclick = e => { e.preventDefault(); const a = b.dataset.pt;
+    if (a === "team") return call("/api/public/tournament/team", {name: $("#ptTeam").value.trim()});
+    if (a === "leave") return call("/api/public/tournament/team/leave");
+    call(`/api/public/tournament/${a}`); });
+  $$("[data-ptjoin]").forEach(b => b.onclick = () => call(`/api/public/tournament/team/${b.dataset.ptjoin}/join`));
+}

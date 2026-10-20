@@ -585,3 +585,20 @@ aside .head .logo{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space
 .mobsrv .p small{font-size:12px;color:var(--muted)}
 .mobsrv.off{opacity:.55}
 .mobsrv .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:1px}
+
+/* ---- Turnier ---- */
+.tboard{display:flex;gap:14px;overflow-x:auto;padding-bottom:6px}
+.tcol{min-width:200px;display:flex;flex-direction:column;gap:8px}
+.tcol h4{margin:0 0 2px;font-size:12px;color:var(--muted);font-weight:500}
+.tm{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:13px}
+.tm.live{border-color:var(--ok)}.tm.ready{border-color:#3a4150}
+.tm .tr{display:flex;justify-content:space-between;gap:8px}
+.tm .tr b{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tm .tr.win b{color:var(--ok);font-weight:700}
+.tm .tr span{font-family:var(--mono)}
+.tm .meta{font-size:11px;color:var(--muted);margin-top:3px}
+.tgroups{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:12px}
+.tgroups table{min-width:240px}
+.tourpub{max-width:1400px;margin:0 auto 16px;padding:0 4px}
+.tourpub .panel{padding:12px 16px}
+.tnext{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px;margin-bottom:12px}
