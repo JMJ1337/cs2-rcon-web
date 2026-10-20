@@ -325,7 +325,7 @@ func send(c Config, cfgDir string, cmds ...string) error {
 
 // -allow_third_party_software: sonst blockiert CS2 die OBS-Spielaufnahme. tv = CSTV-Adresse, mit der CS2 direkt verbindet.
 func startCS2(steam string, c Config, tv ...string) {
-	game := []string{"-netconport", fmt.Sprint(c.Netcon), "-fullscreen", "-novid", "-allow_third_party_software", "+exec", "grohlan_stream"}
+	game := []string{"-netconport", fmt.Sprint(c.Netcon), "-sw", "-noborder", "-w", "1920", "-h", "1080", "-novid", "-allow_third_party_software", "+exec", "grohlan_stream"}
 	if len(tv) > 0 && tv[0] != "" {
 		game = append(game, "+connect", tv[0])
 	}
