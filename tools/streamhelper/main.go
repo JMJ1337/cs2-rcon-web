@@ -323,8 +323,13 @@ func send(c Config, cfgDir string, cmds ...string) error {
 	return nil
 }
 
-func startCS2(steam string, c Config) {
-	args := []string{"-applaunch", "730", "-netconport", fmt.Sprint(c.Netcon), "-fullscreen", "-novid", "+exec", "grohlan_stream"}
+// -allow_third_party_software: sonst blockiert CS2 die OBS-Spielaufnahme. tv = CSTV-Adresse, mit der CS2 direkt verbindet.
+func startCS2(steam string, c Config, tv ...string) {
+	args := []string{"-applaunch", "730", "-netconport", fmt.Sprint(c.Netcon), "-fullscreen", "-novid", "-allow_third_party_software",
+		"+exec", "grohlan_stream"}
+	if len(tv) > 0 && tv[0] != "" {
+		args = append(args, "+connect", tv[0])
+	}
 	if err := exec.Command(steam, args...).Start(); err != nil {
 		say("CS2 starten fehlgeschlagen: %v", err)
 	}
@@ -396,35 +401,20 @@ func main() {
 	}
 
 	steam := findSteam()
-	cfgDir := findCS2Cfg(steam)
-	if cfgDir != "" {
-		writeStreamCfg(cfgDir)
-		say("CS2-Steuerung über %s\\grohlan_tv.cfg (Pause-Taste)", cfgDir)
-	} else if steam != "" {
-		say("CS2-Ordner nicht gefunden – Steuerung nur über -netconport (braucht unter Windows -tools).")
+	if cfgDir := findCS2Cfg(steam); cfgDir != "" {
+		writeStreamCfg(cfgDir) // Auto-Kamera usw. beim CS2-Start (+exec grohlan_stream)
 	}
 	started := time.Time{}
 	if steam == "" {
 		say("Steam nicht gefunden – bitte Steam installieren und anmelden (Konto mit CS2).")
 	} else if cs2Running() {
-		if netcon(c, "echo GrohLAN") != nil {
-			if ask("CS2 läuft schon. Neu starten, damit die Steuerung (Pause-Taste) aktiv ist?") {
-				closeApp("cs2.exe")
-				time.Sleep(5 * time.Second)
-				say("Starte CS2 über Steam …")
-				startCS2(steam, c)
-				started = time.Now()
-			} else {
-				say("Falls die Steuerung nicht greift: in der CS2-Konsole einmal  exec grohlan_stream  eingeben.")
-			}
-		}
+		say("CS2 läuft schon – beim nächsten Spiel startet die exe es mit der CSTV-Verbindung neu.")
 	} else {
 		say("Starte CS2 über Steam …")
 		startCS2(steam, c)
 		started = time.Now()
 	}
-
-	last, lastStart, warned := "", started, false
+	last, lastStart := "", started
 	for {
 		st, err := fetchState(c.API)
 		switch {
@@ -440,31 +430,35 @@ func main() {
 		default:
 			key := st.TV + "|" + st.ID
 			if key != last {
-				if time.Since(lastStart) < 70*time.Second && !lastStart.IsZero() {
+				if time.Since(lastStart) < 60*time.Second && !lastStart.IsZero() {
 					break // CS2 lädt noch
 				}
-				err := send(c, cfgDir, "connect "+st.TV)
-				if err == nil {
+				// 1. mit Fernsteuerung (nur mit -tools) ohne Neustart umschalten
+				if netcon(c, "connect "+st.TV) == nil {
 					time.Sleep(20 * time.Second)
-					send(c, cfgDir, "spec_autodirector 1", "spec_autodirector_cameraman 0", "cl_draw_only_deathnotices 0")
-				}
-				if err != nil {
-					if !cs2Running() && steam != "" && time.Since(lastStart) > 2*time.Minute {
-						say("CS2 läuft nicht – starte es neu …")
-						startCS2(steam, c)
-						lastStart, warned = time.Now(), false
-					} else {
-						say("CS2 noch nicht bereit (%v) – nächster Versuch gleich …", err)
-						if cs2Running() && time.Since(lastStart) > 2*time.Minute && !warned {
-							warned = true
-							say("CS2 lässt sich nicht steuern. Bitte prüfen: Hat Steam ein Fenster „Startoptionen erlauben?“ geöffnet? → bestätigen.")
-							say("Sonst CS2 beenden – die exe startet es neu.")
-						}
-					}
-				} else {
+					netcon(c, "spec_autodirector 1", "spec_autodirector_cameraman 0")
 					say("Zuschauen: %s  (%s)", st.Match, st.TV)
 					last = key
+					break
 				}
+				// 2. sonst CS2 mit „+connect <CSTV>“ neu starten (das Overlay zeigt so lange „Gleich Live“)
+				if steam == "" {
+					say("Steam nicht gefunden – kann CS2 nicht starten.")
+					break
+				}
+				if cs2Running() {
+					say("Spielwechsel → CS2 wird neu gestartet und verbindet mit %s …", st.TV)
+					closeApp("cs2.exe")
+					time.Sleep(4 * time.Second)
+				}
+				startCS2(steam, c, st.TV)
+				lastStart = time.Now()
+				say("Zuschauen: %s  (%s) – CS2 startet und verbindet per CSTV", st.Match, st.TV)
+				last = key
+			} else if !cs2Running() && steam != "" && time.Since(lastStart) > 2*time.Minute {
+				say("CS2 wurde beendet – starte es wieder (%s) …", st.TV)
+				startCS2(steam, c, st.TV)
+				lastStart = time.Now()
 			}
 		}
 		if obs != "" && !obsRunning() {
