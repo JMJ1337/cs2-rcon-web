@@ -246,8 +246,66 @@ func cs2Running() bool {
 	return strings.Contains(strings.ToLower(string(out)), "cs2.exe")
 }
 
+// CS2 nimmt -netconport unter Windows nur mit den Workshop-Tools (-tools) an. Darum steuert die exe CS2 über eine
+// Config-Datei: grohlan_tv.cfg wird geschrieben und per Tastendruck (Pause-Taste, Bind aus grohlan_stream.cfg) ausgeführt.
+func findCS2Cfg(steam string) string {
+	if steam == "" {
+		return ""
+	}
+	sd := filepath.Dir(steam)
+	libs := []string{sd}
+	if b, err := os.ReadFile(filepath.Join(sd, "steamapps", "libraryfolders.vdf")); err == nil {
+		for _, ln := range strings.Split(string(b), "\n") {
+			ln = strings.TrimSpace(ln)
+			if strings.HasPrefix(ln, "\"path\"") {
+				p := strings.Trim(strings.TrimSpace(strings.TrimPrefix(ln, "\"path\"")), "\"")
+				libs = append(libs, strings.ReplaceAll(p, `\\`, `\`))
+			}
+		}
+	}
+	for _, l := range libs {
+		cfg := filepath.Join(l, "steamapps", "common", "Counter-Strike Global Offensive", "game", "csgo", "cfg")
+		if st, err := os.Stat(cfg); err == nil && st.IsDir() {
+			return cfg
+		}
+	}
+	return ""
+}
+
+func writeStreamCfg(cfgDir string) {
+	if cfgDir == "" {
+		return
+	}
+	os.WriteFile(filepath.Join(cfgDir, "grohlan_stream.cfg"), []byte(strings.Join([]string{
+		"// GrohLAN Stream-PC (von GrohLAN-Stream.exe geschrieben)",
+		`bind "PAUSE" "exec grohlan_tv"`,
+		"spec_autodirector 1", "spec_autodirector_cameraman 0", "cl_draw_only_deathnotices 0",
+		"echo GrohLAN Stream-Steuerung aktiv", ""}, "\n")), 0o644)
+	os.WriteFile(filepath.Join(cfgDir, "grohlan_tv.cfg"), []byte("echo GrohLAN\n"), 0o644)
+}
+
+// Befehle an CS2: erst Fernsteuerung (netcon), sonst Config + Tastendruck
+func send(c Config, cfgDir string, cmds ...string) error {
+	if netcon(c, cmds...) == nil {
+		return nil
+	}
+	if cfgDir == "" {
+		return fmt.Errorf("CS2-Ordner nicht gefunden und Fernsteuerung aus")
+	}
+	if !cs2Running() {
+		return fmt.Errorf("CS2 läuft nicht")
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "grohlan_tv.cfg"), []byte(strings.Join(cmds, "\n")+"\n"), 0o644); err != nil {
+		return err
+	}
+	if !pressBind() {
+		return fmt.Errorf("CS2-Fenster nicht gefunden")
+	}
+	return nil
+}
+
 func startCS2(steam string, c Config) {
-	args := []string{"-applaunch", "730", "-netconport", fmt.Sprint(c.Netcon), "-fullscreen", "-novid", "-console"}
+	args := []string{"-applaunch", "730", "-netconport", fmt.Sprint(c.Netcon), "-fullscreen", "-novid", "+exec", "grohlan_stream"}
 	if err := exec.Command(steam, args...).Start(); err != nil {
 		say("CS2 starten fehlgeschlagen: %v", err)
 	}
@@ -319,23 +377,30 @@ func main() {
 	}
 
 	steam := findSteam()
+	cfgDir := findCS2Cfg(steam)
+	if cfgDir != "" {
+		writeStreamCfg(cfgDir)
+		say("CS2-Steuerung über %s\\grohlan_tv.cfg (Pause-Taste)", cfgDir)
+	} else if steam != "" {
+		say("CS2-Ordner nicht gefunden – Steuerung nur über -netconport (braucht unter Windows -tools).")
+	}
 	started := time.Time{}
 	if steam == "" {
 		say("Steam nicht gefunden – bitte Steam installieren und anmelden (Konto mit CS2).")
 	} else if cs2Running() {
 		if netcon(c, "echo GrohLAN") != nil {
-			if ask("CS2 läuft schon, aber ohne Fernsteuerung. Jetzt beenden und richtig neu starten?") {
+			if ask("CS2 läuft schon. Neu starten, damit die Steuerung (Pause-Taste) aktiv ist?") {
 				closeApp("cs2.exe")
 				time.Sleep(5 * time.Second)
-				say("Starte CS2 über Steam (Fernsteuerung auf Port %d) …", c.Netcon)
+				say("Starte CS2 über Steam …")
 				startCS2(steam, c)
 				started = time.Now()
 			} else {
-				say("Dann bitte CS2 selbst beenden – die exe startet es danach automatisch neu.")
+				say("Falls die Steuerung nicht greift: in der CS2-Konsole einmal  exec grohlan_stream  eingeben.")
 			}
 		}
 	} else {
-		say("Starte CS2 über Steam (Fernsteuerung auf Port %d) …", c.Netcon)
+		say("Starte CS2 über Steam …")
 		startCS2(steam, c)
 		started = time.Now()
 	}
@@ -356,8 +421,15 @@ func main() {
 		default:
 			key := st.TV + "|" + st.ID
 			if key != last {
-				if err := netcon(c, "disconnect", "#sleep 2", "connect "+st.TV, "#sleep 15",
-					"spec_autodirector 1", "spec_autodirector_cameraman 0", "cl_draw_only_deathnotices 0"); err != nil {
+				if time.Since(lastStart) < 70*time.Second && !lastStart.IsZero() {
+					break // CS2 lädt noch
+				}
+				err := send(c, cfgDir, "connect "+st.TV)
+				if err == nil {
+					time.Sleep(20 * time.Second)
+					send(c, cfgDir, "spec_autodirector 1", "spec_autodirector_cameraman 0", "cl_draw_only_deathnotices 0")
+				}
+				if err != nil {
 					if !cs2Running() && steam != "" && time.Since(lastStart) > 2*time.Minute {
 						say("CS2 läuft nicht – starte es neu …")
 						startCS2(steam, c)
@@ -366,10 +438,8 @@ func main() {
 						say("CS2 noch nicht bereit (%v) – nächster Versuch gleich …", err)
 						if cs2Running() && time.Since(lastStart) > 2*time.Minute && !warned {
 							warned = true
-							say("CS2 läuft, aber die Fernsteuerung antwortet nicht. Bitte prüfen:")
-							say("  1) Hat Steam ein Fenster „Startoptionen erlauben?“ geöffnet? → bestätigen.")
-							say("  2) Sonst in Steam: CS2 → Eigenschaften → Startoptionen:  -netconport %d", c.Netcon)
-							say("     eintragen, CS2 beenden – die exe startet es neu.")
+							say("CS2 lässt sich nicht steuern. Bitte prüfen: Hat Steam ein Fenster „Startoptionen erlauben?“ geöffnet? → bestätigen.")
+							say("Sonst CS2 beenden – die exe startet es neu.")
 						}
 					}
 				} else {
