@@ -1052,6 +1052,9 @@ function applyGameClasses(s){
   document.body.classList.toggle("g-other", g !== "cs2");
   document.body.classList.toggle("g-wreckfest", g === "wreckfest");
   document.body.classList.toggle("g-tf2", g === "tf2");
+  document.body.classList.toggle("g-ws", g === "cs2" || g === "tf2");
+  if (g === "cs2" && typeof wsFavGame !== "undefined" && wsFavGame !== "cs2")
+    api("/api/workshop/favorites?game=cs2").then(f => { favs = f; wsFavGame = "cs2"; ["#qMap","#pugMap"].forEach(sel => fillMapSelect(sel)); }).catch(() => {});
   wfLoadedFor = null;
   document.body.classList.toggle("no-console", !meta.console);
   document.body.classList.toggle("no-container", !(dockerOn && s.container));
@@ -1079,7 +1082,7 @@ function selectServer(s){
   $("#view-server").classList.remove("hidden");
   applyGameClasses(s);
   const g = gameOf(s);
-  if ((g !== "cs2" && ["maps","match","settings"].includes(tab)) || (tab === "container" && !(dockerOn && s.container))) tab = "overview";
+  if ((g !== "cs2" && ["match","settings"].includes(tab)) || (!WS_GAMES.has(g) && tab === "maps") || (tab === "container" && !(dockerOn && s.container))) tab = "overview";
   renderServerList();
   $("#svTitle").innerHTML = `${gbadge(gameOf(s))} ${esc(s.name)}`;
   $("#btnWeb").classList.toggle("hidden", !s.web_url);
@@ -1100,7 +1103,7 @@ function setTab(t){
   stopPoll(); stopCt();
   if (t === "container"){ refreshContainer(); loadSleep(); ctTimer = setInterval(refreshContainer, 5000); }
   if (t === "overview"){ refreshStatus(); pollTimer = setInterval(refreshStatus, 5000); }
-  if (t === "maps") renderFavs();
+  if (t === "maps"){ wsFavGame = wsGame(); renderFavs(); $("#wsResults").innerHTML = ""; $("#wsResHead").classList.add("hidden"); }
   if (t === "match") initMatch();
   if (t === "settings" && !Object.keys(loadedSettings).length) loadSettings();
   if (t === "console"){ renderCmdRef(); if (GAMES[gameOf(current)].console) $("#consoleIn").focus(); }
@@ -1240,8 +1243,15 @@ $("#btnChangeMap").onclick = () => {
 ["#qMap","#qMode"].forEach(s => $(s).addEventListener("change", () => mapHint($("#qMap").value, $("#qMode").value, $("#qHint"))));
 ["#mapSelect","#mapCustom","#modeSelect"].forEach(s => $(s).addEventListener("input", () => mapHint($("#mapCustom").value.trim() || $("#mapSelect").value, $("#modeSelect").value, $("#mapHint"))));
 
-/* ---------- Workshop ---------- */
-let wsPage = 1, wsLast = "";
+/* ---------- Workshop (CS2, TF2 – Server lädt die Map selbst herunter) ---------- */
+let wsPage = 1, wsLast = "", wsFavGame = "cs2";
+const WS_GAMES = new Set(["cs2", "tf2"]);
+const wsGame = () => current && WS_GAMES.has(gameOf(current)) ? gameOf(current) : "cs2";
+function wsLoad(id){
+  if (wsGame() === "cs2") return changeMap({workshop_id: id, mode: $("#modeSelect").value});
+  return send(`changelevel workshop/${String(id).replace(/\D/g, "")}`, `Workshop-Map ${id} wird geladen – der Server lädt sie herunter (kann etwas dauern)`)
+    .then(() => setTimeout(refreshStatus, 5000));
+}
 function wsCard(it, isFav){
   return `<div class="ws">
     ${it.preview ? `<img src="${esc(it.preview)}" loading="lazy" alt="">` : `<img alt="">`}
@@ -1257,19 +1267,19 @@ function wsCard(it, isFav){
     </div></div>`;
 }
 function bindWs(root){
-  root.querySelectorAll("[data-wsload]").forEach(b => b.onclick = () => changeMap({workshop_id: b.dataset.wsload, mode: $("#modeSelect").value}));
+  root.querySelectorAll("[data-wsload]").forEach(b => b.onclick = () => wsLoad(b.dataset.wsload));
   root.querySelectorAll("[data-wsfav]").forEach(b => b.onclick = () => addFav(b.dataset.wsfav));
   root.querySelectorAll("[data-wsopen]").forEach(b => b.onclick = () => window.open(`https://steamcommunity.com/sharedfiles/filedetails/?id=${b.dataset.wsopen}`, "_blank", "noopener"));
-  root.querySelectorAll("[data-wsunfav]").forEach(b => b.onclick = async () => { favs = await api(`/api/workshop/favorites/${b.dataset.wsunfav}`, {method:"DELETE"}); renderFavs(true); });
+  root.querySelectorAll("[data-wsunfav]").forEach(b => b.onclick = async () => { favs = await api(`/api/workshop/favorites/${b.dataset.wsunfav}?game=${wsGame()}`, {method:"DELETE"}); renderFavs(true); });
 }
 async function renderFavs(skipLoad){
-  if (!skipLoad){ try { favs = await api("/api/workshop/favorites"); } catch {} }
+  if (!skipLoad){ try { favs = await api(`/api/workshop/favorites?game=${wsGame()}`); } catch {} }
   $("#wsFavs").innerHTML = favs.length ? favs.map(f => wsCard(f, true)).join("") : `<div class="hint">Noch keine Favoriten – über ★ bei einem Suchergebnis merken.</div>`;
   bindWs($("#wsFavs"));
-  ["#qMap","#pugMap"].forEach(sel => fillMapSelect(sel));
+  if (wsGame() === "cs2") ["#qMap","#pugMap"].forEach(sel => fillMapSelect(sel)); else try { gqFillMaps(); } catch {}
 }
 async function addFav(id){
-  try { favs = await api("/api/workshop/favorites", {body:{id}}); toast("Gemerkt"); renderFavs(true); $$(`[data-wsfav="${id}"]`).forEach(b => b.classList.add("fav")); }
+  try { favs = await api("/api/workshop/favorites", {body:{id, game: wsGame()}}); toast("Gemerkt"); renderFavs(true); $$(`[data-wsfav="${id}"]`).forEach(b => b.classList.add("fav")); }
   catch(err){ toast(err.message, true); }
 }
 async function wsSearch(more){
@@ -1277,7 +1287,7 @@ async function wsSearch(more){
   if (!more){ wsPage = 1; $("#wsResults").innerHTML = `<div class="hint">Suche im Steam Workshop …</div>`; }
   $("#wsResHead").classList.remove("hidden");
   try {
-    const res = await api(`/api/workshop/search?q=${encodeURIComponent(q)}&sort=${encodeURIComponent($("#wsSort").value)}&page=${wsPage}`);
+    const res = await api(`/api/workshop/search?q=${encodeURIComponent(q)}&sort=${encodeURIComponent($("#wsSort").value)}&page=${wsPage}&game=${wsGame()}`);
     const html = res.map(it => wsCard(it, false)).join("");
     if (more) $("#wsResults").insertAdjacentHTML("beforeend", html); else $("#wsResults").innerHTML = html || `<div class="hint">Keine Maps gefunden.</div>`;
     bindWs($("#wsResults"));
@@ -1288,7 +1298,7 @@ $("#btnWsSearch").onclick = () => wsSearch(false);
 $("#wsQuery").addEventListener("keydown", e => { if (e.key === "Enter") wsSearch(false); });
 $("#btnWsMore").onclick = () => { wsPage++; wsSearch(true); };
 function wsIdFromInput(){ const v = $("#wsId").value.trim(); const m = v.match(/[?&]id=(\d+)/) || v.match(/^(\d{6,})$/); return m ? m[1] : null; }
-$("#btnWsLoadId").onclick = () => { const id = wsIdFromInput(); if (!id) return toast("Bitte Workshop-ID oder Link eingeben", true); changeMap({workshop_id: id, mode: $("#modeSelect").value}); };
+$("#btnWsLoadId").onclick = () => { const id = wsIdFromInput(); if (!id) return toast("Bitte Workshop-ID oder Link eingeben", true); wsLoad(id); };
 $("#btnWsFavId").onclick = () => { const id = wsIdFromInput(); if (!id) return toast("Bitte Workshop-ID oder Link eingeben", true); addFav(id); };
 
 function fillMapSelect(sel, list){
@@ -1434,7 +1444,8 @@ let gqMapsFor = null, gqMapsLive = [];
 const gqDef = () => current && GQ[gameOf(current)];
 function gqThumb(m){
   const g = gameOf(current);
-  $("#gqThumb").innerHTML = m ? (mapThumb({map: m}, g) || "") : "";
+  const f = /^ws:/.test(m || "") && favs.find(x => "ws:" + x.id === m);
+  $("#gqThumb").innerHTML = f ? `<img src="${esc(f.preview || "")}" alt="" referrerpolicy="no-referrer">` : m ? (mapThumb({map: m}, g) || "") : "";
 }
 function gqFillMaps(){
   const d = gqDef(); if (!d || d.noMaps) return;
@@ -1443,7 +1454,8 @@ function gqFillMaps(){
   all.forEach(m => { const k = m.includes("_") ? m.split("_")[0] : ""; (groups[k] = groups[k] || []).push(m); });
   const sel = $("#gqMap"), keep = sel.value;
   sel.innerHTML = Object.entries(groups).sort((a, b) => b[1].length - a[1].length).map(([k, ms]) =>
-    `<optgroup label="${esc(PFX[k] || k || "Maps")}">${ms.sort().map(m => `<option value="${m}">${m}</option>`).join("")}</optgroup>`).join("");
+    `<optgroup label="${esc(PFX[k] || k || "Maps")}">${ms.sort().map(m => `<option value="${m}">${m}</option>`).join("")}</optgroup>`).join("") +
+    (WS_GAMES.has(gameOf(current)) && favs.length && wsFavGame === gameOf(current) ? `<optgroup label="★ Workshop-Favoriten">${favs.map(f => `<option value="ws:${esc(f.id)}">${esc(f.title)}</option>`).join("")}</optgroup>` : "");
   if (keep && all.includes(keep)) sel.value = keep;
   gqThumb(sel.value);
 }
@@ -1495,12 +1507,15 @@ function renderGq(){
   $("#gqExecBox").classList.toggle("hidden", !!d.noExec);
   $("#gqMapPanel").classList.toggle("hidden", !!d.noMaps);
   $("#gqMapHint").textContent = d.hint || "";
-  if (gqMapsFor !== current.id){ gqMapsLive = []; gqMapsFor = current.id; if (!d.noMaps) gqLoadMaps(true); }
+  if (gqMapsFor !== current.id){
+    gqMapsLive = []; gqMapsFor = current.id; if (!d.noMaps) gqLoadMaps(true);
+    if (WS_GAMES.has(g) && wsFavGame !== g) api(`/api/workshop/favorites?game=${g}`).then(f => { favs = f; wsFavGame = g; gqFillMaps(); }).catch(() => {});
+  }
   gqFillMaps();
 }
 (function initGq(){
   if (!$("#gqActions")) return;
-  const go = m => { m = (m || "").replace(/[^\w\-\.]/g, ""); if (m) gqSend(`changelevel ${m}`, `Map wechselt zu ${m}`); };
+  const go = m => { if (/^ws:\d+$/.test(m || "")) return wsLoad(m.slice(3)); m = (m || "").replace(/[^\w\-\.\/]/g, ""); if (m) gqSend(`changelevel ${m}`, `Map wechselt zu ${m}`); };
   $("#gqMap").addEventListener("change", () => gqThumb($("#gqMap").value));
   $("#gqMapCustom").addEventListener("input", () => gqThumb($("#gqMapCustom").value.trim() || $("#gqMap").value));
   $("#btnGqMap").onclick = () => go($("#gqMapCustom").value.trim() || $("#gqMap").value);

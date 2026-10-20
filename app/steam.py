@@ -34,13 +34,20 @@ def _client():
 SORTS = {"relevanz": "textsearch", "trend": "trend", "neu": "mostrecent", "beliebt": "totaluniquesubscribers"}
 
 
-async def workshop_search(query: str = "", sort: str = "", page: int = 1) -> list[dict]:
+# Spiele, deren Server Workshop-Maps live laden können: appid, Pflicht-Tag, nur Einträge mit Tag „Map“
+WS_GAMES = {"cs2": ("730", "CS2", True), "tf2": ("440", None, False)}
+
+
+async def workshop_search(query: str = "", sort: str = "", page: int = 1, game: str = "cs2") -> list[dict]:
     query = (query or "").strip()
     sort = SORTS.get(sort) or ("textsearch" if query else "trend")
+    appid, tag, only_maps = WS_GAMES.get(game) or WS_GAMES["cs2"]
     params = {
-        "appid": "730", "section": "readytouseitems", "requiredtags[]": "CS2",
+        "appid": appid, "section": "readytouseitems",
         "browsesort": sort, "actualsort": sort, "p": str(max(1, page)), "numperpage": "30",
     }
+    if tag:
+        params["requiredtags[]"] = tag
     if query:
         params["searchtext"] = query
     if sort == "trend":
@@ -56,7 +63,7 @@ async def workshop_search(query: str = "", sort: str = "", page: int = 1) -> lis
         raise SteamError(f"Steam Workshop nicht erreichbar ({e.__class__.__name__})") from e
     ids = list(dict.fromkeys(re.findall(r"filedetails/\?id=(\d+)", r.text)))[:30]
     items = await workshop_details(ids)
-    maps = [i for i in items if i.get("is_map", True)]
+    maps = [i for i in items if i.get("is_map", True)] if only_maps else items
     _cache[key] = (time.time(), maps)
     return maps
 

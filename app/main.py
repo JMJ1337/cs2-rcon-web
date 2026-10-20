@@ -2921,21 +2921,26 @@ async def put_settings(data: SettingsIn):
 
 
 # ---------------------------------------------------------------- Workshop
+def _ws_favfile(game: str) -> str:
+    return "workshop_favorites.json" if game in ("", "cs2") or game not in steam.WS_GAMES else f"workshop_favorites_{game}.json"
+
+
 @app.get("/api/workshop/search", dependencies=auth)
-async def workshop_search(q: str = "", sort: str = "", page: int = 1):
+async def workshop_search(q: str = "", sort: str = "", page: int = 1, game: str = "cs2"):
     try:
-        return await steam.workshop_search(q[:100], sort, page)
+        return await steam.workshop_search(q[:100], sort, page, game)
     except steam.SteamError as e:
         raise HTTPException(502, str(e))
 
 
 @app.get("/api/workshop/favorites", dependencies=auth)
-async def workshop_favorites():
-    return store.load("workshop_favorites.json", [])
+async def workshop_favorites(game: str = "cs2"):
+    return store.load(_ws_favfile(game), [])
 
 
 class FavIn(BaseModel):
     id: str = Field(max_length=200)
+    game: str = "cs2"
 
 
 @app.post("/api/workshop/favorites", dependencies=auth)
@@ -2943,7 +2948,8 @@ async def add_favorite(data: FavIn):
     wid = steam.parse_workshop_id(data.id)
     if not wid:
         raise HTTPException(400, "Ungültige Workshop-ID oder Link")
-    favs = store.load("workshop_favorites.json", [])
+    fname = _ws_favfile(data.game)
+    favs = store.load(fname, [])
     if any(f["id"] == wid for f in favs):
         return favs
     try:
@@ -2952,14 +2958,15 @@ async def add_favorite(data: FavIn):
         d = []
     item = d[0] if d else {"id": wid, "title": wid, "preview": "", "size_mb": 0, "tags": []}
     favs.append({k: item.get(k) for k in ("id", "title", "preview", "size_mb", "tags")})
-    store.save("workshop_favorites.json", favs)
+    store.save(fname, favs)
     return favs
 
 
 @app.delete("/api/workshop/favorites/{wid}", dependencies=auth)
-async def del_favorite(wid: str):
-    favs = [f for f in store.load("workshop_favorites.json", []) if f["id"] != wid]
-    store.save("workshop_favorites.json", favs)
+async def del_favorite(wid: str, game: str = "cs2"):
+    fname = _ws_favfile(game)
+    favs = [f for f in store.load(fname, []) if f["id"] != wid]
+    store.save(fname, favs)
     return favs
 
 

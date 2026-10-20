@@ -337,6 +337,8 @@ body:not(.g-wreckfest) #wfPanel{display:none!important}
 .pfbanner b{color:var(--warn,#e5a50a)}
 body.g-other:not(.g-tf2) .srconly{display:none!important}
 body:not(.g-gq) .gqonly{display:none!important}
+body:not(.g-ws) .wsonly{display:none!important}
+body:not(.g-tf2) .tf2wsonly{display:none!important}
 .gqthumb{width:160px;height:120px;border-radius:8px;overflow:hidden;background:var(--panel2,#1a1f1a);flex:0 0 160px;display:flex;align-items:center;justify-content:center}
 .gqthumb img{width:100%;height:100%;object-fit:cover}
 .gqthumb .mthumb{width:100%;height:100%}
