@@ -824,6 +824,33 @@ async def _rcon_cfg_fix(s: dict, live: bool = True) -> bool:
     return not olds
 
 
+CVARCFG_SH = r"""
+N="$1"; V="$2"
+for f in /serverdata/serverfiles/*/cfg/server.cfg /serverdata/serverfiles/*/server.cfg; do
+  [ -f "$f" ] || continue
+  if grep -qE "^[[:space:]]*$N([[:space:]]|$)" "$f"; then
+    sed -i -E "s/^[[:space:]]*$N([[:space:]].*)?$/$N \"$V\"/" "$f"
+  else
+    printf '\n%s "%s"\n' "$N" "$V" >> "$f"
+  fi
+done
+echo ok
+"""
+_jpw_applied: dict[str, str] = {}
+
+
+async def _apply_join_pw(s: dict, pw: str) -> None:
+    """Beitritts-Passwort live per RCON setzen und in server.cfg festschreiben (überlebt Neustarts)."""
+    pw = re.sub(r'["\s;]', "", pw or "")[:64]
+    await run(s, f'sv_password "{pw}"')
+    if s.get("container") and docker_api.available():
+        try:
+            await docker_api.exec_cmd(s["container"], ["sh", "-c", CVARCFG_SH, "sh", "sv_password", pw], timeout=15)
+        except docker_api.DockerError:
+            pass
+    _jpw_applied[s["id"]] = pw
+
+
 async def run(s: dict, command: str) -> str:
     try:
         return await client_for(s).execute(command)
@@ -1541,6 +1568,14 @@ async def collect_generic(s: dict) -> dict:
         if q:
             st["hostname"] = q["name"]
     pw = st.pop("password", None) if g == "wreckfest" else None
+    if (catmod.CATALOG.get(g) or {}).get("rcon") and s.get("password"):
+        pw = s.get("join_pw") or ""
+        if "join_pw" in s and _jpw_applied.get(s["id"]) != pw:
+            try:
+                await _apply_join_pw(s, pw)
+            except Exception as e:  # noqa: BLE001
+                log.debug("Server-Passwort %s: %s", s.get("name"), e)
+        pw = pw or None
     await _apply_auto_name(s, g, st)
     result = {"online": True, "game": g, **st, "join": join_info(s, pw)}
     if pw:
@@ -7560,6 +7595,29 @@ async def change_ports(sid: str, data: PortsIn):
     _rot_cache.pop(sid, None)
     log.info("%s: Ports geändert %s", name, res)
     return {"ok": True, **res}
+
+
+class JoinPwIn(BaseModel):
+    password: str = Field("", max_length=64)
+
+
+@app.post("/api/servers/{sid}/join-password", dependencies=auth)
+async def set_join_password(sid: str, data: JoinPwIn):
+    """Server-Passwort (Beitritt) live setzen – Source/GoldSrc per RCON, ohne Neustart; bleibt auch nach Neustarts."""
+    s = get_server(sid)
+    g = game_of(s)
+    pw = re.sub(r'["\s;]', "", data.password or "")[:64]
+    if (catmod.CATALOG.get(g) or {}).get("rcon"):
+        if not s.get("password"):
+            raise HTTPException(400, "Erst „Steuerung aktivieren“ (RCON)")
+        await _apply_join_pw(s, pw)
+        await _set_server_fields(sid, join_pw=pw)
+    elif g in ("cs2", "tf2"):
+        await run(s, f'sv_password "{pw}"')
+    else:
+        raise HTTPException(400, "Bei diesem Spiel nur über die Container-Einstellungen änderbar")
+    _join_pw.pop(s.get("container") or "", None)
+    return {"ok": True, "password": pw}
 
 
 class RconEnableIn(BaseModel):

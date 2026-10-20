@@ -275,6 +275,7 @@ def fields(key: str) -> list:
         out.append(["params", "Startparameter", "text", c.get("params", ""), "werden an den Server übergeben"])
     if c.get("rcon"):
         out.append(["rcon_pw", "RCON-Passwort", "password", "", "für Konsole, Mapwechsel, Bots … ohne Neustart"])
+        out.append(["server_pw", "Server-Passwort (Beitritt)", "text", "", "leer = ohne Passwort; später live änderbar"])
     if c.get("steam_login"):
         out.append(["steam_user", "Steam-Benutzer (Spiel muss im Konto sein)", "text", "", "Steam Guard muss aus sein"])
         out.append(["steam_pw", "Steam-Passwort", "password", "", ""])

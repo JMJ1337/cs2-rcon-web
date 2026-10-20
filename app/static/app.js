@@ -1513,6 +1513,8 @@ function renderGq(){
     if (cmds.length) gqSend(cmds.join("; "), "Limits gesetzt");
   };
   $("#gqExecBox").classList.toggle("hidden", !!d.noExec);
+  $("#gqPwBox").classList.toggle("hidden", !(GAMES[g]?.rcon || g === "tf2"));
+  $("#gqJoinPw").value = current.join_pw ?? (lastStatus && lastStatus.join_password) ?? "";
   $("#gqMapPanel").classList.toggle("hidden", !!d.noMaps);
   $("#gqMapHint").textContent = d.hint || "";
   if (gqMapsFor !== current.id){
@@ -1562,6 +1564,15 @@ function renderGq(){
       current.has_password = true; toast("Steuerung aktiv – Server startet einmal neu"); renderGq();
     } catch (e) { toast(e.message, true); }
   };
+  const setPw = async pw => {
+    try {
+      const r = await api(`/api/servers/${current.id}/join-password`, {body: {password: pw}});
+      current.join_pw = r.password; $("#gqJoinPw").value = r.password;
+      toast(r.password ? `Server-Passwort: ${r.password}` : "Server ohne Passwort"); setTimeout(refreshStatus, 1000);
+    } catch (e) { toast(e.message, true); }
+  };
+  $("#btnGqJoinPw").onclick = () => setPw($("#gqJoinPw").value.trim());
+  $("#btnGqJoinPwStd").onclick = () => setPw("hinkel");
   $("#btnGqExec").onclick = () => { const c = $("#gqExecCfg").value.trim().replace(/[^\w.\-\/]/g, ""); if (c) send(`exec ${c}`); };
 })();
 const settingsFor = () => (current && gameOf(current) === "tf2") ? TF2_SETTINGS : SETTINGS;

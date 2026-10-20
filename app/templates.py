@@ -365,6 +365,8 @@ def build(game: str, v: dict, data_dir: str) -> dict:
         sp = vals.get(st[1]) if len(st) > 1 and st[1] in vals else vals.get("port")
         jp = vals.get(c["join"][1]) or vals.get("port")
         srv = {"port": sp, "password": rcon_pw, "game_port": jp}
+        if c.get("rcon"):
+            srv["join_pw"] = re.sub(r'["\s;]', "", v.get("server_pw") or "")[:64]
         if c.get("web"):
             srv["web_url"] = f"http://{{host}}:{wport}"
     elif game == "wreckfest":
