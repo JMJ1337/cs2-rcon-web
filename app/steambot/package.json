@@ -1,0 +1,8 @@
+{
+  "name": "gsm-steambot",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "steam-user": "^5.0.0"
+  }
+}

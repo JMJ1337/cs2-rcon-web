@@ -338,6 +338,7 @@ function showView(v){
   if (v === "prefill"){ pfLoaded = false; showPfSvc(pfSvc); }
   if (v === "storage"){ loadStorage(true); loadFolders(); loadDocker().then(() => loadSysDisk()); }
   if (v === "game") renderGameView();
+  if (v === "bot"){ botLoaded = false; loadBot(); }
 }
 
 /* ================= Serverliste ================= */
@@ -1041,7 +1042,7 @@ async function refreshDash(){
 }
 
 /* ================= Server-Ansicht ================= */
-const VIEWS = ["dash","players","auto","server","scan","create","users","cache","prefill","storage","game"];
+const VIEWS = ["dash","players","auto","server","scan","create","users","cache","prefill","storage","game","bot"];
 function applyGameClasses(s){
   const g = gameOf(s), meta = GAMES[g] || {};
   document.body.classList.toggle("g-other", g !== "cs2");
@@ -3433,3 +3434,73 @@ async function loadSysDisk(refresh){
   if (r.busy && view === "storage") sysTimer = setTimeout(() => loadSysDisk(), 10000);
 }
 document.addEventListener("click", e => { if (e.target && e.target.id === "btnSysScan"){ loadSysDisk(true); setTimeout(() => loadSysDisk(), 3000); } });
+
+/* ================= Steam-Bot „GrohLan“ ================= */
+let botData = null, botLoaded = false;
+const botSel = new Set();
+async function loadBot(){
+  try { botData = await api("/api/steambot"); } catch (e) { $("#botStatus").innerHTML = `<div class="hint">${esc(e.message)}</div>`; return; }
+  const d = botData, s = d.settings, st = d.status || {}, b = st.bot || {};
+  if (!botLoaded || !$("#view-bot").contains(document.activeElement)){
+    $("#botEnabled").checked = !!s.enabled; $("#botAuto").checked = s.auto_add !== false;
+    $("#botName").value = s.bot_name || "GrohLan"; $("#botRecent").value = s.recent_hours || 24; $("#botMaxAge").value = s.max_age_days || 7;
+    botLoaded = true;
+  }
+  $("#botTitle").textContent = s.bot_name || "GrohLan";
+  const c = st.container;
+  let h = "";
+  if (!s.enabled) h = `<div class="hint">Bot ist aus. Einschalten und speichern – dann startet ein kleiner Container für den Bot.</div>`;
+  else if (!c || !c.running) h = `<div class="hint">Bot-Container startet …</div>`;
+  else if (st.error) h = `<div class="hint">${esc(st.error)}</div>`;
+  else {
+    const ok = b.state === "angemeldet";
+    h = `<div><b style="color:${ok ? "var(--ok)" : "var(--accent)"}">${esc(b.state || "?")}</b>${b.name ? " als " + esc(b.name) : ""}${b.steamid ? ` <span class="hint mono">${esc(b.steamid)}</span>` : ""}${b.error ? `<div class="hint" style="color:var(--bad)">${esc(b.error)}</div>` : ""}</div>`;
+    if (ok && (b.limited || b.can_invite === false)) h += `<div class="pill warn" style="margin-top:6px;white-space:normal">Eingeschränktes Steam-Konto – kann keine Freundschaftsanfragen schicken. Auf dem Bot-Konto einmal mind. 5 $ ausgeben (z. B. Guthaben aufladen).</div>`;
+    if (b.need_code) h += `<div style="margin-top:8px"><label class="hint">${b.need_code === "email" ? "Code aus der E-Mail von Steam" : "Code aus der Steam-App (Steam Guard)"}${b.last_code_wrong ? " – letzter Code war falsch" : ""}</label>
+      <div class="row" style="gap:6px"><input id="botCode" maxlength="12" style="width:120px" autocomplete="one-time-code"><button class="primary" id="botCodeSend">Senden</button></div></div>`;
+    else if (!ok && !/meldet an/.test(b.state || "")) h += `<div style="margin-top:8px"><div class="hint">Mit dem Steam-Konto des Bots anmelden (eigenes Konto, nicht dein privates). Das Passwort wird nicht gespeichert – der Bot merkt sich nur ein Anmelde-Token.</div>
+      <div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap"><input id="botUser" placeholder="Steam-Benutzername" autocomplete="off" style="width:180px"><input id="botPw" type="password" placeholder="Passwort" autocomplete="new-password" style="width:160px"><button class="primary" id="botLogin">Anmelden</button></div></div>`;
+    if (ok) h += `<div class="hint" style="margin-top:6px">${(b.friends || []).filter(f => f.rel === "Friend").length} Freunde · <a href="#" id="botLogout">abmelden</a></div>`;
+  }
+  const typing = $("#botStatus").contains(document.activeElement) && document.activeElement.tagName === "INPUT";
+  if (!typing) $("#botStatus").innerHTML = h;
+  if ($("#botCodeSend")) $("#botCodeSend").onclick = async () => { try { await api("/api/steambot/code", {body: {code: $("#botCode").value.trim()}}); toast("Code gesendet"); setTimeout(loadBot, 2500); } catch (e) { toast(e.message, true); } };
+  if ($("#botLogin")) $("#botLogin").onclick = async () => { try { await api("/api/steambot/login", {body: {user: $("#botUser").value.trim(), password: $("#botPw").value}}); $("#botPw").value = ""; toast("Melde an …"); setTimeout(loadBot, 3000); } catch (e) { toast(e.message, true); } };
+  if ($("#botLogout")) $("#botLogout").onclick = async e => { e.preventDefault(); if (!confirm("Bot abmelden? Danach muss er sich mit Passwort neu anmelden.")) return; try { await api("/api/steambot/logout", {method: "POST"}); loadBot(); } catch (er) { toast(er.message, true); } };
+  // Spieler
+  const ago = t => { if (!t) return "–"; const m = (Date.now() / 1000 - t) / 60; return m < 60 ? Math.round(m) + " min" : m < 1440 ? Math.round(m / 60) + " h" : Math.round(m / 1440) + " Tage"; };
+  $("#botPlayers").innerHTML = d.players.length ? `<table class="cachetable"><thead><tr><th></th><th>Spieler</th><th>zuletzt gesehen</th><th>Bot</th><th>Steam</th><th></th></tr></thead><tbody>${d.players.map(p => `<tr>
+      <td><input type="checkbox" data-botsel="${esc(p.steamid)}" ${botSel.has(p.steamid) ? "checked" : ""} ${p.status === "Freund" ? "" : "disabled title=\"Erst wenn die Freundschaftsanfrage angenommen ist\""} style="width:auto"></td>
+      <td><b>${esc(p.name)}</b> <span class="hint mono">${esc(p.steamid)}</span>${p.recent ? ` <span class="pill ok">auf der LAN</span>` : ""}</td>
+      <td class="hint">vor ${ago(p.last_seen)}</td>
+      <td>${p.status === "Freund" ? `<span style="color:var(--ok)">✓ Freund</span>` : esc(p.status)}</td>
+      <td class="hint">${p.online == null ? "" : p.online ? (p.playing ? "spielt " + esc(p.playing) : "online") : "offline"}</td>
+      <td>${p.status === "Freund" || p.status === "angefragt" ? "" : `<button class="small" data-botadd="${esc(p.steamid)}">Anfragen</button>`}</td></tr>`).join("")}</tbody></table>`
+    : `<div class="hint">Noch keine Spieler mit SteamID gesehen – sie erscheinen, sobald jemand auf einem Server spielt.</div>`;
+  $$("[data-botsel]").forEach(c => c.onchange = () => { c.checked ? botSel.add(c.dataset.botsel) : botSel.delete(c.dataset.botsel); $("#botSelN").textContent = botSel.size; });
+  $$("[data-botadd]").forEach(btn => btn.onclick = async () => { try { await api(`/api/steambot/add/${btn.dataset.botadd}`, {method: "POST"}); toast("Freundschaftsanfrage gesendet"); loadBot(); } catch (e) { toast(e.message, true); } });
+  $("#botSelN").textContent = botSel.size;
+  const names = Object.fromEntries(d.players.map(p => [p.steamid, p.name]));
+  $("#botMsgs").innerHTML = (d.messages || []).slice().reverse().map(m => `<div>${new Date(m.t * 1000).toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit"})} ${m.dir === "in" ? "⬅ <b>" + esc(names[m.from] || m.from) + "</b>" : "➡ " + esc(names[m.to] || m.to)}: ${esc(m.text)}</div>`).join("") || "noch keine";
+}
+$("#botSave").onclick = async () => {
+  try {
+    await api("/api/steambot", {method: "PUT", body: {enabled: $("#botEnabled").checked, auto_add: $("#botAuto").checked, bot_name: $("#botName").value.trim() || "GrohLan",
+      recent_hours: +$("#botRecent").value || 24, max_age_days: +$("#botMaxAge").value || 7}});
+    toast("Gespeichert"); botLoaded = false; setTimeout(loadBot, 1500);
+  } catch (e) { toast(e.message, true); }
+};
+async function botSend(all){
+  const text = $("#botText").value.trim();
+  if (!text) return toast("Erst eine Nachricht eingeben", true);
+  if (!all && !botSel.size) return toast("Erst Spieler auswählen", true);
+  if (all && !confirm(`Nachricht an alle Spieler der letzten ${(botData && botData.settings.recent_hours) || 24} h schicken?`)) return;
+  try {
+    const r = await api("/api/steambot/message", {body: {text, all, steamids: [...botSel]}});
+    toast(`Gesendet an ${r.done.length}${r.failed && r.failed.length ? `, ${r.failed.length} fehlgeschlagen` : ""}${r.skipped ? `, ${r.skipped} übersprungen (noch nicht Freund)` : ""}`);
+    $("#botText").value = ""; loadBot();
+  } catch (e) { toast(e.message, true); }
+}
+$("#botSendAll").onclick = () => botSend(true);
+$("#botSendSel").onclick = () => botSend(false);
+setInterval(() => { if (view === "bot" && !document.hidden) loadBot(); }, 5000);

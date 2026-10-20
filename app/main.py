@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import mapimages, gslt, matchlog, steamlist, playerdb, notify, prefill_more
-from . import cache_model, cache_inventory, timings
+from . import cache_model, cache_inventory, timings, steambot_ctl
 from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
 from .games import satisfactory as sfmod
@@ -3042,6 +3042,130 @@ async def _cache_autostart(lc: str) -> None:
         _cache_heal["last_error"] = str(e)[:200]
 
 
+# ---------------------------------------------------------------- Steam-Bot „GrohLan“
+class BotSettings(BaseModel):
+    enabled: bool | None = None
+    auto_add: bool | None = None
+    bot_name: str | None = Field(None, max_length=32)
+    recent_hours: float | None = Field(None, ge=1, le=24 * 30)
+    max_age_days: float | None = Field(None, ge=1, le=365)
+
+
+class BotLogin(BaseModel):
+    user: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class BotCode(BaseModel):
+    code: str = Field(min_length=3, max_length=12)
+
+
+class BotMsg(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+    steamids: list[str] = []
+    all: bool = False
+
+
+@app.get("/api/steambot", dependencies=auth)
+async def steambot_get(request: Request):
+    _need_admin(request)
+    d = steambot_ctl.settings()
+    st = await steambot_ctl.status()
+    bot = st.get("bot") or {}
+    rel = {f["steamid"]: f for f in bot.get("friends") or []}
+    req = d.get("requested") or {}
+    players = []
+    for p in steambot_ctl.lan_players(float(d.get("max_age_days") or 7) * 24):
+        f = rel.get(p["steamid"])
+        r = req.get(p["steamid"])
+        p["status"] = ("Freund" if f and f["rel"] == "Friend" else "angefragt" if (f and f["rel"] == "RequestInitiator") or (r and r > 0)
+                       else "Anfrage fehlgeschlagen" if r and r < 0 else "–")
+        p["online"] = f.get("online") if f else None
+        p["playing"] = f.get("game") if f else None
+        p["recent"] = time.time() - (p["last_seen"] or 0) < float(d.get("recent_hours") or 24) * 3600
+        players.append(p)
+    return {"settings": {k: v for k, v in d.items() if k not in ("key", "requested", "adds")}, "status": st, "players": players,
+            "messages": (bot.get("messages") or [])[-30:]}
+
+
+@app.put("/api/steambot", dependencies=auth)
+async def steambot_put(data: BotSettings, request: Request):
+    _need_admin(request)
+    _need_docker()
+    old = steambot_ctl.settings()
+    new = {k: v for k, v in data.model_dump().items() if v is not None}
+    if new.get("enabled") and not old.get("enabled"):
+        new["since"] = time.time()
+    d = steambot_ctl.save(new)
+    try:
+        c = await steambot_ctl.state()
+        if d["enabled"] and (not c or not c.get("running") or new.get("bot_name") not in (None, old.get("bot_name"))):
+            await steambot_ctl.start()
+        elif not d["enabled"] and c and c.get("running"):
+            await steambot_ctl.stop()
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    return {"ok": True}
+
+
+async def _bot(method: str, path: str, body: dict | None = None, timeout: float = 20) -> dict:
+    try:
+        return await steambot_ctl.api(method, path, body, timeout)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, str(e)[:300])
+
+
+@app.post("/api/steambot/login", dependencies=auth)
+async def steambot_login(data: BotLogin, request: Request):
+    """Einmalige Anmeldung des Bot-Kontos – das Passwort geht nur an den Bot, gespeichert wird nur sein Anmelde-Token."""
+    _need_admin(request)
+    return await _bot("POST", "/login", {"user": data.user, "pass": data.password})
+
+
+@app.post("/api/steambot/code", dependencies=auth)
+async def steambot_code(data: BotCode, request: Request):
+    _need_admin(request)
+    return await _bot("POST", "/code", {"code": data.code})
+
+
+@app.post("/api/steambot/logout", dependencies=auth)
+async def steambot_logout(request: Request):
+    _need_admin(request)
+    return await _bot("POST", "/logout")
+
+
+@app.post("/api/steambot/add/{steamid}", dependencies=auth)
+async def steambot_add(steamid: str, request: Request):
+    _need_admin(request)
+    if not re.fullmatch(r"\d{17}", steamid):
+        raise HTTPException(400, "Ungültige SteamID")
+    r = await _bot("POST", "/add", {"steamid": steamid})
+    req = steambot_ctl.settings().get("requested") or {}
+    req[steamid] = time.time()
+    steambot_ctl.save({"requested": req})
+    return r
+
+
+@app.post("/api/steambot/message", dependencies=auth)
+async def steambot_message(data: BotMsg, request: Request):
+    """Nachricht an ausgewählte Spieler oder an alle, die zuletzt auf der LAN waren (nur bestätigte Freunde)."""
+    _need_admin(request)
+    d = steambot_ctl.settings()
+    st = await steambot_ctl.status()
+    friends = {f["steamid"] for f in ((st.get("bot") or {}).get("friends") or []) if f.get("rel") == "Friend"}
+    if data.all:
+        targets = [p["steamid"] for p in steambot_ctl.lan_players(float(d.get("recent_hours") or 24))]
+    else:
+        targets = [x for x in data.steamids if re.fullmatch(r"\d{17}", x)]
+    send = [x for x in targets if x in friends]
+    skipped = len(targets) - len(send)
+    if not send:
+        raise HTTPException(400, "Keiner der Empfänger ist (schon) Freund des Bots – Nachrichten gehen nur an bestätigte Freunde"
+                            if targets else "Keine Empfänger")
+    r = await _bot("POST", "/msg", {"steamids": send, "text": data.text}, timeout=30 + len(send))
+    return {**r, "skipped": skipped}
+
+
 async def monitor_loop():
     await asyncio.sleep(90)                 # erst Status sammeln lassen
     while True:
@@ -3053,6 +3177,10 @@ async def monitor_loop():
             await _monitor_once()
         except Exception:  # noqa: BLE001
             log.exception("Überwachung")
+        try:
+            await steambot_ctl.tick()
+        except Exception:  # noqa: BLE001
+            log.exception("Steam-Bot")
         await asyncio.sleep(60)
 
 
