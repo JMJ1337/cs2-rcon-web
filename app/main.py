@@ -3779,7 +3779,7 @@ async def _tour_load(d: dict, m: dict, bots: bool = False) -> None:
                    num_maps=1, maplist=[m.get("map") or "de_inferno"], players_per_team=2, skip_veto=True, preset="wingman",
                    side_type="never_knife" if bots else "standard")   # Bots können nach dem Messerrunde nicht .stay/.switch wählen
     cfg = build_match(data)
-    mzid = int(time.time()) % 10_000_000
+    mzid = random.randint(1_000_000, 99_999_999)          # eindeutig – zwei Server laden oft in derselben Sekunde
     cfg["matchid"] = mzid
     if bots:                                  # Bot-Test: Bots füllen die Teams (Bots melden sich nie „bereit“ -> Start erzwingen)
         cfg["cvars"] = {**cfg.get("cvars", {}), **BOT_CVARS}
@@ -3879,7 +3879,7 @@ async def tour_tick() -> None:
         res = next((x for x in matchlog.recent(m.get("server"), 10) if str(x.get("matchid")) == str(m.get("mz_id"))), None)
         # Wächter: MatchZy hat das Match nicht übernommen (z. B. direkt nach dem vorigen Match noch beschäftigt) -> neu laden
         mzm = (((_state.get(m.get("server") or "") or {}).get("matchzy") or {}).get("match") or {})
-        if m.get("mz_id") and now - (m.get("started") or now) > 90 and str(mzm.get("matchid") or "") != str(m["mz_id"]) \
+        if not res and m.get("mz_id") and now - (m.get("started") or now) > 90 and str(mzm.get("matchid") or "") != str(m["mz_id"]) \
                 and (mzm.get("state") in (None, "none") or not mzm.get("matchid")) and (m.get("reloads") or 0) < 5 \
                 and now - (m.get("reloaded") or 0) > 90:
             m["reloads"] = (m.get("reloads") or 0) + 1
