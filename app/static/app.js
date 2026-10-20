@@ -3187,8 +3187,8 @@ $("#btnGsltAdd").onclick = async () => {
 };
 
 async function setTv(on){
-  if (!confirm(on ? "CSTV einschalten (30 s Verzögerung)? Vom Tool angelegte Container werden dafür neu erstellt." : "CSTV ausschalten?")) return;
-  try { const r = await api(`/api/servers/${current.id}/cstv`, {method: "POST", body: {on, delay: 30}}); toast(r.how); }
+  if (!confirm(on ? "CSTV einschalten (ohne Verzögerung)? Vom Tool angelegte Container werden dafür neu erstellt." : "CSTV ausschalten?")) return;
+  try { const r = await api(`/api/servers/${current.id}/cstv`, {method: "POST", body: {on, delay: 0}}); toast(r.how); }
   catch (e){ toast(e.message, true); }
 }
 $("#btnPorts").onclick = async () => {

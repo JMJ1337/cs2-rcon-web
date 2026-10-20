@@ -3781,6 +3781,7 @@ async def _tour_load(d: dict, m: dict, bots: bool = False) -> None:
     cfg = build_match(data)
     mzid = random.randint(1_000_000, 99_999_999)          # eindeutig – zwei Server laden oft in derselben Sekunde
     cfg["matchid"] = mzid
+    cfg["cvars"] = {**cfg.get("cvars", {}), "tv_delay": "0"}      # Zuschauen/Stream ohne Verzögerung
     if bots:                                  # Bot-Test: Bots füllen die Teams (Bots melden sich nie „bereit“ -> Start erzwingen)
         cfg["cvars"] = {**cfg.get("cvars", {}), **BOT_CVARS}
     token = secrets.token_urlsafe(12)
@@ -6111,7 +6112,7 @@ async def gslt_delete(tid: str):
 
 class TvIn(BaseModel):
     on: bool = True
-    delay: int = Field(30, ge=0, le=300)
+    delay: int = Field(0, ge=0, le=300)
 
 
 @app.post("/api/servers/{sid}/cstv", dependencies=auth)
@@ -8252,7 +8253,7 @@ body[data-mode="bracket"] #curtain .t1{font-size:84px;white-space:nowrap;max-wid
 </style></head><body>"""
 
 _OVERLAY_JS = r"""
-const P=new URLSearchParams(location.search), DELAY=(+P.get('delay')||35)*1000, MODE=document.body.dataset.mode;
+const P=new URLSearchParams(location.search), DELAY=(P.has('delay')?+P.get('delay'):0)*1000, MODE=document.body.dataset.mode;
 const buf=[], seen={};
 function pickLive(v,s){const L=(v.matches||[]).filter(m=>m.status==='live');if(s&&s.id){const x=L.find(m=>m.id===s.id);if(x)return x;}
   L.sort((a,b)=>(b.seq?1:0)-(a.seq?1:0)||(b.started||0)-(a.started||0));return L[0]||null;}
@@ -8273,7 +8274,7 @@ function treeHtml(v){return v&&v.active&&v.matches&&v.matches.length?glShow({...
 function render(v,s,now){
   const cur=pickLive(v,s), nx=pickNext(v,cur);
   if(cur&&!seen[cur.id])seen[cur.id]=now;
-  const curtain=MODE==='start'||MODE==='bracket'||!cur||(now-seen[cur.id]<DELAY+15000);
+  const curtain=MODE==='start'||MODE==='bracket'||!cur||(now-seen[cur.id]<DELAY+20000);
   const c=document.getElementById('curtain');
   if(curtain){
     c.style.display='flex';
@@ -8310,7 +8311,7 @@ def _overlay_page(mode: str) -> str:
 @app.get("/overlay/game")
 async def overlay_game():
     """Über dem Spielbild: Spielstand-Leiste + „Als Nächstes“; solange kein Spiel läuft (oder kurz nach dem Wechsel) der
-    „Gleich Live“-Vorhang mit Turnierbaum. Daten um die CSTV-Verzögerung versetzt (?delay=35)."""
+    „Gleich Live“-Vorhang mit Turnierbaum. Mit ?delay=Sekunden lassen sich die Daten um eine CSTV-Verzögerung versetzen (Standard 0)."""
     return _Resp(content=_overlay_page("game"), media_type="text/html")
 
 
