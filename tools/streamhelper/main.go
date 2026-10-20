@@ -325,7 +325,7 @@ func send(c Config, cfgDir string, cmds ...string) error {
 
 // -allow_third_party_software: sonst blockiert CS2 die OBS-Spielaufnahme. tv = CSTV-Adresse, mit der CS2 direkt verbindet.
 func startCS2(steam string, c Config, tv ...string) {
-	game := []string{"-netconport", fmt.Sprint(c.Netcon), "-sw", "-noborder", "-w", "1920", "-h", "1080", "-novid", "-allow_third_party_software", "+exec", "grohlan_stream"}
+	game := []string{"-netconport", fmt.Sprint(c.Netcon), "-sw", "-noborder", "-w", "1920", "-h", "1080", "-novid", "-allow_third_party_software", "-condebug", "+exec", "grohlan_stream"}
 	if len(tv) > 0 && tv[0] != "" {
 		game = append(game, "+connect", tv[0])
 	}
@@ -344,6 +344,51 @@ func startCS2(steam string, c Config, tv ...string) {
 	}
 	if err := exec.Command(steam, append([]string{"-applaunch", "730"}, game...)...).Start(); err != nil {
 		say("CS2 starten fehlgeschlagen: %v", err)
+	}
+}
+
+// CS2-Konsole mitlesen (-condebug schreibt game/csgo/console.log): Verbindungsversuche und Fehler im exe-Fenster zeigen
+func watchConsole(steam string) {
+	cfg := findCS2Cfg(steam)
+	if cfg == "" {
+		return
+	}
+	logf := filepath.Join(cfg, "..", "console.log")
+	var off int64 = -1
+	keys := []string{"connect", "Connect", "disconnect", "Disconnect", "GOTV", "SourceTV", "CSTV", "spec_", "rejected", "Rejected",
+		"timed out", "Timed out", "error", "Error", "failed", "Failed", "GrohLAN"}
+	for {
+		time.Sleep(2 * time.Second)
+		f, err := os.Open(logf)
+		if err != nil {
+			continue
+		}
+		st, _ := f.Stat()
+		if off < 0 || st.Size() < off {
+			off = st.Size() // ab jetzt (bzw. nach CS2-Neustart neu)
+			if st.Size() < 4096 {
+				off = 0
+			}
+		}
+		f.Seek(off, 0)
+		b, _ := io.ReadAll(f)
+		f.Close()
+		off += int64(len(b))
+		for _, ln := range strings.Split(string(b), "\n") {
+			ln = strings.TrimSpace(ln)
+			if ln == "" || strings.Contains(ln, "QueuePresentAndWait") {
+				continue
+			}
+			for _, k := range keys {
+				if strings.Contains(ln, k) {
+					if len(ln) > 160 {
+						ln = ln[:160]
+					}
+					say("  CS2> %s", ln)
+					break
+				}
+			}
+		}
 	}
 }
 
@@ -416,6 +461,7 @@ func main() {
 	if cfgDir := findCS2Cfg(steam); cfgDir != "" {
 		writeStreamCfg(cfgDir) // Auto-Kamera usw. beim CS2-Start (+exec grohlan_stream)
 	}
+	go watchConsole(steam)
 	started := time.Time{}
 	if steam == "" {
 		say("Steam nicht gefunden – bitte Steam installieren und anmelden (Konto mit CS2).")
