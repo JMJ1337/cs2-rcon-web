@@ -391,7 +391,7 @@ async def public_servers(request: Request):
                     "online": bool(st.get("online")), "sleeping": (_asleep.get(s["id"]) or {}).get("mode"),
                     "install": _public_install(s),
                     "reach": steamlist.reach(g, s, st, steam, wan),
-                    "tv": (st.get("tv") or {}).get("enabled") and bool((st.get("join") or {}).get("tv_url")), "players": st.get("humans"),
+                    "tv": (st.get("tv") or {}).get("enabled") and bool((st.get("join") or {}).get("tv_url")), "players": st.get("humans"), "bots": st.get("bots") or 0,
                     "max_players": st.get("max_players"), "map": st.get("map"),
                     "map_label": wfd.track_name(st.get("map")) if g == "wreckfest" else (mapimages.workshop_title(st.get("map")) or st.get("map")),
                     "map_image": _map_image(g, st),

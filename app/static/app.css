@@ -731,3 +731,5 @@ main .topbar{top:34px}
 .lcard .lt{display:flex;gap:6px;align-items:center;font-family:var(--mono);font-size:12px}
 .lcard .lt .pin{margin-left:auto;text-decoration:none}
 .lcard .ln{font-weight:600;margin:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.srv .cnt .botc{color:var(--muted);font-size:11px}

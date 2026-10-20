@@ -234,7 +234,7 @@ function renderPublic(){
     return `<div class="pubcard${x.online || x.sleeping || x.install ? "" : " off"}" style="--gc:${g.color}" ${x.pending ? `title="wird gerade angelegt"` : `data-pub="${esc(x.id)}" tabindex="0" title="Details: Spieler, Rotation"`}>
       ${thumb ? `<div class="pubthumb">${thumb}<span class="pubmap">${MAP_GAMES.has(x.game) && x.online ? esc(x.map_label || x.map || "") : ""}</span></div>` : ""}
       <div class="pubtop">${gameTile(x.game, 18)}<div class="pubname"><b title="${esc(x.name)}">${esc(x.name)}</b><span class="hint">${esc(g.label)} ${x.online ? reachPill(x.reach) : ""}</span></div>
-        <span class="pill ${x.online ? "ok" : ""}">${x.online ? `● ${x.players ?? 0}${x.max_players ? "/" + x.max_players : ""} Spieler` : x.sleeping ? "💤 schläft" : x.install ? "⬇ wird installiert" : "offline"}</span></div>
+        <span class="pill ${x.online ? "ok" : ""}">${x.online ? `● ${x.players ?? 0}${x.max_players ? "/" + x.max_players : ""} Spieler${x.bots ? ` · ${x.bots} Bots` : ""}` : x.sleeping ? "💤 schläft" : x.install ? "⬇ wird installiert" : "offline"}</span></div>
       ${x.install ? `<div class="pubinst"><div class="bar"><i style="width:${Math.min(100, x.install.pct)}%"></i></div><span>${esc(x.install.label)} · ${Math.round(x.install.pct)} %${x.install.rate_bps ? ` · ${x.install.rate_kind === "Kopieren" ? "⇄" : "↓"} ${fmtRate(x.install.rate_bps)}` : ""}${x.install.eta ? ` · fertig ca. ${etaClock(x.install.eta)} Uhr` : ""}</span></div>` : ""}
       ${x.sleeping ? `<div class="pubjoin"><button class="small primary" data-pwake="${esc(x.id)}">Aufwecken</button><span class="hint">Server ruht, weil niemand drauf war – startet in ${x.sleeping === "pause" ? "1–2 Sekunden" : "ca. 1–3 Minuten"}.</span></div>` : ""}
       ${x.map && x.map !== "–" && x.online ? `<div class="pubmapline">${esc(x.map_label || x.map)}</div>` : ""}
@@ -289,7 +289,7 @@ async function renderPubDetail(){
       <div class="kvtable">
         ${cur && cur !== "–" ? `<span>${x.game === "wreckfest" ? "Strecke" : "Map"}</span><span>${esc(cur)}</span>` : ""}
         ${(d && d.mode) || x.mode ? `<span>Modus</span><span>${esc((d && d.mode) || x.mode)}</span>` : ""}
-        <span>Spieler</span><span>${x.online ? `${x.players ?? 0}${x.max_players ? " / " + x.max_players : ""}` : "–"}</span>
+        <span>Spieler</span><span>${x.online ? `${x.players ?? 0}${x.max_players ? " / " + x.max_players : ""}${x.bots ? ` · ${x.bots} Bots` : ""}` : "–"}</span>
         ${j.address ? `<span>Adresse</span><span class="mono">${esc(j.address)}</span>` : ""}
         ${x.join_password ? `<span>Passwort</span><span class="mono">${esc(x.join_password)}</span>` : ""}
       </div>
@@ -372,7 +372,7 @@ function renderServerList(){
       <div class="sgbody">${list.map(s => {
         const st = stateOf(s.id);
         const lim = st.visible_players > 0 ? st.visible_players : st.max_players;
-        const cnt = st.online ? `${st.humans ?? 0}${lim ? "/" + lim : ""}` : "";
+        const cnt = st.online ? `${st.humans ?? 0}${lim ? "/" + lim : ""}${st.bots ? ` +${st.bots}🤖` : ""}` : "";
         return `<div class="srv ${current && current.id===s.id ? "active":""}" data-id="${esc(s.id)}">
           ${led(st)}
           <div class="meta"><div class="n">${esc(s.name)}</div><div class="h">${esc(st.map || s.host+":"+s.port)}</div></div>
@@ -1018,7 +1018,7 @@ async function refreshDash(){
       <div class="kv">
         <span>Map</span><span class="kvmap" title="${esc(o.map)}">${esc((o.workshop && o.workshop.title) || o.map_title || o.map || "?")}</span>
         <span>Modus</span><span>${esc(o.mode ? o.mode.label : "?")}</span>
-        <span>Spieler</span><span>${o.humans ?? 0} / ${slots || "?"}${o.bots ? ` (+${o.bots} Bots)` : ""}</span>
+        <span>Spieler</span><span>${o.humans ?? 0} / ${slots || "?"} · ${o.bots || 0} Bots</span>
         <span>MatchZy</span><span>${mz}</span>
       </div>` : `
       <div class="kv">
@@ -1136,7 +1136,7 @@ async function refreshStatus(){
     $("#stMode").textContent = st.mode ? st.mode.label : "?";
     $("#stRounds").textContent = st.maxrounds ? `max. ${st.maxrounds} Runden` : "";
     const slots = st.visible_players > 0 ? st.visible_players : st.max_players;
-    $("#stPlayers").textContent = `${st.humans ?? st.players.length} / ${slots ?? "?"}` + (st.bots ? ` +${st.bots}` : "");
+    $("#stPlayers").textContent = `${st.humans ?? st.players.length} / ${slots ?? "?"}` + (st.bots ? ` · ${st.bots} Bots` : "");
     const a = st.auto || {};
     $("#stAuto").textContent = !a.enabled ? `Automatik aus · max. ${st.max_players}` :
       (a.target ? `Auto: ${a.target} Slots (${a.reason})${a.capped ? " – begrenzt durch SLOTS" : ""}` : `Auto: ${a.reason}`) + (a.bots ? ` · ${a.bots}` : "");
@@ -1834,7 +1834,7 @@ function renderGeneric(st){
   $("#stMap").textContent = st.track_name || st.map || "–"; $("#stMapSub").textContent = st.hostname || "";
   if (st.map_image){ $("#stMapImg").src = st.map_image; $("#stMapImg").classList.remove("hidden"); } else $("#stMapImg").classList.add("hidden");
   $("#stMode").textContent = meta.label; $("#stRounds").textContent = "";
-  $("#stPlayers").textContent = `${st.humans ?? 0}${st.max_players ? " / " + st.max_players : ""}`;
+  $("#stPlayers").textContent = `${st.humans ?? 0}${st.max_players ? " / " + st.max_players : ""}${st.bots ? ` · ${st.bots} Bots` : ""}`;
   $("#stAuto").textContent = ""; $("#stAuto").style.color = "";
   $("#gExtra").innerHTML = Object.entries(st.extra || {}).map(([k,v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join("") || `<span class="hint">Keine weiteren Infos</span><span></span>`;
   const canSave = meta.features.includes("save");
@@ -2415,7 +2415,7 @@ function renderMobile(){
     return `<div class="mobsrv ${o.online ? "" : "off"}">${gameTile(g, 18)}
       <div style="min-width:0"><div class="n"><span class="dot" style="background:${o.online ? "var(--ok)" : o.sleeping ? "var(--muted)" : "var(--bad)"}"></span>${esc(o.server.name)}</div>
         <div class="m">${esc(where)}${ld && ld.cpu_host != null ? ` · CPU ${ld.cpu_host.toFixed(1)} %` : ""}</div></div>
-      <div class="p">${o.online ? `${o.players_unknown ? "–" : o.humans ?? 0}${slots ? `<small>/${slots}</small>` : ""}` : ""}</div></div>`;
+      <div class="p">${o.online ? `${o.players_unknown ? "–" : o.humans ?? 0}${slots ? `<small>/${slots}</small>` : ""}${o.bots ? `<small> +${o.bots}🤖</small>` : ""}` : ""}</div></div>`;
   }).join("") || `<div class="hint">Noch keine Server.</div>`;
 }
 $("#mobFull").onclick = () => { try { localStorage.setItem("gsmView", "full"); } catch {} clearInterval(mobTimer); $("#mob").classList.add("hidden"); start(); };
@@ -3264,7 +3264,7 @@ function renderGameView(){
     return `<tr data-gvid="${esc(s.id)}"><td><input type="checkbox" data-gvc="${esc(s.id)}" ${gvSel.has(s.id) ? "checked" : ""} style="width:auto"></td>
       <td>${led(o)}</td><td><a href="#" data-gvopen="${esc(s.id)}"><b>${esc(s.name)}</b></a></td>
       <td class="mono">${esc(s.host)}:${esc(s.port)}</td><td>${esc(o.online ? (gvGame === "wreckfest" ? (o.track_name || o.map || "") : (o.map_title || o.map || "")) : "")}</td>
-      <td>${o.online ? `${o.humans ?? 0}${lim ? "/" + lim : ""}` : "–"}</td>
+      <td>${o.online ? `${o.humans ?? 0}${lim ? "/" + lim : ""}${o.bots ? ` <span class="hint">+${o.bots} Bots</span>` : ""}` : "–"}</td>
       <td>${s.container ? `<span class="hint">${esc(CSTATE[c] || c || "?")}</span>` : `<span class="hint">kein Container</span>`}</td>
       <td>${o.online ? reachPill(o.reach) : ""}</td></tr>`;
   }).join("") || `<tr><td colspan="8" class="hint">Keine Server</td></tr>`;
