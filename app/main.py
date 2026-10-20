@@ -3402,6 +3402,31 @@ async def tour_add_player(data: TourPlayerIn, request: Request):
     return {"ok": True, "steamid": sid}
 
 
+BOT_NAMES = ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India", "Juliett", "Kilo", "Lima",
+             "Mike", "Nova", "Oscar", "Papa", "Quebec", "Romeo", "Sierra", "Tango"]
+
+
+class TourBotIn(BaseModel):
+    count: int = Field(1, ge=1, le=16)
+
+
+@app.post("/api/tournament/bots", dependencies=auth)
+async def tour_add_bots(data: TourBotIn, request: Request):
+    """Bots als Teilnehmer (füllen Teams auf oder bilden eigene Teams) – spielen auf dem Server als CS2-Bots."""
+    _need_right(request, "tournament")
+    d = tour.load()
+    used = {p["name"] for p in d["players"]}
+    added = []
+    for _ in range(data.count):
+        name = next((f"🤖 Bot {n}" for n in BOT_NAMES if f"🤖 Bot {n}" not in used), f"🤖 Bot {len(used) + 1}")
+        used.add(name)
+        sid = "BOT-" + secrets.token_hex(3)
+        d["players"].append({"steamid": sid, "name": name, "avatar": None, "t": time.time(), "bot": True})
+        added.append(sid)
+    tour.save(d)
+    return {"ok": True, "added": added}
+
+
 @app.delete("/api/tournament/players/{steamid}", dependencies=auth)
 async def tour_del_player(steamid: str, request: Request):
     _need_right(request, "tournament")
@@ -3801,9 +3826,15 @@ async def _tour_load(d: dict, m: dict, bots: bool = False) -> None:
     s = get_server(m["server"])
     await ensure_matchzy(s)
     t1, t2 = tour.team(d, m["t1"]), tour.team(d, m["t2"])
-    data = MatchIn(team1=TeamIn(name=t1["name"], players=t1["players"]), team2=TeamIn(name=t2["name"], players=t2["players"]),
+    h1 = [x for x in t1["players"] if not tour.is_bot(x)]
+    h2 = [x for x in t2["players"] if not tour.is_bot(x)]
+    n1, n2 = len(t1["players"]) - len(h1), len(t2["players"]) - len(h2)    # Turnier-Bots (füllen Teams auf)
+    if not bots and not h1 and not h2:
+        bots = True                           # nur Bots: wie im Bot-Test durchspielen lassen
+    mixed = not bots and (n1 or n2)
+    data = MatchIn(team1=TeamIn(name=t1["name"], players=[] if bots else h1), team2=TeamIn(name=t2["name"], players=[] if bots else h2),
                    num_maps=1, maplist=[m.get("map") or "de_inferno"], players_per_team=2, skip_veto=True, preset="wingman",
-                   side_type="never_knife" if bots else "standard")   # Bots können nach dem Messerrunde nicht .stay/.switch wählen
+                   side_type="never_knife" if bots or mixed else "standard")   # Bots können nach der Messerrunde nicht .stay/.switch wählen
     cfg = build_match(data)
     mzid = random.randint(1_000_000, 99_999_999)          # eindeutig – zwei Server laden oft in derselben Sekunde
     cfg["matchid"] = mzid
@@ -3823,6 +3854,31 @@ async def _tour_load(d: dict, m: dict, bots: bool = False) -> None:
         asyncio.create_task(_tour_bots_start(s))
     else:
         asyncio.create_task(_tour_invite(d, m, s))
+        if mixed:
+            asyncio.create_task(_tour_mixed_start(s, n1, n2, len(h1) + len(h2)))
+
+
+async def _tour_mixed_start(s: dict, n_ct: int, n_t: int, humans: int) -> None:
+    """Teams mit Turnier-Bots: Bots ins jeweilige Team setzen (Team 1 startet als CT), Start erzwingen, sobald alle
+    menschlichen Spieler auf dem Server sind (Bots schreiben nie .ready) – spätestens nach 8 Minuten."""
+    add = "; ".join(["bot_kick", "bot_quota_mode normal", "bot_join_after_player 0", "bot_difficulty 2", "mp_autoteambalance 0",
+                     "mp_limitteams 0", "sv_hibernate_when_empty 0"] + ["bot_add_ct"] * n_ct + ["bot_add_t"] * n_t)
+    t0 = time.time()
+    for wait in (20, 25):                     # nach dem Mapwechsel (Configs setzen bot_quota zurück) – zweimal sicherheitshalber
+        await asyncio.sleep(wait)
+        try:
+            await run(s, add)
+        except Exception as e:  # noqa: BLE001
+            log.info("Turnier-Bots %s: %s", s.get("id"), e)
+    while time.time() - t0 < 8 * 60:
+        await asyncio.sleep(10)
+        if ((_state.get(s["id"]) or {}).get("humans") or 0) >= humans:
+            await asyncio.sleep(20)           # kurz Zeit zum Ankommen
+            break
+    try:
+        await run(s, "css_start")
+    except Exception as e:  # noqa: BLE001
+        log.info("Turnier-Bots Start %s: %s", s.get("id"), e)
 
 
 BOT_CVARS = {"bot_join_after_player": "0", "bot_quota_mode": "normal", "bot_quota": "4", "bot_difficulty": "2",

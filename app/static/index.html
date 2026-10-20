@@ -435,6 +435,7 @@
             <h2>Teilnehmer <span class="hint" id="tourPlN"></span></h2>
             <div class="row" style="gap:6px;margin-bottom:6px"><select id="tourAddSel" style="flex:1"></select><button id="tourAdd">Hinzufügen</button></div>
             <div class="row" style="gap:6px;margin-bottom:8px"><input id="tourAddId" placeholder="SteamID64 oder Steam-Profil-Link" style="flex:2;min-width:180px"><input id="tourAddName" placeholder="Name (optional)" maxlength="40" style="flex:1;min-width:110px"><button id="tourAddManual">+ per Hand</button></div>
+            <div class="row" style="gap:6px;margin-bottom:8px;align-items:center"><span class="hint">Bots als Teilnehmer (füllen Teams auf oder spielen als eigenes Team):</span><input type="number" id="tourBotN" min="1" max="16" value="1" style="width:60px"><button id="tourAddBot">🤖 Bots hinzufügen</button></div>
             <div id="tourPlayers"></div>
             <h2 style="margin-top:14px">Teams <span class="hint">(je 2 Spieler – bilden die Spieler auf der öffentlichen Seite selbst, hier änderbar)</span></h2>
             <div id="tourTeams"></div>
@@ -1010,6 +1011,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=159"></script>
+<script src="/static/app.js?v=160"></script>
 </body>
 </html>

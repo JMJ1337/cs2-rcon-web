@@ -41,6 +41,10 @@ def team(d: dict, tid):
     return next((t for t in d["teams"] if t["id"] == tid), None)
 
 
+def is_bot(steamid: str) -> bool:
+    return str(steamid or "").startswith("BOT-")
+
+
 def team_name(d: dict, tid) -> str:
     if tid == BYE:
         return "Freilos"

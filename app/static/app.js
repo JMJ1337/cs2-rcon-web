@@ -3874,7 +3874,7 @@ async function loadTour(){
   bindTourSrvCheck();
   $("#tourServers").innerHTML = `Server fürs Turnier: ${d.pool.length ? d.pool.map(s => `${s.online ? "🟢" : "⚪"} ${esc(s.name)}`).join(", ") : "keine (außer CS #1)"}${d.needed ? ` · für die erste Runde gleichzeitig nötig: ${d.needed}` : ""}${d.needed && d.pool.length < d.needed ? (d.settings.auto_servers !== false ? ` – ${d.needed - d.pool.length} werden beim Start angelegt` : ` – zu wenige, Matches laufen nacheinander`) : ""}${d.bot ? "" : " · Steam-Bot ist aus (keine Einladungen)"}`;
   const reg = new Set(d.players.map(p => p.steamid));
-  const teamEditing = $("#tourTeams").contains(document.activeElement) || ["tourNewTeam", "tourNewP1", "tourNewP2", "tourAddId", "tourAddName", "tourAddSel"].includes((document.activeElement || {}).id);
+  const teamEditing = $("#tourTeams").contains(document.activeElement) || ["tourNewTeam", "tourNewP1", "tourNewP2", "tourAddId", "tourAddName", "tourAddSel", "tourBotN"].includes((document.activeElement || {}).id);
   if (!teamEditing) $("#tourAddSel").innerHTML = `<option value="">– bekannten Spieler hinzufügen –</option>` + d.lan_players.filter(p => !reg.has(p.steamid)).map(p => `<option value="${esc(p.steamid)}">${p.lan ? "🖧 " : ""}${esc(p.name)}</option>`).join("");
   $("#tourPlN").textContent = `(${d.players.length})`;
   const tname = Object.fromEntries(d.teams.map(t => [t.id, t.name]));
@@ -3918,6 +3918,10 @@ $("#tourAddTeam").onclick = async () => {
   if (!name) return toast("Teamname eingeben", true);
   const r = await tourCall("/api/tournament/teams", {body: {name, players: [$("#tourNewP1").value, $("#tourNewP2").value].filter(Boolean)}}, "Team angelegt");
   if (r){ $("#tourNewTeam").value = ""; document.activeElement.blur(); loadTour(); }
+};
+$("#tourAddBot").onclick = async () => {
+  const n = Math.max(1, Math.min(16, +$("#tourBotN").value || 1));
+  const r = await tourCall("/api/tournament/bots", {body: {count: n}}, `${n} Bot${n > 1 ? "s" : ""} hinzugefügt – jetzt einem Team zuordnen`);
 };
 $("#tourAnnounce").onclick = async e => {
   e.preventDefault();
