@@ -398,9 +398,14 @@ def match_stats(res: dict) -> list[dict]:
     out = []
     for side, k in (("1", "team1"), ("2", "team2")):
         for p in (res.get(k) or {}).get("players") or []:
+            raw = p.get("raw") or {}
+            g = lambda *ks: int(sum(raw.get(k) or 0 for k in ks))      # noqa: E731
             out.append({"side": side, "steamid": p.get("steamid") or "", "name": p.get("name") or "?",
                         "kills": int(p.get("kills") or 0), "deaths": int(p.get("deaths") or 0), "hs": int(p.get("hs") or 0),
-                        "assists": int(p.get("assists") or 0), "damage": int(p.get("damage") or 0)})
+                        "assists": int(p.get("assists") or 0), "damage": int(p.get("damage") or 0),
+                        "rounds": g("rounds_played"), "kast": g("kast"), "k1": g("1k"), "k2": g("2k"), "k3": g("3k"), "k4": g("4k"), "k5": g("5k"),
+                        "fk": g("first_kills_t", "first_kills_ct"), "fd": g("first_deaths_t", "first_deaths_ct"), "trades": g("trade_kills"),
+                        "clutch": g("1v1", "1v2", "1v3", "1v4", "1v5"), "flash": g("flash_assists")})
     return out
 
 
@@ -416,8 +421,10 @@ def leaderboard(d: dict) -> list[dict]:
             tid = m.get("t" + st["side"])
             r = tab.setdefault(key, {"steamid": sid if real else None, "name": names.get(sid) or st["name"], "team": team_name(d, tid) if tid else None,
                                      "kills": 0, "deaths": 0, "hs": 0, "assists": 0, "damage": 0, "matches": 0, "wins": 0})
-            for k in ("kills", "deaths", "hs", "assists", "damage"):
-                r[k] += st.get(k) or 0
+            rounds = st.get("rounds") or ((m.get("s1") or 0) + (m.get("s2") or 0))
+            for k in ("kills", "deaths", "hs", "assists", "damage", "kast", "k1", "k2", "k3", "k4", "k5", "fk", "fd", "trades", "clutch", "flash"):
+                r[k] = r.get(k, 0) + (st.get(k) or 0)
+            r["rounds"] = r.get("rounds", 0) + rounds
             r["matches"] += 1
             if m.get("status") == "done" and m.get("winner") and m.get("winner") == tid:
                 r["wins"] += 1
@@ -425,8 +432,34 @@ def leaderboard(d: dict) -> list[dict]:
     for r in tab.values():
         r["kd"] = round(r["kills"] / max(1, r["deaths"]), 2)
         r["hs_pct"] = round(100 * r["hs"] / r["kills"]) if r["kills"] else 0
+        r.update(rating(r))
         out.append(r)
-    return sorted(out, key=lambda r: (-r["kd"], -r["kills"], -r["wins"]))
+    return sorted(out, key=lambda r: (-r["rating"], -r["kills"], -r["wins"]))
+
+
+def rating(r: dict) -> dict:
+    """Spielerbewertung angelehnt an HLTV Rating 3.0 (1,00 = Durchschnitt). Die genaue HLTV-Formel ist nicht
+    öffentlich; nachgebildet sind ihre Bausteine und Gewichte: Rundeneinfluss („Round Swing“ ≈ Eröffnungs-Kills,
+    Trades, Clutches, Flash-Assists) 33 %, Kills 25 %, Schaden 15 %, Überleben 10 %, KAST 10 %, Multi-Kills 7 %."""
+    n = max(1, r.get("rounds") or 0)
+    kpr, dpr = r["kills"] / n, r["deaths"] / n
+    adr = (r.get("damage") or 0) / n
+    kast = (r.get("kast") or 0) / n if r.get("kast") else min(1.0, (r["kills"] + r.get("assists", 0) * 0.6 + (n - r["deaths"])) / n * 0.75)
+    mk = (r.get("k1", 0) + 4 * r.get("k2", 0) + 9 * r.get("k3", 0) + 16 * r.get("k4", 0) + 25 * r.get("k5", 0)) / n
+    detail = any(r.get(k) for k in ("fk", "fd", "trades", "kast", "clutch"))
+    swing = (r.get("fk", 0) - 0.6 * r.get("fd", 0) + 0.5 * r.get("trades", 0) + 1.5 * r.get("clutch", 0) + 0.3 * r.get("flash", 0)) / n
+    parts = {
+        "swing": (1.0 + (swing - 0.11) / 0.11 * 0.5) if detail else 1.0,   # Ø ≈ 0,11 je Runde → 1,00
+        "kills": kpr / 0.68,
+        "damage": adr / 76,
+        "survival": (1 - dpr) / 0.32,
+        "kast": kast / 0.72,
+        "multi": (mk / 1.28) if mk else kpr / 0.68,
+    }
+    w = {"swing": 0.33, "kills": 0.25, "damage": 0.15, "survival": 0.10, "kast": 0.10, "multi": 0.07}
+    val = sum(max(0.0, min(3.0, parts[k])) * w[k] for k in w)
+    val = max(0.0, 1 + (val - 1) * 0.7)          # auf die übliche HLTV-Spanne (≈ 0,5–1,6) stauchen
+    return {"rating": round(val, 2), "adr": round(adr), "kast_pct": round(100 * kast)}
 
 
 def _pname(d: dict, sid: str) -> str:

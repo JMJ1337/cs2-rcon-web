@@ -26,7 +26,8 @@ def _players(team: dict) -> list[dict]:
     out = []
     for p in (team or {}).get("players") or []:
         st = p.get("stats") or {}
-        out.append({"name": p.get("name") or "?", "steamid": str(p.get("steamid") or p.get("steam_id") or ""), "kills": st.get("kills"), "deaths": st.get("deaths"),
+        raw = {k: v for k, v in st.items() if isinstance(v, (int, float))}      # alle Werte (KAST, 2k–5k, Clutches …)
+        out.append({"raw": raw, "name": p.get("name") or "?", "steamid": str(p.get("steamid") or p.get("steam_id") or ""), "kills": st.get("kills"), "deaths": st.get("deaths"),
                     "assists": st.get("assists"), "damage": st.get("damage"), "mvp": st.get("mvp"),
                     "hs": st.get("headshot_kills")})
     out.sort(key=lambda x: -(x["kills"] or 0))

@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import mapimages, gslt, matchlog, steamlist, playerdb, notify, prefill_more
-from . import cache_model, cache_inventory, timings, steambot_ctl, stream_ctl, extapi
+from . import cache_model, cache_inventory, timings, steambot_ctl, stream_ctl, extapi, dmstats
 from . import tournament as tour
 from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
@@ -361,8 +361,29 @@ async def cs2_log_http(sid: str, key: str, request: Request):
     try:
         matchlog.ingest_log(sid, name, body)
         playerdb.parse_log(body, "cs2", sid, name)
+        st_ = _state.get(sid) or {}
+        if _server_nr(s, st_.get("hostname")) == 1 or (str(st_.get("game_type")), str(st_.get("game_mode"))) == ("1", "2"):
+            dmstats.ingest(body)                  # Deathmatch-Bestenliste
     except Exception:  # noqa: BLE001
         log.exception("CS2-Log")
+    return {"ok": True}
+
+
+def _dm_names() -> dict:
+    return {p["steamid"]: playerdb.display(p) for p in playerdb.all_players() if p.get("steamid")}
+
+
+@app.get("/api/public/dm")
+async def public_dm():
+    """Deathmatch-Bestenliste (CS #1): heute (seit 6 Uhr) und gesamt."""
+    names = _dm_names()
+    return {"day": dmstats.board("day", 15, names), "total": dmstats.board("total", 15, names)}
+
+
+@app.post("/api/dm/reset", dependencies=auth)
+async def dm_reset(request: Request):
+    _need_admin(request)
+    dmstats.reset()
     return {"ok": True}
 
 
@@ -1057,6 +1078,7 @@ def _mode_hostname(s: dict, hostname: str | None, mode_label: str, settings: dic
 
 _mzlog_set: dict[str, float] = {}
 _tvpw_set: dict[str, float] = {}
+_dm_set: dict[str, float] = {}
 _tvpw_map: dict[str, str] = {}
 _cslog_set: dict[str, float] = {}
 TOOL_PORT = int(os.getenv("TOOL_PORT", "8090"))
@@ -1195,6 +1217,17 @@ async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = 
             url = f"{_tool_url(s)}/api/cs2log/{s['id']}/{matchlog.secret(s['id'], SECRET)}"
             await c.execute(f'log on; mp_logdetail 3; logaddress_delall_http; logaddress_add_http "{url}"')
             _cslog_set[s["id"]] = time.time()
+        except RconError:
+            pass
+    # CS #1 ist immer Deathmatch (Einstellung „cs1_deathmatch“, Standard an) – umstellen nur, wenn niemand drauf ist
+    if (apply_auto and automation.get_settings().get("cs1_deathmatch", True) and _server_nr(s, st.get("hostname")) == 1
+            and (str(st.get("game_type")), str(st.get("game_mode"))) != ("1", "2") and not (st.get("humans") or 0)
+            and time.time() - _dm_set.get(s["id"], 0) > 300 and st.get("map")):
+        _dm_set[s["id"]] = time.time()
+        try:
+            mp = re.sub(r"[^\w\-/]", "", automation.map_basename(st["map"]) or "de_inferno")
+            await c.execute(f"game_type 1; game_mode 2; changelevel {mp}")
+            log.info("CS #1 wieder auf Deathmatch gestellt (%s)", mp)
         except RconError:
             pass
     tvkey = f'{st.get("map")}'
@@ -8515,7 +8548,7 @@ function render(v,s,now){
   if(nx){n.style.display='block';n.innerHTML='<div class="h bb">Als Nächstes</div><b>'+nm(nx,1)+'</b> vs <b>'+nm(nx,2)+'</b><div style="font-size:16px;color:#aaa">'+esc((nx.label||'').split(' · ').pop())+(nx.planned?' · '+tTime(nx.planned)+' Uhr':'')+'</div>';}
   else n.style.display='none';
   const tp=document.getElementById('top'), L=(v.leaders||[]).slice(0,3);
-  if(L.length&&P.get('top')!=='0'){tp.style.display='block';tp.innerHTML='<div class="h bb">Beste Spieler</div>'+L.map((r,i)=>'<div class="r"><b>'+(i+1)+'. '+esc(r.name)+'</b><span>K/D <b class="kd">'+(r.kd||0).toFixed(2)+'</b> · HS '+r.hs_pct+'% · '+r.wins+' Siege</span></div>').join('');}
+  if(L.length&&P.get('top')!=='0'){tp.style.display='block';tp.innerHTML='<div class="h bb">Beste Spieler</div>'+L.map((r,i)=>'<div class="r"><b>'+(i+1)+'. '+esc(r.name)+'</b><span>Rating <b class="kd">'+(r.rating||0).toFixed(2)+'</b> · K/D '+(r.kd||0).toFixed(2)+' · '+r.wins+' Siege</span></div>').join('');}
   else tp.style.display='none';
 }
 poll();setInterval(poll,3000);window.addEventListener('resize',fit);

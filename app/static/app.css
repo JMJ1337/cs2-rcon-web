@@ -759,3 +759,7 @@ main .topbar{top:34px}
 .glleaders .tmn{display:block;font-size:11px;color:var(--gmut)}
 
 .pltable tr.plsel td{background:rgba(240,164,58,.07)}
+
+.glseg{margin-left:auto;display:flex;gap:4px;font-family:Inter,system-ui,sans-serif;font-size:13px;letter-spacing:0}
+.glseg a{padding:3px 10px;border-radius:6px;border:1px solid var(--gline);color:var(--gmut);text-decoration:none}
+.glseg a.on{background:var(--glime);color:#0b1406;border-color:var(--glime)}

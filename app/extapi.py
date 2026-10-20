@@ -267,6 +267,12 @@ async def v1_stream(request: Request):
     return st
 
 
+@router.get("/deathmatch", dependencies=[Depends(auth("tournament", read=True))])
+async def v1_deathmatch():
+    """Deathmatch-Bestenliste von CS #1: day (heute, ab 6 Uhr) und total."""
+    return await _M().public_dm()
+
+
 @router.get("/servers", dependencies=[Depends(auth("tournament", read=True))])
 async def v1_servers():
     """Server mit Status, Spielern und Beitritts-/Zuschauen-Adresse (öffentliche Adresse)."""

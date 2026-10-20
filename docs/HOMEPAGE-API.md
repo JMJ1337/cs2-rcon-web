@@ -115,6 +115,14 @@ Ablauf auf der Homepage:
 
 Den Spielplan erstellen und das Turnier starten macht die Turnierleitung im Spielservermanager.
 
+### `GET /deathmatch` – Deathmatch-Bestenliste (CS #1)
+
+`{"day": [...], "total": [...]}` – je Spieler `steamid, name, kills, deaths, kd, hs_pct, last`. „day“ zählt ab 6 Uhr morgens (LAN-Nächte gehören zum Vortag). Sortiert nach Kills.
+
+### Spielerbewertung im Turnier (`leaders` in `GET /tournament`)
+
+Je Spieler: `rating` (angelehnt an HLTV Rating 3.0, 1,00 = Durchschnitt), `kd`, `kills`, `deaths`, `adr`, `kast_pct`, `hs_pct`, `wins`, `matches`. Die genaue HLTV-Formel ist nicht öffentlich – nachgebildet aus MatchZy-Werten: Rundeneinfluss (Eröffnungs-Kills, Trades, Clutches, Flash-Assists) 33 %, Kills 25 %, Schaden 15 %, Überleben 10 %, KAST 10 %, Multi-Kills 7 %.
+
 ### `GET /servers` – Server-Übersicht
 
 `{"servers": [{"id", "name", "game", "online", "players", "max", "map", "address", "tv_address"}]}`

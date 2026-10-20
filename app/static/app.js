@@ -219,7 +219,7 @@ function matchHtml(m){
 }
 function renderPublic(){
   const r = pubData; if (!r) return;
-  refreshPubTour(); refreshPubStream();
+  refreshPubTour(); refreshPubStream(); refreshPubDm();
   const on = r.servers.filter(x => x.online), pl = on.reduce((a, x) => a + (x.players || 0), 0);
   $("#pubStat").innerHTML = `<b>${on.length}</b> von ${r.servers.length} Servern online · <b>${pl}</b> Spieler · ` +
     (r.net === "internet" ? `<span class="pill" title="Du kommst aus dem Internet – Adressen zeigen die öffentliche IP">🌐 Internet${r.address ? " · " + esc(r.address) : ""}</span>`
@@ -3587,8 +3587,8 @@ function tourBoardHtml(v, admin){
   if (K.length) h += bracketHtml("K.-o.-Phase", K, [], admin);
   if (W.length) h += bracketHtml(L.length ? "Winner-Bracket" : "K.-o.-Baum", W, F, admin);
   if (L.length) h += bracketHtml("Loser-Bracket", L, [], admin);
-  if (v.leaders && v.leaders.length) h += `<div class="tsec"><h3>Beste Spieler</h3><table class="cachetable"><thead><tr><th>#</th><th>Spieler</th><th>Team</th><th>K/D</th><th>Kills</th><th>Tode</th><th>HS %</th><th>Siege</th></tr></thead><tbody>
-    ${v.leaders.map((r, i) => `<tr><td>${i + 1}</td><td><b>${esc(r.name)}</b></td><td>${esc(r.team || "")}</td><td class="mono">${(r.kd ?? 0).toFixed(2)}</td><td class="mono">${r.kills}</td><td class="mono">${r.deaths}</td><td class="mono">${r.hs_pct}%</td><td class="mono">${r.wins}/${r.matches}</td></tr>`).join("")}</tbody></table></div>`;
+  if (v.leaders && v.leaders.length) h += `<div class="tsec"><h3>Beste Spieler</h3><table class="cachetable"><thead><tr><th>#</th><th>Spieler</th><th>Team</th><th title="angelehnt an HLTV Rating 3.0 (1,00 = Durchschnitt)">Rating</th><th>K/D</th><th>Kills</th><th>Tode</th><th>ADR</th><th>KAST</th><th>HS %</th><th>Siege</th></tr></thead><tbody>
+    ${v.leaders.map((r, i) => `<tr><td>${i + 1}</td><td><b>${esc(r.name)}</b></td><td>${esc(r.team || "")}</td><td class="mono"><b>${(r.rating ?? 0).toFixed(2)}</b></td><td class="mono">${(r.kd ?? 0).toFixed(2)}</td><td class="mono">${r.kills}</td><td class="mono">${r.deaths}</td><td class="mono">${r.adr ?? "–"}</td><td class="mono">${r.kast_pct ?? "–"}%</td><td class="mono">${r.hs_pct}%</td><td class="mono">${r.wins}/${r.matches}</td></tr>`).join("")}</tbody></table></div>`;
   return h;
 }
 function groupBox(title, rows, ms, admin, rounds){
@@ -3698,10 +3698,13 @@ function glStreamAttach(s){
   slot.appendChild(glSt.el);
   if (glSt.el.paused) glSt.el.play().catch(() => {});
 }
-function glLeaders(L, n){
-  return `<table class="glleaders"><thead><tr><th>#</th><th>Spieler</th><th title="Kills / Tode">K/D</th><th>Kills</th><th>Tode</th><th title="Anteil Kopfschüsse an den Kills">HS %</th><th title="Gewonnene / gespielte Matches">Siege</th></tr></thead><tbody>
+function glLeaders(L, n, dm){
+  const head = dm ? `<th>#</th><th>Spieler</th><th>Kills</th><th>Tode</th><th title="Kills / Tode">K/D</th><th title="Anteil Kopfschüsse an den Kills">HS %</th>`
+    : `<th>#</th><th>Spieler</th><th title="Spielerbewertung angelehnt an HLTV Rating 3.0 – 1,00 = Durchschnitt">Rating</th><th title="Kills / Tode">K/D</th><th>Kills</th><th>Tode</th><th title="Schaden je Runde">ADR</th><th title="Anteil Kopfschüsse an den Kills">HS %</th><th title="Gewonnene / gespielte Matches">Siege</th>`;
+  return `<table class="glleaders"><thead><tr>${head}</tr></thead><tbody>
     ${L.slice(0, n).map((r, i) => `<tr class="${i < 3 ? "top" : ""}"><td class="rk">${i + 1}</td><td><b>${esc(r.name)}</b>${r.team ? `<span class="tmn">${esc(r.team)}</span>` : ""}</td>
-      <td class="kd">${(r.kd ?? 0).toFixed(2)}</td><td>${r.kills}</td><td>${r.deaths}</td><td>${r.hs_pct}%</td><td>${r.wins}/${r.matches}</td></tr>`).join("")}</tbody></table>`;
+      ${dm ? `<td class="kd">${r.kills}</td><td>${r.deaths}</td><td>${(r.kd ?? 0).toFixed(2)}</td><td>${r.hs_pct}%</td>`
+           : `<td class="kd">${(r.rating ?? 0).toFixed(2)}</td><td>${(r.kd ?? 0).toFixed(2)}</td><td>${r.kills}</td><td>${r.deaths}</td><td>${r.adr ?? "–"}</td><td>${r.hs_pct}%</td><td>${r.wins}/${r.matches}</td>`}</tr>`).join("")}</tbody></table>`;
 }
 function glShow(v){
   const by = st => v.matches.filter(m => st.includes(m.stage));
@@ -4150,3 +4153,18 @@ document.addEventListener("click", e => {
   document.getElementById("tvHelpX").onclick = () => box.remove();
   setTimeout(() => box.isConnected && box.remove(), 30000);
 });
+
+// Deathmatch-Bestenliste (CS #1) auf der öffentlichen Seite
+let pubDmAt = 0, pubDmTab = "day";
+async function refreshPubDm(){
+  if (Date.now() - pubDmAt < 15000) return;
+  pubDmAt = Date.now();
+  let r; try { r = await (await fetch("/api/public/dm", {cache: "no-store"})).json(); } catch { return; }
+  const box = $("#pubDm"); if (!box) return;
+  if (!r.day.length && !r.total.length){ box.innerHTML = ""; return; }
+  const L = pubDmTab === "day" && r.day.length ? r.day : r.total, tab = L === r.day ? "day" : "total";
+  box.innerHTML = `<div class="tourpub"><div class="gl"><div class="glsec"><h3>💀 Deathmatch-Bestenliste <span style="font-size:15px;color:var(--gmut)">CS #1</span>
+      <span class="glseg"><a href="#" data-dmtab="day" class="${tab === "day" ? "on" : ""}">Heute</a><a href="#" data-dmtab="total" class="${tab === "total" ? "on" : ""}">Gesamt</a></span></h3>
+    ${glLeaders(L, 15, true)}</div></div></div>`;
+  $$("[data-dmtab]").forEach(a => a.onclick = e => { e.preventDefault(); pubDmTab = a.dataset.dmtab; pubDmAt = 0; refreshPubDm(); });
+}
