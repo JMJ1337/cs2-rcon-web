@@ -3689,10 +3689,12 @@ async function loadTour(){
     $("#tourStartAt").value = toLocalInput(d.start); $("#tourMatchMin").value = d.match_min || 35; $("#tourPauseMin").value = d.pause_min ?? 10;
     $("#tourMaps").value = (d.settings.maps || []).join(", "); $("#tourReg").checked = !!d.registration;
     $("#tourAuto").checked = d.settings.auto_servers !== false; $("#tourInvite").checked = d.settings.invite !== false;
+    $("#tourParQf").checked = d.settings.par_qf !== false; $("#tourParSf").checked = !!d.settings.par_sf;
     tourLoaded = true;
   }
   $("#tourStatus").textContent = "· " + (tStatus[d.status] || d.status) + (d.active ? " · auf der Übersicht sichtbar" : "") + (d.test ? ` · TEST (${d.test === "sim" ? "simuliert" : "Bots"})` : "");
   $("#ttStart").disabled = !!d.test; $("#ttEnd").disabled = !d.test;
+  $("#tourMaxSrv").textContent = `(höchstens ${d.max_servers} – Teams / 4)`;
   $("#tourSrvCheck").innerHTML = tourSrvCheckHtml(d.servercheck);
   bindTourSrvCheck();
   $("#tourServers").innerHTML = `Server fürs Turnier: ${d.pool.length ? d.pool.map(s => `${s.online ? "🟢" : "⚪"} ${esc(s.name)}`).join(", ") : "keine (außer CS #1)"}${d.needed ? ` · für die erste Runde gleichzeitig nötig: ${d.needed}` : ""}${d.needed && d.pool.length < d.needed ? (d.settings.auto_servers !== false ? ` – ${d.needed - d.pool.length} werden beim Start angelegt` : ` – zu wenige, Matches laufen nacheinander`) : ""}${d.bot ? "" : " · Steam-Bot ist aus (keine Einladungen)"}`;
@@ -3725,7 +3727,8 @@ $("#tourSave").onclick = async () => {
   const st = $("#tourStartAt").value ? new Date($("#tourStartAt").value).getTime() / 1000 : null;
   await tourCall("/api/tournament", {method: "PUT", body: {active: $("#tourActive").checked, name: $("#tourName").value, mode: $("#tourMode").value, start: st,
     match_min: +$("#tourMatchMin").value || 35, pause_min: +$("#tourPauseMin").value || 0, maps: $("#tourMaps").value.split(/[\s,]+/).filter(Boolean),
-    registration: $("#tourReg").checked, auto_servers: $("#tourAuto").checked, invite: $("#tourInvite").checked}}, "Gespeichert");
+    registration: $("#tourReg").checked, auto_servers: $("#tourAuto").checked, invite: $("#tourInvite").checked,
+    par_qf: $("#tourParQf").checked, par_sf: $("#tourParSf").checked}}, "Gespeichert");
   tourLoaded = false;
 };
 $("#tourAdd").onclick = () => $("#tourAddSel").value && tourCall("/api/tournament/players", {body: {steamid: $("#tourAddSel").value}});

@@ -396,7 +396,9 @@
               <label>Dauer je Match <input type="number" id="tourMatchMin" min="10" style="width:70px"> min + Pause <input type="number" id="tourPauseMin" min="0" style="width:60px"> min</label>
               <label>Maps (der Reihe nach) <input id="tourMaps" style="width:320px" placeholder="de_inferno, de_nuke, de_overpass, de_vertigo"></label>
               <label><input type="checkbox" id="tourReg"> Anmeldung auf der öffentlichen Seite offen</label>
-              <label><input type="checkbox" id="tourAuto"> Fehlende Server beim Start automatisch anlegen</label>
+              <label><input type="checkbox" id="tourParQf"> Viertelfinale parallel spielen</label>
+              <label><input type="checkbox" id="tourParSf"> Halbfinale parallel spielen <span class="hint">(sonst einzeln nacheinander – alle können zuschauen; Finale immer einzeln)</span></label>
+              <label><input type="checkbox" id="tourAuto"> Fehlende Server beim Start automatisch anlegen <span class="hint" id="tourMaxSrv"></span></label>
               <label><input type="checkbox" id="tourInvite"> Spieler per Steam-Bot zum Match einladen (10 min vorher und beim Start)</label>
             </div>
             <div class="row" style="margin-top:10px"><button class="primary" id="tourSave">Speichern</button></div>
@@ -947,6 +949,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=138"></script>
+<script src="/static/app.js?v=139"></script>
 </body>
 </html>

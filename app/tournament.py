@@ -21,7 +21,7 @@ MODES = {"ko": "K.-o.-System", "double": "Doppel-K.-o.", "groups": "Gruppen + K.
 
 DEFAULTS = {"active": False, "name": "Groh LAN Wingman-Turnier", "mode": "groups", "start": None, "match_min": 35,
             "pause_min": 10, "maps": WINGMAN_MAPS, "status": "setup", "registration": True, "auto_servers": True,
-            "invite": True, "players": [], "teams": [], "matches": [], "groups": {}, "servers": [], "created": None}
+            "invite": True, "par_qf": True, "par_sf": False, "players": [], "teams": [], "matches": [], "groups": {}, "servers": [], "created": None}
 
 
 def load() -> dict:
@@ -276,65 +276,81 @@ def reset_match(d: dict, mid: str) -> None:
 # ---------------------------------------------------------------- Zeitplan
 def plan(d: dict) -> None:
     """Startzeit und Server für jedes offene Match: frühestens nach Ende der Vorgänger, auf dem Server, der als
-    Erstes frei ist. Laufende/fertige Matches behalten ihre Zeiten."""
-    servers = list(d.get("servers") or [])
+    Erstes frei ist. Laufende/fertige Matches behalten ihre Zeiten. Einzel-Spiele (Finale, je nach Einstellung auch
+    Halb-/Viertelfinale) laufen allein: erst wenn alles davor fertig ist, und nichts parallel dazu."""
+    servers = list(d.get("servers") or [])[:max_servers(d)]
     dur = (int(d.get("match_min") or 35) + int(d.get("pause_min") or 10)) * 60
     start = d.get("start") or time.time()
     free = {s: start for s in servers}
     ends: dict[str, float] = {}
     for m in d["matches"]:
-        if m["status"] in ("live", "done") and m.get("server") in free:
+        if m["status"] in ("live", "done"):
             t_end = (m.get("ended") or ((m.get("started") or m.get("planned") or start) + dur))
-            if m["status"] == "live":
+            if m["status"] == "live" and m.get("server") in free:
                 free[m["server"]] = max(free[m["server"]], t_end)
             ends[m["id"]] = t_end
     order = sorted(d["matches"], key=lambda m: (m["round"], {"G": 0, "R": 0, "L": 0, "W": 1, "K": 1, "F": 2}.get(m["stage"], 0), m["id"]))
-    seq, seq_end = False, 0.0            # ab dem Halbfinale: nur noch ein Spiel gleichzeitig (alle können zuschauen)
+    block, all_end = 0.0, 0.0
+    now = time.time() if d.get("status") == "running" else start
     for m in order:
-        if is_late(m) and not seq:
-            seq = True
-            seq_end = max([seq_end] + list(ends.values()))   # Halbfinale erst, wenn alle früheren Spiele vorbei sind
-        if m["status"] == "done":
-            ends.setdefault(m["id"], m.get("ended") or start)
-            if seq:
-                seq_end = max(seq_end, ends[m["id"]])
+        one = solo(d, m)
+        if m["status"] in ("done", "live"):
+            e = ends.get(m["id"]) or start
+            all_end = max(all_end, e)
+            if one:
+                block = max(block, e)
             continue
-        if m["status"] == "live":
-            if seq:
-                seq_end = max(seq_end, ends.get(m["id"]) or start)
-            continue
-        m["seq"] = seq
+        m["seq"] = one
         dep = []
         for s in (m.get("src1"), m.get("src2")):
             if s and "m" in s:
                 dep.append(ends.get(s["m"], start))
             elif s and "g" in s:
                 dep += [ends.get(x["id"], start) for x in d["matches"] if x["stage"] == "G" and x["group"] == s["g"]]
-        earliest = max([start, time.time() if d.get("status") == "running" else start, seq_end if seq else 0] + dep)
+        earliest = max([start, now, block, all_end if one else 0] + dep)
         if not servers:
             m["planned"], m["server"] = earliest, None
             ends[m["id"]] = earliest + dur
-            continue
-        # Match mit Freilos braucht keinen Server
-        srv = min(servers, key=lambda s: max(free[s], earliest))
-        t0 = max(free[srv], earliest)
-        m["planned"], m["server"] = t0, srv
-        free[srv] = t0 + dur
-        ends[m["id"]] = t0 + dur
-        if seq:
-            seq_end = t0 + dur
+        else:
+            srv = min(servers, key=lambda s: max(free[s], earliest))
+            t0 = max(free[srv], earliest)
+            m["planned"], m["server"] = t0, srv
+            free[srv] = t0 + dur
+            ends[m["id"]] = t0 + dur
+        all_end = max(all_end, ends[m["id"]])
+        if one:
+            block = ends[m["id"]]
+
+
+def solo(d: dict, m: dict) -> bool:
+    """Läuft dieses Spiel allein (alle können zuschauen)? Finale immer; Halb-/Viertelfinale je nach Einstellung."""
+    if m.get("stage") not in ("W", "K", "F"):
+        return False
+    lab = (m.get("label") or "").split(" · ")[-1]
+    if lab in ("Finale", "Großes Finale"):
+        return True
+    if lab == "Halbfinale":
+        return not d.get("par_sf", False)
+    if lab == "Viertelfinale":
+        return not d.get("par_qf", True)
+    return False
 
 
 def is_late(m: dict) -> bool:
-    """Halbfinale, Finale, Großes Finale (K.-o.-Teil) – ab hier laufen die Spiele nacheinander."""
-    lab = (m.get("label") or "").split(" · ")[-1]
-    return m.get("stage") in ("W", "K", "F") and ("Halbfinale" in lab or "Finale" in lab)
+    return solo({}, m)
+
+
+def max_servers(d: dict) -> int:
+    """Höchstens Teams / 4 Server (aufgerundet) – mehr braucht kein Turnier."""
+    n = sum(1 for t in d.get("teams") or [] if len(t.get("players") or []) == 2)
+    return max(1, -(-n // 4))
 
 
 def needed_servers(d: dict) -> int:
-    """Wie viele Server bräuchte es, damit die erste Runde gleichzeitig läuft?"""
+    """Wie viele Server sollen gleichzeitig laufen? Spiele der ersten Runde, höchstens Teams / 4."""
     first = min([m["round"] for m in d["matches"]] or [1])
-    return sum(1 for m in d["matches"] if m["round"] == first and m["t1"] != BYE and m["t2"] != BYE) or 1
+    n = sum(1 for m in d["matches"] if m["round"] == first and m["t1"] != BYE and m["t2"] != BYE) or 1
+    return min(n, max_servers(d))
 
 
 def public_view(d: dict) -> dict:

@@ -3059,7 +3059,16 @@ _tour_names: dict[str, str] = {}          # Server-ID -> Name während eines Tur
 def _tour_pool() -> list[dict]:
     """CS2-Server fürs Turnier – CS #1 bleibt immer unberührt."""
     cs = [s for s in load_servers() if game_of(s) == "cs2" and s.get("container")]
-    return [s for s in cs if _server_nr(s, (_state.get(s["id"]) or {}).get("hostname")) != 1]
+    pool = [s for s in cs if _server_nr(s, (_state.get(s["id"]) or {}).get("hostname")) != 1]
+    return sorted(pool, key=lambda s: not (_state.get(s["id"]) or {}).get("online"))     # laufende zuerst
+
+
+def _tour_to_wake(d: dict, pool: list[dict]) -> list[dict]:
+    """Nur so viele ausgeschaltete Turnier-Server starten, wie noch fehlen (höchstens Teams / 4)."""
+    need = _tour_servercheck(d, pool)["need"]
+    online = sum(1 for s in pool if (_state.get(s["id"]) or {}).get("online"))
+    off = [s for s in pool if not (_state.get(s["id"]) or {}).get("online")]
+    return off[:max(0, need - online)]
 
 
 def _tour_server_label(sid: str | None) -> str | None:
@@ -3255,6 +3264,8 @@ class TourSettings(BaseModel):
     registration: bool | None = None
     auto_servers: bool | None = None
     invite: bool | None = None
+    par_qf: bool | None = None
+    par_sf: bool | None = None
 
 
 @app.get("/api/tournament", dependencies=auth)
@@ -3264,7 +3275,7 @@ async def tour_get(request: Request):
     pool = _tour_pool()
     lan = [{"steamid": p["steamid"], "name": playerdb.display(p), "avatar": p.get("avatar")}
            for p in playerdb.all_players() if str(p.get("steamid") or "").isdigit() and playerdb.on_lan(p)]
-    return {**_tour_out(d), "settings": {k: d.get(k) for k in ("maps", "auto_servers", "invite")},
+    return {**_tour_out(d), "settings": {k: d.get(k) for k in ("maps", "auto_servers", "invite", "par_qf", "par_sf")}, "max_servers": tour.max_servers(d),
             "pool": [{"id": s["id"], "name": s["name"], "online": bool((_state.get(s["id"]) or {}).get("online"))} for s in pool],
             "needed": tour.needed_servers(d) if d["matches"] else None, "lan_players": lan,
             "bot": steambot_ctl.settings().get("enabled"), "servercheck": _tour_servercheck(d, pool)}
@@ -3286,9 +3297,9 @@ def _tour_servercheck(d: dict, pool: list[dict]) -> dict:
         need = tour.needed_servers(d)
     else:
         full = sum(1 for t in d["teams"] if len(t["players"]) == 2)
-        need = full // 2 if full >= 2 else len(d["players"]) // 4
+        need = min(full // 2, tour.max_servers(d)) if full >= 2 else max(0, -(-len(d["players"]) // 8))
     online = [s for s in pool if (_state.get(s["id"]) or {}).get("online")]
-    offline = [s for s in pool if s not in online]
+    offline = [s for s in pool if s not in online][:max(0, need - len(online))]
     creating = _cs2_creating()
     create = max(0, need - len(pool) - creating)
     return {"need": need, "online": len(online), "offline": [{"id": s["id"], "name": s["name"]} for s in offline],
@@ -3308,13 +3319,12 @@ async def tour_servers(data: TourServersIn, request: Request):
     _need_docker()
     started, errors = [], []
     if data.start_offline:
-        for s in _tour_pool():
-            if not (_state.get(s["id"]) or {}).get("online"):
-                try:
-                    await wake_server(s)
-                    started.append(s["name"])
-                except HTTPException as e:
-                    errors.append(f"{s['name']}: {e.detail}")
+        for s in _tour_to_wake(tour.load(), _tour_pool()):
+            try:
+                await wake_server(s)
+                started.append(s["name"])
+            except HTTPException as e:
+                errors.append(f"{s['name']}: {e.detail}")
     job = None
     if data.create:
         job = await _tour_create_servers(data.create)
@@ -3457,13 +3467,12 @@ async def tour_start(request: Request, data: TourStartIn | None = None):
             raise HTTPException(e.status_code, f"Server anlegen: {e.detail}")
     started = []
     if data.wait:                                            # ausgeschaltete Turnier-Server gleich mit starten
-        for s in pool:
-            if not (_state.get(s["id"]) or {}).get("online"):
-                try:
-                    await wake_server(s)
-                    started.append(s["name"])
-                except HTTPException:
-                    pass
+        for s in _tour_to_wake(d, pool):
+            try:
+                await wake_server(s)
+                started.append(s["name"])
+            except HTTPException:
+                pass
     d["servers"] = [s["id"] for s in pool]
     d["registration"] = False
     chk = _tour_servercheck(d, pool)
@@ -3733,10 +3742,11 @@ async def tour_tick() -> None:
     tour.plan(d)
     # fällige Matches laden, 10 Minuten vorher erinnern
     busy = {m["server"] for m in d["matches"] if m["status"] == "live"}
+    solo_live = any(m["status"] == "live" and tour.solo(d, m) for m in d["matches"])
     for m in sorted(d["matches"], key=lambda x: x.get("planned") or 0):
         if m["status"] != "ready" or not m.get("server") or not m.get("planned"):
             continue
-        if m.get("seq") and busy:               # ab dem Halbfinale nie parallel zu einem anderen Spiel
+        if (m.get("seq") and busy) or solo_live:  # Einzel-Spiele (Finale …) nie parallel zu einem anderen
             continue
         if test == "sim":
             if m["planned"] <= now + 5 and m["server"] not in busy:
@@ -3826,12 +3836,11 @@ async def tour_test(data: TourTestIn, request: Request):
                 raise HTTPException(e.status_code, f"Server anlegen: {e.detail}")
         if not pool and not creating and not _cs2_creating():
             raise HTTPException(400, "Konnte keine CS2-Server anlegen (Vorlage fehlt?) – bitte einen CS2-Server von Hand anlegen")
-        for s in pool:                                     # ausgeschaltete starten
-            if not (_state.get(s["id"]) or {}).get("online"):
-                try:
-                    await wake_server(s)
-                except HTTPException:
-                    pass
+        for s in _tour_to_wake(d, pool):                   # ausgeschaltete starten (nur so viele wie nötig)
+            try:
+                await wake_server(s)
+            except HTTPException:
+                pass
         d["servers"] = [s["id"] for s in pool]
         d.update(registration=False, start=time.time(), active=True)
         if not _tour_servercheck(d, pool)["ok"]:
