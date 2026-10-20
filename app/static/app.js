@@ -3676,21 +3676,19 @@ function glShow(v){
   if (live.length || next.length) h += `<div class="glsec"><h3>${live.length ? "Live &amp; als Nächstes" : "Als Nächstes"}</h3><div class="glnext">${[...live, ...next].map(m =>
     `<div class="glcard"><div class="glh">${esc(m.label)}${m.map ? " · " + esc(m.map) : ""}</div>${glMatch(m, "left")}</div>`).join("")}</div></div>`;
   const W = by("W"), K = by("K"), L = by("L"), F = by("F");
-  // Live-Stream direkt über dem Pokal (sonst „Stream offline“ + Hinweis auf CSTV)
+  // Live-Stream unter dem Turnierbaum (sonst „Stream offline“ + Hinweis auf CSTV)
   const sv = v.stream, stH = !sv ? "" : sv.enabled && sv.on_air
     ? `<div class="glstream"><div class="glstreamcap"><span class="livedot">LIVE</span> ${esc(sv.match || sv.title || "Live-Stream")}</div><div id="glStreamSlot" class="glstreamslot"></div></div>`
     : `<div class="glstream off">📺 Stream offline${live.length ? " – live zuschauen im Spiel per CSTV: 👁 Zuschauen bei den laufenden Spielen" : ""}</div>`;
-  let stDone = false;
-  const withStream = x => { if (stDone) return x; stDone = true; return stH + x; };
-  if (K.length) h += `<div class="glsec"><h3>K.-o.-Phase</h3>${withStream(glTree(K, []))}</div>`;
-  if (W.length) h += `<div class="glsec"><h3>${L.length ? "Winner-Bracket" : "Turnierbaum"}</h3>${withStream(glTree(W, F))}</div>`;
-  if (!stDone && stH) h = stH + h;
+  if (K.length) h += `<div class="glsec"><h3>K.-o.-Phase</h3>${glTree(K, [])}</div>`;
+  if (W.length) h += `<div class="glsec"><h3>${L.length ? "Winner-Bracket" : "Turnierbaum"}</h3>${glTree(W, F)}</div>`;
   if (L.length){
     const rounds = {};
     L.forEach(m => (rounds[m.round] = rounds[m.round] || []).push(m));
     const cols = Object.keys(rounds).map(Number).sort((a, b) => a - b).map(r => rounds[r]);
     h += `<div class="glsec"><h3>Loser-Bracket</h3><div class="gltree"><div class="glside left">${glCols(cols, "left")}</div></div></div>`;
   }
+  if (stH) h += `<div class="glsec"><h3>Live-Stream</h3>${stH}</div>`;     // Stream unter dem Turnierbaum
   const groups = Object.entries(v.groups || {}).map(([g, rows]) => ["Gruppe " + g, rows, by("G").filter(m => m.group === g)]);
   if (v.table) groups.push(["Tabelle", v.table, by("R")]);
   if (groups.length) h += `<div class="glsec"><h3>${v.table ? "Jeder gegen jeden" : "Gruppenphase"}</h3><div class="glgroups">${groups.map(([title, rows, ms]) => `<div class="glgroup">
