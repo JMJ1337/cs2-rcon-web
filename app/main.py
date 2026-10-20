@@ -8207,6 +8207,105 @@ r();setInterval(r,15000);</script></body></html>"""
     return _Resp(content=page, media_type="text/html")
 
 
+# --- OBS-Overlays (Browserquellen 1920×1080): „Gleich Live“-Vorhang mit Turnierbaum, Spielstand-Leiste, Turnierbaum
+_OVERLAY_HEAD = """<!doctype html><html lang="de"><head><meta charset="utf-8"><title>GrohLAN Overlay</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap"><link rel="stylesheet" href="/static/app.css">
+<style>
+html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:transparent!important;font-family:Inter,system-ui,sans-serif;color:#f2f2ed}
+.bb{font-family:"Bebas Neue",Impact,sans-serif;letter-spacing:.06em}
+#curtain{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;
+  background:radial-gradient(ellipse at 50% 0%,hsl(88 45% 16%),transparent 60%),linear-gradient(180deg,hsl(125 25% 7%),hsl(130 40% 3%))}
+#curtain .t1{font-size:140px;line-height:1;margin-top:40px;background:linear-gradient(135deg,hsl(48 85% 58%),hsl(38 80% 55%));-webkit-background-clip:text;color:transparent}
+body[data-mode="bracket"] #curtain .t1{font-size:84px;white-space:nowrap;max-width:1800px;overflow:hidden;text-overflow:ellipsis}
+#curtain .t2{font-size:34px;color:hsl(90 10% 70%);margin-top:4px}
+#curtain .nx{margin-top:14px;font-size:30px}#curtain .nx b{color:hsl(72 72% 48%)}
+#tree{position:absolute;left:0;right:0;top:300px;bottom:20px;display:flex;justify-content:center;align-items:flex-start}
+#tree .gl{background:transparent;border:0;transform-origin:top center}
+.dots::after{content:"";animation:dt 1.5s infinite steps(4)}@keyframes dt{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+#bug{position:absolute;top:18px;left:50%;transform:translateX(-50%);display:none;align-items:stretch;border-radius:12px;overflow:hidden;
+  box-shadow:0 10px 30px #000a;font-size:30px}
+#bug .tm{font-size:32px;background:linear-gradient(90deg,hsl(125 25% 10%),hsl(120 18% 8%));padding:8px 22px;min-width:260px;display:flex;align-items:center;gap:14px;border:0;border-radius:0}
+#bug .tm.r{justify-content:flex-end}
+#bug .sc{background:hsl(72 72% 48%);color:#0b1406;padding:6px 18px;font-size:44px;display:flex;align-items:center;min-width:70px;justify-content:center}
+#bug .mid{background:hsl(120 18% 6%);padding:4px 16px;display:flex;flex-direction:column;justify-content:center;align-items:center;font-size:18px;color:hsl(90 10% 70%)}
+#bug .mid .live{color:#ff5a5a;font-size:22px}
+#next{position:absolute;left:24px;bottom:24px;display:none;background:hsl(120 18% 7% / .92);border:1px solid hsl(120 15% 20%);border-left:5px solid hsl(48 85% 58%);
+  border-radius:10px;padding:10px 18px;font-size:22px;box-shadow:0 10px 30px #000a}
+#next .h{font-size:18px;color:hsl(48 85% 58%)}
+</style></head><body>"""
+
+_OVERLAY_JS = r"""
+const P=new URLSearchParams(location.search), DELAY=(+P.get('delay')||35)*1000, MODE=document.body.dataset.mode;
+const buf=[], seen={};
+function pickLive(v,s){const L=(v.matches||[]).filter(m=>m.status==='live');if(s&&s.id){const x=L.find(m=>m.id===s.id);if(x)return x;}
+  L.sort((a,b)=>(b.seq?1:0)-(a.seq?1:0)||(b.started||0)-(a.started||0));return L[0]||null;}
+function pickNext(v,cur){return (v.matches||[]).filter(m=>(m.status==='ready'||m.status==='wait')&&m.planned&&(!cur||m.id!==cur.id)&&!m.walkover)
+  .sort((a,b)=>(a.planned||0)-(b.planned||0))[0]||null;}
+const nm=(m,k)=>esc(m['t'+k]||m['p'+k]||'?');
+function fit(){const t=document.getElementById('tree');if(!t)return;const g=t.querySelector('.gl');if(!g)return;g.style.transform='';
+  const sc=Math.min(1.6,(t.clientWidth-40)/g.scrollWidth,(t.clientHeight-10)/g.scrollHeight);g.style.transform='scale('+sc+')';}
+async function poll(){
+  let v=null,s=null;
+  try{v=await (await fetch('/api/public/tournament/state',{cache:'no-store'})).json();}catch(e){}
+  try{s=await (await fetch('/api/public/stream/state',{cache:'no-store'})).json();}catch(e){}
+  if(!v)return; const now=Date.now(); buf.push({t:now,v,s}); while(buf.length>2&&now-buf[1].t>DELAY)buf.shift();
+  const snap=MODE==='game'?(buf.find(x=>now-x.t<=DELAY+4000)||buf[0]):buf[buf.length-1];
+  render(snap.v,snap.s,now);
+}
+function treeHtml(v){return v&&v.active&&v.matches&&v.matches.length?glShow({...v,stream:null,matches:v.matches}):'';}
+function render(v,s,now){
+  const cur=pickLive(v,s), nx=pickNext(v,cur);
+  if(cur&&!seen[cur.id])seen[cur.id]=now;
+  const curtain=MODE==='start'||MODE==='bracket'||!cur||(now-seen[cur.id]<DELAY+15000);
+  const c=document.getElementById('curtain');
+  if(curtain){
+    c.style.display='flex';
+    document.getElementById('bug').style.display='none';document.getElementById('next').style.display='none';
+    const up=cur?cur:nx;
+    c.querySelector('.t1').textContent=MODE==='bracket'?(v.name||'Turnier'):'GLEICH LIVE';
+    c.querySelector('.t2').innerHTML=MODE==='bracket'?esc(v.mode_label||''):esc(v.name||'GrohLAN')+'<span class="dots"></span>';
+    c.querySelector('.nx').innerHTML=up?(cur?'Jetzt: ':'Als Nächstes: ')+'<b>'+nm(up,1)+'</b> vs <b>'+nm(up,2)+'</b> · '+esc((up.label||'').split(' · ').pop())+(up.map?' · '+esc(up.map):'')+(!cur&&up.planned?' · '+tTime(up.planned)+' Uhr':''):'';
+    const t=document.getElementById('tree'), h=treeHtml(v); if(t.dataset.h!==h){t.dataset.h=h;t.innerHTML=h;
+      t.querySelectorAll('.glnext').forEach(x=>x.closest('.glsec').remove());   // nur Baum/Gruppen, ohne „Live & als Nächstes“
+      setTimeout(fit,50);}
+    return;
+  }
+  c.style.display='none';
+  const b=document.getElementById('bug'); b.style.display='flex';
+  b.innerHTML='<div class="tm bb">'+nm(cur,1)+'</div><div class="sc bb">'+(cur.s1??0)+'</div><div class="mid"><span class="live bb">● LIVE</span>'+esc((cur.label||'').split(' · ').pop())+(cur.map?' · '+esc(cur.map):'')+'</div><div class="sc bb">'+(cur.s2??0)+'</div><div class="tm r bb">'+nm(cur,2)+'</div>';
+  const n=document.getElementById('next');
+  if(nx){n.style.display='block';n.innerHTML='<div class="h bb">Als Nächstes</div><b>'+nm(nx,1)+'</b> vs <b>'+nm(nx,2)+'</b><div style="font-size:16px;color:#aaa">'+esc((nx.label||'').split(' · ').pop())+(nx.planned?' · '+tTime(nx.planned)+' Uhr':'')+'</div>';}
+  else n.style.display='none';
+}
+poll();setInterval(poll,3000);window.addEventListener('resize',fit);
+"""
+
+
+def _overlay_page(mode: str) -> str:
+    return (_OVERLAY_HEAD.replace("<body>", f'<body data-mode="{mode}">') +
+            '<div id="curtain"><div class="t1 bb">GLEICH LIVE</div><div class="t2 bb"></div><div class="nx bb"></div><div id="tree"></div></div>'
+            '<div id="bug"></div><div id="next"></div><script>' + _embed_script() + _OVERLAY_JS + "</script></body></html>")
+
+
+@app.get("/overlay/game")
+async def overlay_game():
+    """Über dem Spielbild: Spielstand-Leiste + „Als Nächstes“; solange kein Spiel läuft (oder kurz nach dem Wechsel) der
+    „Gleich Live“-Vorhang mit Turnierbaum. Daten um die CSTV-Verzögerung versetzt (?delay=35)."""
+    return _Resp(content=_overlay_page("game"), media_type="text/html")
+
+
+@app.get("/overlay/start")
+async def overlay_start():
+    """Startbild „Gleich Live“ mit nächstem Spiel und Turnierbaum."""
+    return _Resp(content=_overlay_page("start"), media_type="text/html")
+
+
+@app.get("/overlay/bracket")
+async def overlay_bracket():
+    """Turnierbaum vollformatig (für eine eigene OBS-Szene)."""
+    return _Resp(content=_overlay_page("bracket"), media_type="text/html")
+
+
 @app.get("/embed/stream")
 async def embed_stream():
     """Live-Stream-Player zum Einbetten (iframe)."""

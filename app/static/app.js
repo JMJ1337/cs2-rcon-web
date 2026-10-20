@@ -3985,6 +3985,8 @@ async function loadStream(){
       · Streamschlüssel <code>${esc(r.obs.key.replace(/pass=.*/, "pass=••••"))}</code> <button class="small" data-copy="${esc(r.obs.key)}">kopieren</button>
       <button class="small" id="stNewKey" title="Neuen Schlüssel erzeugen (OBS muss angepasst werden)">neuer Schlüssel</button>
       <a class="btn small primary" href="/api/stream/helper.exe" title="Auf dem Stream-PC ausführen: richtet OBS ein, startet CS2 und den Stream, Kamera folgt dem laufenden Spiel">⬇ GrohLAN-Stream.exe</a> <a class="hint" href="/api/stream/helper.cmd">(nur Kamera-Helfer .cmd)</a></div>
+      <div style="margin-top:6px">OBS-Overlays (Browserquelle 1920×1080, richtet die exe automatisch ein): <a href="/overlay/game" target="_blank">Spielstand + „Gleich Live“</a> ·
+        <a href="/overlay/start" target="_blank">Gleich Live</a> · <a href="/overlay/bracket" target="_blank">Turnierbaum</a></div>
       <div style="margin-top:6px">Kamera geht gerade zu: ${t.tv ? `<b>${esc(t.match || "")}</b> <code>${esc(t.tv)}</code>` : "– kein laufendes Spiel (oder CSTV aus)"}</div>`;
   $$("#stInfo [data-copy]").forEach(b => b.onclick = () => copyQuiet(b.dataset.copy));
   const nk = $("#stNewKey"); if (nk) nk.onclick = () => confirm("Neuen Streamschlüssel erzeugen? OBS muss danach angepasst werden.") && saveStream({new_key: true});

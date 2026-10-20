@@ -157,24 +157,43 @@ func configureOBS(c Config) error {
 	if err := os.WriteFile(filepath.Join(prof, "basic.ini"), []byte(ini), 0o644); err != nil {
 		return err
 	}
-	gc, sc := uuid(), uuid()
+	base := strings.TrimSuffix(c.API, "/api/public/stream/state")
+	browser := func(name, path string) (string, map[string]any) {
+		id := uuid()
+		return id, map[string]any{
+			"id": "browser_source", "versioned_id": "browser_source", "name": name, "uuid": id, "enabled": true,
+			"settings": map[string]any{"url": base + path, "width": 1920, "height": 1080, "fps": 30, "reroute_audio": false,
+				"shutdown": false, "restart_when_active": false,
+				"css": "body { background-color: rgba(0,0,0,0); margin: 0px auto; overflow: hidden; }"},
+		}
+	}
+	item := func(id int, name, src string) map[string]any {
+		return map[string]any{"name": name, "source_uuid": src, "visible": true, "locked": true, "id": id,
+			"pos": map[string]any{"x": 0.0, "y": 0.0}, "scale": map[string]any{"x": 1.0, "y": 1.0}, "rot": 0.0, "align": 5,
+			"bounds_type": 2, "bounds_align": 0, "bounds": map[string]any{"x": 1920.0, "y": 1080.0}}
+	}
+	sceneSrc := func(name string, items ...map[string]any) map[string]any {
+		return map[string]any{"id": "scene", "versioned_id": "scene", "name": name, "uuid": uuid(), "enabled": true,
+			"settings": map[string]any{"id_counter": len(items), "custom_size": false, "items": items}}
+	}
+	gc := uuid()
+	ovID, ov := browser("GrohLAN Overlay (Spielstand / Gleich Live)", "/overlay/game")
+	stID, stS := browser("GrohLAN Gleich Live", "/overlay/start")
+	brID, brS := browser("GrohLAN Turnierbaum", "/overlay/bracket")
 	scene := map[string]any{
 		"name": c.Profile, "current_scene": "CS2", "current_program_scene": "CS2",
-		"scene_order": []any{map[string]any{"name": "CS2"}},
+		"scene_order": []any{map[string]any{"name": "CS2"}, map[string]any{"name": "Gleich Live"}, map[string]any{"name": "Turnierbaum"}},
 		"sources": []any{
 			map[string]any{
 				"id": "game_capture", "versioned_id": "game_capture", "name": "CS2 Spiel", "uuid": gc, "enabled": true,
 				"settings": map[string]any{"capture_mode": "window", "window": "Counter-Strike 2:SDL_app:cs2.exe",
 					"priority": 2, "capture_audio": true, "capture_cursor": false, "allow_transparency": false},
 			},
-			map[string]any{
-				"id": "scene", "versioned_id": "scene", "name": "CS2", "uuid": sc, "enabled": true,
-				"settings": map[string]any{"id_counter": 1, "custom_size": false, "items": []any{map[string]any{
-					"name": "CS2 Spiel", "source_uuid": gc, "visible": true, "locked": true, "id": 1,
-					"pos": map[string]any{"x": 0.0, "y": 0.0}, "scale": map[string]any{"x": 1.0, "y": 1.0}, "rot": 0.0, "align": 5,
-					"bounds_type": 2, "bounds_align": 0, "bounds": map[string]any{"x": 1920.0, "y": 1080.0},
-				}}},
-			},
+			ov, stS, brS,
+			// CS2: Spielbild, darüber das Overlay (zeigt selbst „Gleich Live“, solange kein Spiel läuft)
+			sceneSrc("CS2", item(1, "CS2 Spiel", gc), item(2, "GrohLAN Overlay (Spielstand / Gleich Live)", ovID)),
+			sceneSrc("Gleich Live", item(1, "GrohLAN Gleich Live", stID)),
+			sceneSrc("Turnierbaum", item(1, "GrohLAN Turnierbaum", brID)),
 		},
 		"groups": []any{}, "quick_transitions": []any{}, "transitions": []any{},
 		"current_transition": "Fade", "transition_duration": 300,
