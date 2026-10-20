@@ -729,11 +729,57 @@ def client_for(s: dict) -> RconClient:
     return c
 
 
+# server.cfg der ich777-Images setzt ein eigenes rcon_password und überschreibt damit den Startparameter
+RCONCFG_SH = r"""
+PW="$1"
+for f in /serverdata/serverfiles/*/cfg/server.cfg /serverdata/serverfiles/*/server.cfg; do
+  [ -f "$f" ] || continue
+  grep -E '^[[:space:]]*rcon_password' "$f" | sed -E 's/^[[:space:]]*rcon_password[[:space:]]+"?([^"]*)"?.*/OLD:\1/'
+  if grep -qE '^[[:space:]]*rcon_password' "$f"; then
+    sed -i -E "s/^[[:space:]]*rcon_password.*/rcon_password \"$PW\"/" "$f"
+  else
+    printf '\nrcon_password "%s"\n' "$PW" >> "$f"
+  fi
+done
+"""
+
+
+async def _rcon_cfg_fix(s: dict, live: bool = True) -> bool:
+    """rcon_password in server.cfg auf unser Passwort setzen; läuft der Server mit dem alten, per RCON live umstellen."""
+    pw = s.get("password") or ""
+    if not (pw and s.get("container") and (catmod.CATALOG.get(game_of(s)) or {}).get("rcon")):
+        return False
+    try:
+        out = await docker_api.exec_cmd(s["container"], ["sh", "-c", RCONCFG_SH, "sh", pw], timeout=20)
+    except docker_api.DockerError:
+        return False
+    olds = [ln[4:].strip() for ln in out.splitlines() if ln.startswith("OLD:") and ln[4:].strip() and ln[4:].strip() != pw]
+    if not live:
+        return True
+    for old in dict.fromkeys(olds):
+        kind = (catmod.CATALOG.get(game_of(s)) or {}).get("rcon")
+        cls = GoldSrcRcon if kind == "goldsrc" else RconClient
+        cl = cls(s["host"], int(s.get("game_port") or s["port"]), old, RCON_TIMEOUT)
+        try:
+            await cl.execute(f'rcon_password "{pw}"')
+            return True
+        except RconError:
+            continue
+        finally:
+            cl.close()
+    return not olds
+
+
 async def run(s: dict, command: str) -> str:
     try:
         return await client_for(s).execute(command)
     except RconAuthError as e:
         drop_client(s["id"])
+        if await _rcon_cfg_fix(s):
+            try:
+                return await client_for(s).execute(command)
+            except RconError:
+                drop_client(s["id"])
         raise HTTPException(502, str(e))
     except RconError as e:
         raise HTTPException(502, str(e))
@@ -7446,6 +7492,8 @@ async def rcon_enable(sid: str, data: RconEnableIn):
         info = await docker_api.inspect(s["container"])
         if ((info.get("Config") or {}).get("Labels") or {}).get("gsm.managed") != "1":
             raise HTTPException(400, "Container stammt nicht aus diesem Tool")
+
+        await _rcon_cfg_fix(dict(s, password=pw), live=False)
 
         def mutate(cfg, hc):
             env = []
