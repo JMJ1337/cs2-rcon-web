@@ -718,13 +718,67 @@ def ts_query(s: dict):
     return tsmod.Query(s["host"], int(s["port"]), s.get("password", ""), int(s["game_port"]) if s.get("game_port") else None)
 
 
+# GoldSrc-RCON (UDP) im Container ausführen, wenn der Server von außen nicht antwortet (UDP-Hairpin/NAT)
+GSRCON_SH = r"""
+P="$1"; PW="$2"; CMD="$3"
+for IP in 127.0.0.1 $(hostname -i 2>/dev/null); do
+  exec 3<>/dev/udp/$IP/$P || continue
+  printf '\xff\xff\xff\xffchallenge rcon\n' >&3
+  R=$(timeout 2 dd bs=1400 count=1 <&3 2>/dev/null | LC_ALL=C tr -d '\000\377')
+  CH=$(echo "$R" | awk '/challenge/{print $3; exit}')
+  if [ -z "$CH" ]; then exec 3>&-; continue; fi
+  printf '\xff\xff\xff\xffrcon %s "%s" %s\n' "$CH" "$PW" "$CMD" >&3
+  echo "@@OK@@"
+  timeout 2 cat <&3 | LC_ALL=C sed 's/\xff\xff\xff\xffl//g' | LC_ALL=C tr -d '\000\377'
+  exec 3>&-
+  exit 0
+done
+echo "@@NOANSWER@@"
+"""
+
+
+class _GoldSrcViaContainer:
+    """GoldSrc-RCON: erst direkt per UDP, sonst im Container (bash /dev/udp)."""
+
+    def __init__(self, s: dict, port: int):
+        self.direct = GoldSrcRcon(s["host"], port, s.get("password", ""), RCON_TIMEOUT)
+        self.container, self.port, self.pw = s.get("container"), port, s.get("password", "")
+        self.via_exec = False
+
+    def close(self):
+        pass
+
+    async def execute(self, command: str, gap: float = 0.3) -> str:
+        if not self.via_exec:
+            try:
+                return await self.direct.execute(command, gap)
+            except RconAuthError:
+                raise
+            except RconError:
+                if not (self.container and docker_api.available()):
+                    raise
+                self.via_exec = True
+        try:
+            out = await docker_api.exec_cmd(self.container, ["bash", "-c", GSRCON_SH, "x", str(self.port), self.pw.replace('"', ""),
+                                                             command.replace("\n", " ")], timeout=15)
+        except docker_api.DockerError as e:
+            raise RconError(str(e)) from e
+        if "@@OK@@" not in out:
+            raise RconError(f"Keine Antwort auf Port {self.port} (UDP-RCON, auch im Container nicht)")
+        res = out.split("@@OK@@", 1)[1].lstrip("\n")
+        if "Bad rcon_password" in res:
+            raise RconAuthError("RCON-Passwort falsch")
+        if "No password set" in res:
+            raise RconAuthError("Auf dem Server ist kein rcon_password gesetzt")
+        return res
+
+
 def client_for(s: dict) -> RconClient:
     c = _clients.get(s["id"])
     if c is None:
         kind = (catmod.CATALOG.get(game_of(s)) or {}).get("rcon")
-        cls = GoldSrcRcon if kind == "goldsrc" else RconClient
         port = int(s.get("game_port") or s["port"]) if kind else int(s["port"])
-        c = cls(s["host"], port, s.get("password", ""), RCON_TIMEOUT)
+        c = _GoldSrcViaContainer(s, port) if kind == "goldsrc" else RconClient(s["host"], port, s.get("password", ""), RCON_TIMEOUT)
         _clients[s["id"]] = c
     return c
 
@@ -758,8 +812,8 @@ async def _rcon_cfg_fix(s: dict, live: bool = True) -> bool:
         return True
     for old in dict.fromkeys(olds):
         kind = (catmod.CATALOG.get(game_of(s)) or {}).get("rcon")
-        cls = GoldSrcRcon if kind == "goldsrc" else RconClient
-        cl = cls(s["host"], int(s.get("game_port") or s["port"]), old, RCON_TIMEOUT)
+        port = int(s.get("game_port") or s["port"])
+        cl = _GoldSrcViaContainer(dict(s, password=old), port) if kind == "goldsrc" else RconClient(s["host"], port, old, RCON_TIMEOUT)
         try:
             await cl.execute(f'rcon_password "{pw}"')
             return True
