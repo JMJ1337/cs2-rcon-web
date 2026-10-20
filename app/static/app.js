@@ -340,6 +340,7 @@ function showView(v){
   if (v === "storage"){ loadStorage(true); loadFolders(); loadDocker().then(() => loadSysDisk()); }
   if (v === "game") renderGameView();
   if (v === "bot"){ botLoaded = false; loadBot(); }
+  if (v === "api") loadApi();
   if (v === "tour"){ tourLoaded = false; loadTour(); stLoaded = false; loadStream(); loadTourLib(); }
 }
 
@@ -1044,7 +1045,7 @@ async function refreshDash(){
 }
 
 /* ================= Server-Ansicht ================= */
-const VIEWS = ["dash","players","auto","server","scan","create","users","cache","prefill","storage","game","bot","tour"];
+const VIEWS = ["dash","players","auto","server","scan","create","users","cache","prefill","storage","game","bot","tour","api"];
 function applyGameClasses(s){
   const g = gameOf(s), meta = GAMES[g] || {};
   document.body.classList.toggle("g-other", g !== "cs2");
@@ -3996,3 +3997,33 @@ async function refreshPubStream(){
   else { const sc = document.createElement("script"); sc.src = "/static/hls.min.js"; sc.onload = start; document.head.appendChild(sc); }
 }
 setInterval(() => { if (!$("#pub").classList.contains("hidden") && !document.hidden) refreshPubStream(); }, 10000);
+
+// --- Homepage-API: Schlüssel und Optionen
+const SCOPE_L = {tournament: "Turnier", stream: "Stream", bot: "Steam-Bot"};
+async function loadApi(){
+  let r; try { r = await api("/api/apikeys"); } catch (e) { return toast(e.message, true); }
+  $("#apiKeys").innerHTML = r.keys.length ? `<table class="tbl"><thead><tr><th>Name</th><th>Schlüssel</th><th>Rechte</th><th>Angelegt</th><th>Zuletzt benutzt</th><th></th></tr></thead><tbody>${r.keys.map(k => `<tr>
+      <td><b>${esc(k.name)}</b></td><td class="mono">${esc(k.hint || "")}</td><td>${k.scopes.map(x => SCOPE_L[x] || x).join(", ")}</td>
+      <td>${new Date(k.created * 1000).toLocaleDateString("de-DE")}</td><td>${k.last_used ? new Date(k.last_used * 1000).toLocaleString("de-DE") + ` (${k.uses || 0}×)` : "–"}</td>
+      <td><button class="small danger" data-apidel="${esc(k.id)}">Löschen</button></td></tr>`).join("")}</tbody></table>` : `<div class="hint">Noch keine Schlüssel.</div>`;
+  $$("[data-apidel]").forEach(b => b.onclick = async () => { if (!confirm("Schlüssel löschen? Die Homepage verliert damit den Zugriff.")) return;
+    await api(`/api/apikeys/${b.dataset.apidel}`, {method: "DELETE"}); loadApi(); });
+  $("#apiPublic").checked = !!r.public_read;
+  if (document.activeElement !== $("#apiOrigins")) $("#apiOrigins").value = (r.origins || []).join("\n");
+  $("#apiEmbed").innerHTML = `Turnierbaum (GrohLAN-Look, aktualisiert sich selbst): <code>&lt;iframe src="${esc(r.base)}/embed/tournament" style="width:100%;height:900px;border:0"&gt;&lt;/iframe&gt;</code><br>
+    Live-Stream: <code>&lt;iframe src="${esc(r.base)}/embed/stream" style="width:100%;aspect-ratio:16/9;border:0" allowfullscreen&gt;&lt;/iframe&gt;</code><br>
+    Hinweis: Eine https-Homepage kann nur https-Seiten einbetten – dafür das Tool über einen https-Proxy (z. B. <code>live.groh-lan.de</code>) erreichbar machen.`;
+}
+$("#apiCreate").onclick = async () => {
+  const name = $("#apiName").value.trim() || "Homepage", scopes = $$(".apiScope").filter(x => x.checked).map(x => x.value);
+  try {
+    const r = await api("/api/apikeys", {body: {name, scopes}});
+    $("#apiNew").innerHTML = `<div class="srvcheck ok" style="margin-top:10px">Neuer Schlüssel (nur jetzt sichtbar – an den Homepage-Verwalter geben):<br><code style="user-select:all;word-break:break-all">${esc(r.key)}</code> <button class="small" id="apiCopy">kopieren</button></div>`;
+    $("#apiCopy").onclick = () => copyQuiet(r.key, "Schlüssel kopiert");
+    loadApi();
+  } catch (e) { toast(e.message, true); }
+};
+$("#apiOptSave").onclick = async () => {
+  try { await api("/api/apikeys/options", {method: "PUT", body: {public_read: $("#apiPublic").checked, origins: $("#apiOrigins").value.split(/\s+/).filter(Boolean)}}); toast("Gespeichert"); loadApi(); }
+  catch (e) { toast(e.message, true); }
+};

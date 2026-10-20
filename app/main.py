@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import mapimages, gslt, matchlog, steamlist, playerdb, notify, prefill_more
-from . import cache_model, cache_inventory, timings, steambot_ctl, stream_ctl
+from . import cache_model, cache_inventory, timings, steambot_ctl, stream_ctl, extapi
 from . import tournament as tour
 from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
@@ -8128,6 +8128,123 @@ async def scan_loop():
             await asyncio.sleep(minutes * 60)
         else:
             await asyncio.sleep(60)
+
+# ---------------------------------------------------------------- Homepage-API (/api/v1) + Einbett-Seiten
+app.include_router(extapi.router)
+
+
+@app.middleware("http")
+async def homepage_cors(request: Request, call_next):
+    """CORS nur für /api/v1 und erlaubte Homepage-Adressen (Einstellung unter „🔌 API“)."""
+    path = request.url.path
+    origin = request.headers.get("origin") or ""
+    if not path.startswith("/api/v1"):
+        return await call_next(request)
+    ok = origin and origin.rstrip("/") in extapi.origins()
+    if request.method == "OPTIONS" and ok:
+        resp = Response(status_code=204)
+    else:
+        resp = await call_next(request)
+    if ok:
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-API-Key, Authorization"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        resp.headers["Vary"] = "Origin"
+    return resp
+
+
+_EMBED_FUNCS = ("const esc", "const tTime", "const tStatus", "const GL_TROPHY", "function glPill", "function glMatch", "function glCols",
+                "function glTree", "function glShow", "function tmMini", "function tvBtn")
+_embed_js: dict = {}
+
+
+def _embed_script() -> str:
+    """Die Turnierbaum-Funktionen aus app.js herauslösen (eine Quelle für Verwaltung, Übersicht und Einbettung)."""
+    src = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    key = len(src)
+    if _embed_js.get("k") == key:
+        return _embed_js["v"]
+    parts = []
+    for name in _EMBED_FUNCS:
+        i = src.find("\n" + name)
+        if i < 0:
+            continue
+        ends = [x for x in (src.find("\nfunction ", i + 5), src.find("\nconst ", i + 5), src.find("\nlet ", i + 5),
+                            src.find("\n//", i + 5), src.find("\n$(", i + 5)) if x > 0]
+        parts.append(src[i:min(ends) if ends else len(src)])
+    _embed_js.update(k=key, v="\n".join(parts))
+    return _embed_js["v"]
+
+
+@app.get("/embed/tournament")
+async def embed_tournament():
+    """Turnierbaum im GrohLAN-Look zum Einbetten (iframe) auf der Homepage – aktualisiert sich selbst."""
+    page = """<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GrohLAN Turnier</title><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap">
+<link rel="stylesheet" href="/static/app.css"><style>html,body{background:transparent!important;margin:0;padding:0}#o{padding:8px}</style></head>
+<body><div id="o"><div class="hint" style="padding:20px">Lade Turnier …</div></div><script>""" + _embed_script() + """
+async function r(){try{const v=await (await fetch('/api/public/tournament/state',{cache:'no-store'})).json();
+ document.getElementById('o').innerHTML=v&&v.active&&v.matches&&v.matches.length?glShow(v):'<div class="gl"><div class="glsec"><h3>Turnier</h3><div style="color:#aaa">Noch kein Spielplan.</div></div></div>';}catch(e){}}
+r();setInterval(r,15000);</script></body></html>"""
+    return _Resp(content=page, media_type="text/html")
+
+
+@app.get("/embed/stream")
+async def embed_stream():
+    """Live-Stream-Player zum Einbetten (iframe)."""
+    page = """<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GrohLAN Live</title><style>html,body{margin:0;background:#000;height:100%;font-family:Inter,system-ui,sans-serif;color:#eee}
+video{width:100%;height:100%;object-fit:contain;background:#000}#off{position:absolute;inset:0;display:grid;place-items:center;text-align:center;color:#9a9}
+#cap{position:absolute;left:10px;top:8px;font-size:13px;text-shadow:0 1px 3px #000}#cap b{color:#ff5a5a}</style></head>
+<body><video id="v" controls autoplay muted playsinline></video><div id="cap"></div><div id="off">Gerade kein Live-Stream.</div>
+<script src="/static/hls.min.js"></script><script>
+let h=null,on=false;const v=document.getElementById('v');
+async function r(){let s;try{s=await (await fetch('/api/public/stream/state',{cache:'no-store'})).json();}catch(e){return}
+ const live=s.enabled&&s.on_air;document.getElementById('off').style.display=live?'none':'grid';
+ document.getElementById('cap').innerHTML=live?'<b>● LIVE</b> '+(s.match||s.title||'').replace(/</g,'&lt;'):'';
+ if(live&&!on){on=true;if(v.canPlayType('application/vnd.apple.mpegurl')){v.src=s.hls}else if(window.Hls&&Hls.isSupported()){h=new Hls({liveSyncDurationCount:2});h.loadSource(s.hls);h.attachMedia(v);
+  h.on(Hls.Events.ERROR,(e,d)=>{if(d.fatal){h.destroy();h=null;on=false}})}}
+ if(!live&&on){on=false;if(h){h.destroy();h=null}v.removeAttribute('src');v.load()}}
+r();setInterval(r,10000);</script></body></html>"""
+    return _Resp(content=page, media_type="text/html")
+
+
+# Schlüssel-Verwaltung (Verwaltung → 🔌 API)
+class ApiKeyIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    scopes: list[str] = ["tournament"]
+
+
+class ApiOptIn(BaseModel):
+    public_read: bool | None = None
+    origins: list[str] | None = None
+
+
+@app.get("/api/apikeys", dependencies=auth)
+async def apikeys_list(request: Request):
+    _need_admin(request)
+    return {**extapi.list_keys(), "base": str(request.base_url).rstrip("/")}
+
+
+@app.post("/api/apikeys", dependencies=auth)
+async def apikeys_create(data: ApiKeyIn, request: Request):
+    _need_admin(request)
+    return {"ok": True, "key": extapi.create_key(data.name, data.scopes)}
+
+
+@app.delete("/api/apikeys/{kid}", dependencies=auth)
+async def apikeys_delete(kid: str, request: Request):
+    _need_admin(request)
+    extapi.delete_key(kid)
+    return {"ok": True}
+
+
+@app.put("/api/apikeys/options", dependencies=auth)
+async def apikeys_options(data: ApiOptIn, request: Request):
+    _need_admin(request)
+    extapi.set_options(data.public_read, data.origins)
+    return {"ok": True}
+
 
 # ---------------------------------------------------------------- Frontend
 @app.get("/")
