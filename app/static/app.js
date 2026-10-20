@@ -1122,6 +1122,7 @@ async function refreshStatus(){
     lastStatus = st;
     setJoin(st.join);
     if (st.hostname && current.name_from_game !== false && st.hostname !== current.name){ current.name = st.hostname; $("#svTitle").innerHTML = `${gbadge(gameOf(current))} ${esc(current.name)}`; }
+    if (gameOf(current) === "tf2") $("#tfHost").textContent = `${st.hostname || ""} · Map ${st.map || "?"} · ${st.humans ?? "?"} Spieler + ${st.bots ?? 0} Bots / ${st.max_players ?? "?"} Slots`;
     if (gameOf(current) !== "cs2") return renderGeneric(st);
     $("#stMapLabel").textContent = "Map";
     $("#stOnline").textContent = st.hibernating ? "Online (idle)" : "Online";
@@ -1348,6 +1349,51 @@ const TF2_SETTINGS = [
     ["tf_bot_quota_mode","Bot-Modus","select", [["normal","fest"],["fill","auffüllen"],["match","je Spieler"]]],
     ["tf_bot_join_after_player","Bots erst mit Spielern","bool"]]],
 ];
+/* ---------- TF2: Schnellaktionen, Bots, Map ---------- */
+const TF2_QUICK = [
+  ["Warten auf Spieler beenden","mp_waitingforplayers_cancel 1","primary"], ["Match neu starten","mp_restartgame 1"],
+  ["Runde neu starten","mp_restartround 1"], ["Teams mischen","mp_scrambleteams 1"],
+  ["Turniermodus an","mp_tournament 1; mp_tournament_restart"], ["Turniermodus aus","mp_tournament 0; mp_restartgame 1"],
+  ["Bots neu spawnen","tf_bot_kill all"], ["Bots kicken","tf_bot_quota 0; tf_bot_kick all","danger"],
+];
+const TF2_MODES = {ctf:"Capture the Flag", cp:"Control Point", pl:"Payload", plr:"Payload Race", koth:"King of the Hill",
+  arena:"Arena", pd:"Player Destruction", sd:"Special Delivery", mvm:"Mann vs. Machine", tr:"Training"};
+(function initTf2(){
+  if (!$("#tf2Actions")) return;
+  $("#tf2Actions").innerHTML = TF2_QUICK.map(([l,c,cls]) => `<button class="${cls||""}" data-cmd="${esc(c)}" title="${esc(c)}">${esc(l)}</button>`).join("");
+  $$("#tf2Actions [data-cmd]").forEach(b => b.onclick = () => {
+    if (b.classList.contains("danger") && !confirm("Alle Bots entfernen?")) return;
+    send(b.dataset.cmd).then(() => setTimeout(refreshStatus, 800));
+  });
+  const groups = {};
+  TF2_MAPS.forEach(m => { const k = m.split("_")[0]; (groups[k] = groups[k] || []).push(m); });
+  $("#tfQMap").innerHTML = Object.entries(groups).map(([k, ms]) =>
+    `<optgroup label="${esc(TF2_MODES[k] || k)}">${ms.map(m => `<option value="${m}">${m}</option>`).join("")}</optgroup>`).join("");
+  const go = m => { m = (m || "").replace(/[^\w\-]/g, ""); if (m) send(`changelevel ${m}`, `Map wechselt zu ${m}`).then(() => setTimeout(refreshStatus, 4000)); };
+  $("#btnTfQMap").onclick = () => go($("#tfQMapCustom").value.trim() || $("#tfQMap").value);
+  $("#btnTfRandMap").onclick = () => { const pool = TF2_MAPS.filter(m => !/^(mvm|tr)_/.test(m)); go(pool[Math.floor(Math.random() * pool.length)]); };
+  $("#btnTfBotAdd").onclick = () => {
+    const n = Math.max(1, Math.min(24, parseInt($("#tfBotN").value) || 1));
+    const args = [n, $("#tfBotClass").value, $("#tfBotTeam").value, $("#tfBotDiff").value].filter(Boolean).join(" ");
+    send(`tf_bot_add ${args}`, `${n} Bot(s) hinzugefügt`).then(() => setTimeout(refreshStatus, 1500));
+  };
+  $("#btnTfBotQuota").onclick = () => {
+    const q = Math.max(0, Math.min(31, parseInt($("#tfBotQuota").value) || 0));
+    const mode = $("#tfBotQuotaMode").value === "normal" ? "normal" : "fill";
+    send(`tf_bot_quota_mode ${mode}; tf_bot_quota ${q}`, q ? `Bots: ${mode === "fill" ? "auffüllen auf" : "fest"} ${q}` : "Bot-Auffüllen aus")
+      .then(() => setTimeout(refreshStatus, 1500));
+  };
+  $("#btnTfLimits").onclick = () => {
+    const t = Math.max(0, parseInt($("#tfTime").value) || 0), w = Math.max(0, parseInt($("#tfWin").value) || 0);
+    send(`mp_timelimit ${t}; mp_winlimit ${w}`, `Zeitlimit ${t || "aus"} · Siege ${w || "aus"}`);
+  };
+  $("#btnTfSay").onclick = async () => {
+    const t = $("#tfSayText").value.trim().replace(/[";]/g, ""); if (!t) return;
+    await send(`say ${t}`, "Nachricht gesendet"); $("#tfSayText").value = "";
+  };
+  $("#tfSayText").addEventListener("keydown", e => { if (e.key === "Enter") $("#btnTfSay").click(); });
+  $("#btnTfExec").onclick = () => { const c = $("#tfExecCfg").value.trim().replace(/[^\w.\-\/]/g, ""); if (c) send(`exec ${c}`); };
+})();
 const settingsFor = () => (current && gameOf(current) === "tf2") ? TF2_SETTINGS : SETTINGS;
 let allSettings = SETTINGS.flatMap(([, f]) => f);
 function inputFor([name, , type, opts]){
