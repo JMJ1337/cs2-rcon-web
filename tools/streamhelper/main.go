@@ -325,12 +325,24 @@ func send(c Config, cfgDir string, cmds ...string) error {
 
 // -allow_third_party_software: sonst blockiert CS2 die OBS-Spielaufnahme. tv = CSTV-Adresse, mit der CS2 direkt verbindet.
 func startCS2(steam string, c Config, tv ...string) {
-	args := []string{"-applaunch", "730", "-netconport", fmt.Sprint(c.Netcon), "-fullscreen", "-novid", "-allow_third_party_software",
-		"+exec", "grohlan_stream"}
+	game := []string{"-netconport", fmt.Sprint(c.Netcon), "-fullscreen", "-novid", "-allow_third_party_software", "+exec", "grohlan_stream"}
 	if len(tv) > 0 && tv[0] != "" {
-		args = append(args, "+connect", tv[0])
+		game = append(game, "+connect", tv[0])
 	}
-	if err := exec.Command(steam, args...).Start(); err != nil {
+	// cs2.exe direkt starten: Steam reicht Startparameter bei -applaunch nicht zuverlässig weiter (CS2 blieb im Hauptmenü)
+	if cfg := findCS2Cfg(steam); cfg != "" {
+		exe := filepath.Join(cfg, "..", "..", "bin", "win64", "cs2.exe")
+		if _, err := os.Stat(exe); err == nil {
+			cmd := exec.Command(exe, game...)
+			cmd.Dir = filepath.Dir(exe)
+			if err := cmd.Start(); err == nil {
+				return
+			} else {
+				say("cs2.exe direkt starten fehlgeschlagen (%v) – versuche es über Steam", err)
+			}
+		}
+	}
+	if err := exec.Command(steam, append([]string{"-applaunch", "730"}, game...)...).Start(); err != nil {
 		say("CS2 starten fehlgeschlagen: %v", err)
 	}
 }
