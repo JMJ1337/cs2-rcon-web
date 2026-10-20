@@ -317,6 +317,7 @@ $("#loginForm").addEventListener("submit", async e => {
   try { await api("/api/login", {body:{username: $("#loginUser").value.trim() || "admin", password: $("#loginPw").value}}); $("#loginPw").value = ""; start(); }
   catch(err){ $("#loginErr").textContent = err.message; }
 });
+function toMobile(){ try { localStorage.setItem("gsmView", "mobile"); } catch {} clearInterval(dashTimer); $("#app").classList.add("hidden"); startMobile(); }
 $("#btnLogout").onclick = async () => { await api("/api/logout", {method:"POST"}); showPublic(); };
 
 /* ================= Navigation ================= */
@@ -2320,8 +2321,85 @@ $("#pwForm").addEventListener("submit", async e => {
   catch(err){ toast(err.message, true); }
 });
 
+/* ================= Handy-Ansicht ================= */
+// Handy erkannt (schmaler Bildschirm/Touch) -> abgespeckte Ansicht; „Vollansicht“ merkt sich die Wahl
+const mobPref = () => { try { return localStorage.getItem("gsmView") || ""; } catch { return ""; } };
+function isMobile(){
+  const q = new URLSearchParams(location.search);
+  if (q.has("mobil")) return true;
+  if (q.has("voll")) return false;
+  if (mobPref() === "full") return false;
+  if (mobPref() === "mobile") return true;
+  return matchMedia("(max-width: 760px)").matches || /Android|iPhone|iPod|Mobile/i.test(navigator.userAgent);
+}
+let mobTimer = null, mobLive = null, mobOv = [], mobAct = {items: [], jobs: []}, mobCache = null, mobTick = 0;
+async function startMobile(){
+  $("#login").classList.add("hidden"); $("#pub").classList.add("hidden"); $("#app").classList.add("hidden"); $("#mob").classList.remove("hidden");
+  try { const [m, g] = await Promise.all([api("/api/me"), api("/api/games")]); me = m.user; GAMES = g.games; } catch {}
+  const tick = async () => {
+    if (document.hidden) return;
+    mobTick++;
+    try { mobLive = await api("/api/live"); } catch {}
+    if (mobTick % 3 === 1){
+      const r = await Promise.allSettled([api("/api/overview"), api("/api/activity"), api("/api/cache")]);
+      if (r[0].status === "fulfilled") mobOv = r[0].value;
+      if (r[1].status === "fulfilled") mobAct = r[1].value;
+      if (r[2].status === "fulfilled") mobCache = r[2].value;
+    }
+    renderMobile();
+  };
+  clearInterval(mobTimer); mobTimer = setInterval(tick, 2000); tick();
+}
+function mobTile(label, val, sub, pct, color){
+  return `<div class="mobtile"><div class="k">${label}</div><div class="v">${val}</div><div class="s">${sub || "&nbsp;"}</div>
+    ${pct != null ? `<div class="bar"><i class="${color ? "" : lvl(pct)}" style="width:${Math.max(pct > 0 ? 2 : 0, Math.min(100, pct))}%;${color ? "background:" + color : ""}"></i></div>` : ""}</div>`;
+}
+function renderMobile(){
+  const L = mobLive || {}, n = L.net || {}, P = L.peak24 || {};
+  const memPct = L.mem_total_mb ? L.mem_used_mb / L.mem_total_mb * 100 : null;
+  const sc = k => niceMax(Math.max(1e6, P[k] || 0));
+  const on = mobOv.filter(o => o.online), pl = on.reduce((a, o) => a + (o.humans || 0), 0);
+  $("#mobSum").innerHTML = `<b>${pl}</b> Spieler auf <b>${on.length}</b> von ${mobOv.length} Servern`;
+  $("#mobTime").textContent = new Date().toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit", second: "2-digit"});
+  const ct = L.cache && L.cache.tx_bps;
+  $("#mobLoad").innerHTML =
+    mobTile("CPU", L.cpu != null ? Math.round(L.cpu) + " %" : "–", "", L.cpu) +
+    mobTile("RAM", memPct != null ? Math.round(memPct) + " %" : "–", L.mem_used_mb ? fmtMem(L.mem_used_mb) + " belegt" : "", memPct) +
+    mobTile("Internet", `<span style="color:${C_DOWN}">↓</span> ${fmtRate(n.rx_bps)}`, `↑ ${fmtRate(n.tx_bps)}`, n.rx_bps != null ? n.rx_bps / sc("rx") * 100 : null, C_DOWN) +
+    mobTile("Lancache an Clients", fmtRate(ct), mobCache && mobCache.last_day && mobCache.last_day.hit_ratio != null ? `${mobCache.last_day.hit_ratio} % aus dem Cache (24 h)` : "", ct != null ? ct / sc("cache") * 100 : null, "var(--ct)");
+  // Gerade los: Downloads, Prefill, Installationen, Anlegen, Probleme
+  const items = [];
+  (mobAct.jobs || []).forEach(j => items.push(`<div class="mobitem ${j.error ? "bad" : ""}"><div class="t">${gameTile(j.game, 14)}${esc(j.title || "Neuer Server")}</div><div class="s">${esc(j.error || j.step || "…")}</div></div>`));
+  (mobAct.items || []).forEach(it => {
+    const p = it.progress;
+    if (!p) return;
+    const lim = p.limit && p.limit.bps ? ` / max ${fmtRate(p.limit.bps)}` : "";
+    items.push(`<div class="mobitem"><div class="t">${it.prefill ? "⇩" : gameTile(it.game, 14)} ${esc(it.name)}</div>
+      <div class="s">${esc(p.label || "")} · ${(p.pct || 0).toFixed(0)} %${p.rate != null ? " · " + fmtRate(p.rate) + lim : ""}</div>
+      <div class="bar"><i style="width:${Math.min(100, p.pct || 0)}%;background:var(--ct)"></i></div></div>`);
+  });
+  ((mobCache && mobCache.live_downloads) || []).slice(0, 4).forEach(d => items.push(`<div class="mobitem"><div class="t">⬇ ${esc(d.name || cacheName(d.service))}</div>
+      <div class="s">${esc(d.player || d.client || d.ip)} · ${fmtRate(d.bps)}${d.hit_pct != null ? ` · ${d.hit_pct} % aus dem Cache` : ""}</div></div>`));
+  mobOv.forEach(o => (o.problems || []).filter(p => p.level !== "info").forEach(p => items.push(`<div class="mobitem warn"><div class="t">⚠ ${esc(o.server.name)}</div><div class="s">${esc(p.title)}</div></div>`)));
+  $("#mobNow").innerHTML = items.length ? items.join("") : `<div class="hint">Gerade nichts los – keine Downloads, Updates oder Probleme.</div>`;
+  // Server: zuerst mit Spielern, dann online, dann offline
+  const srv = [...mobOv].sort((a, b) => (b.humans || 0) - (a.humans || 0) || (b.online ? 1 : 0) - (a.online ? 1 : 0) || String(a.server.name).localeCompare(String(b.server.name)));
+  $("#mobSrv").innerHTML = srv.map(o => {
+    const g = gameOf(o.server), slots = o.visible_players > 0 ? o.visible_players : o.max_players;
+    const where = o.online ? (o.track_name || (o.workshop && o.workshop.title) || o.map_title || o.map || "") : (o.sleeping ? "Ruhemodus" : "offline");
+    const ld = mobLive && mobLive.servers && mobLive.servers[o.server.id];
+    return `<div class="mobsrv ${o.online ? "" : "off"}">${gameTile(g, 18)}
+      <div style="min-width:0"><div class="n"><span class="dot" style="background:${o.online ? "var(--ok)" : o.sleeping ? "var(--muted)" : "var(--bad)"}"></span>${esc(o.server.name)}</div>
+        <div class="m">${esc(where)}${ld && ld.cpu_host != null ? ` · CPU ${ld.cpu_host.toFixed(1)} %` : ""}</div></div>
+      <div class="p">${o.online ? `${o.players_unknown ? "–" : o.humans ?? 0}${slots ? `<small>/${slots}</small>` : ""}` : ""}</div></div>`;
+  }).join("") || `<div class="hint">Noch keine Server.</div>`;
+}
+$("#mobFull").onclick = () => { try { localStorage.setItem("gsmView", "full"); } catch {} clearInterval(mobTimer); $("#mob").classList.add("hidden"); start(); };
+$("#mobLogout").onclick = async e => { e.preventDefault(); clearInterval(mobTimer); await api("/api/logout", {method: "POST"}); $("#mob").classList.add("hidden"); showPublic(); };
+
 /* ================= Start ================= */
 async function start(){
+  if (isMobile()) return startMobile();
   clearInterval(pubTimer);
   $("#login").classList.add("hidden"); $("#pub").classList.add("hidden"); $("#app").classList.remove("hidden");
   try {

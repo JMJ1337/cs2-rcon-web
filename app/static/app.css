@@ -559,3 +559,29 @@ aside .head .logo{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space
 .fldrow .pill{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;justify-self:end}
 .fldrow>button,.fldrow>span:last-child{justify-self:end}
 .dubar{margin-top:6px}.dubar .bar{height:5px}.dubar .hint{font-size:11px;margin-top:2px}
+
+/* ---- Handy-Ansicht ---- */
+#mob{max-width:560px;margin:0 auto;padding:10px 12px 20px}
+.mobhead{display:flex;align-items:center;gap:10px;padding:4px 0 10px}
+.mobhead .logo{font-weight:700;font-size:17px}.mobhead .logo span{color:var(--accent)}
+.mobhead .hint{margin-left:auto;font-size:11px}
+.mobsum{font-size:15px;margin-bottom:10px}.mobsum b{color:var(--accent)}
+.mobtiles{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.mobtile{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.mobtile .k{font-size:11px;color:var(--muted)}
+.mobtile .v{font-family:Georgia,serif;font-size:24px;line-height:1.15;font-variant-numeric:tabular-nums}
+.mobtile .s{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mobtile .bar{height:4px;margin-top:6px}
+.mobh{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:16px 0 6px}
+.mobitem{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 12px;margin-bottom:6px;font-size:13px}
+.mobitem .t{display:flex;align-items:center;gap:8px;font-weight:600}
+.mobitem .s{color:var(--muted);font-size:12px;margin-top:3px}
+.mobitem .bar{height:4px;margin-top:6px}
+.mobitem.warn{border-color:#6b4a1f}.mobitem.bad{border-color:#6b2a27}
+.mobsrv{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 12px;margin-bottom:6px}
+.mobsrv .n{font-weight:600;font-size:14px;line-height:1.2;overflow-wrap:anywhere}
+.mobsrv .m{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mobsrv .p{font-family:Georgia,serif;font-size:22px;text-align:right;font-variant-numeric:tabular-nums}
+.mobsrv .p small{font-size:12px;color:var(--muted)}
+.mobsrv.off{opacity:.55}
+.mobsrv .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:1px}

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=101">
+<link rel="stylesheet" href="/static/app.css?v=102">
 </head>
 <body>
 
@@ -37,6 +37,20 @@
 </div>
 
 <!-- App -->
+<!-- Handy-Ansicht: abgespeckt -->
+<div id="mob" class="hidden">
+  <header class="mobhead"><div class="logo">Spielserver<span>manager</span></div>
+    <span class="hint" id="mobTime"></span>
+    <button class="small" id="mobFull" title="Vollständige Ansicht">Vollansicht</button></header>
+  <div class="mobsum" id="mobSum"></div>
+  <div class="mobtiles" id="mobLoad"></div>
+  <h3 class="mobh">Gerade los</h3>
+  <div id="mobNow"></div>
+  <h3 class="mobh">Server</h3>
+  <div id="mobSrv"></div>
+  <div class="hint" style="text-align:center;margin:18px 0"><a href="#" id="mobLogout">Abmelden</a></div>
+</div>
+
 <div id="app" class="hidden">
   <aside>
     <div class="head">
@@ -75,6 +89,7 @@
       <button class="primary createonly" id="btnAdd">+ Server hinzufügen</button>
       <button id="btnBroadcast">An alle Server senden</button>
       <div class="hint ver" id="appVersion"></div>
+      <div class="hint ver"><a href="#" onclick="toMobile();return false">📱 Handy-Ansicht</a></div>
     </div>
   </aside>
 
@@ -831,6 +846,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=126"></script>
+<script src="/static/app.js?v=127"></script>
 </body>
 </html>
