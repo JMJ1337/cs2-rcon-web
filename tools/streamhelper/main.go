@@ -319,6 +319,7 @@ func main() {
 	}
 
 	steam := findSteam()
+	started := time.Time{}
 	if steam == "" {
 		say("Steam nicht gefunden – bitte Steam installieren und anmelden (Konto mit CS2).")
 	} else if cs2Running() {
@@ -328,6 +329,7 @@ func main() {
 				time.Sleep(5 * time.Second)
 				say("Starte CS2 über Steam (Fernsteuerung auf Port %d) …", c.Netcon)
 				startCS2(steam, c)
+				started = time.Now()
 			} else {
 				say("Dann bitte CS2 selbst beenden – die exe startet es danach automatisch neu.")
 			}
@@ -335,9 +337,10 @@ func main() {
 	} else {
 		say("Starte CS2 über Steam (Fernsteuerung auf Port %d) …", c.Netcon)
 		startCS2(steam, c)
+		started = time.Now()
 	}
 
-	last, lastStart := "", time.Time{}
+	last, lastStart, warned := "", started, false
 	for {
 		st, err := fetchState(c.API)
 		switch {
@@ -358,9 +361,16 @@ func main() {
 					if !cs2Running() && steam != "" && time.Since(lastStart) > 2*time.Minute {
 						say("CS2 läuft nicht – starte es neu …")
 						startCS2(steam, c)
-						lastStart = time.Now()
+						lastStart, warned = time.Now(), false
 					} else {
 						say("CS2 noch nicht bereit (%v) – nächster Versuch gleich …", err)
+						if cs2Running() && time.Since(lastStart) > 2*time.Minute && !warned {
+							warned = true
+							say("CS2 läuft, aber die Fernsteuerung antwortet nicht. Bitte prüfen:")
+							say("  1) Hat Steam ein Fenster „Startoptionen erlauben?“ geöffnet? → bestätigen.")
+							say("  2) Sonst in Steam: CS2 → Eigenschaften → Startoptionen:  -netconport %d", c.Netcon)
+							say("     eintragen, CS2 beenden – die exe startet es neu.")
+						}
 					}
 				} else {
 					say("Zuschauen: %s  (%s)", st.Match, st.TV)
