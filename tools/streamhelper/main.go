@@ -336,19 +336,7 @@ func startCS2(steam string, c Config, tv ...string) {
 	if len(tv) > 0 && tv[0] != "" {
 		game = append(game, "+connect", tv[0])
 	}
-	// cs2.exe direkt starten: Steam reicht Startparameter bei -applaunch nicht zuverlässig weiter (CS2 blieb im Hauptmenü)
-	if cfg := findCS2Cfg(steam); cfg != "" {
-		exe := filepath.Join(cfg, "..", "..", "bin", "win64", "cs2.exe")
-		if _, err := os.Stat(exe); err == nil {
-			cmd := exec.Command(exe, game...)
-			cmd.Dir = filepath.Dir(exe)
-			if err := cmd.Start(); err == nil {
-				return
-			} else {
-				say("cs2.exe direkt starten fehlgeschlagen (%v) – versuche es über Steam", err)
-			}
-		}
-	}
+	// Über Steam starten: direkt gestartetes cs2.exe gilt als „insecure“ und wird von VAC-Servern/CSTV abgewiesen
 	if err := exec.Command(steam, append([]string{"-applaunch", "730"}, game...)...).Start(); err != nil {
 		say("CS2 starten fehlgeschlagen: %v", err)
 	}
