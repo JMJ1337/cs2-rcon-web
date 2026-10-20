@@ -3552,23 +3552,65 @@ async def tour_match_load(mid: str, request: Request):
 
 
 async def _tour_invite(d: dict, m: dict, s: dict, soon: bool = False) -> None:
-    """Spieler des Matches über den Steam-Bot einladen (nur, wenn der Bot an ist und sie Freunde sind)."""
+    """Spieler des Matches über den Steam-Bot einladen (nur, wenn der Bot an ist und sie Freunde sind).
+    LAN-Spieler bekommen die LAN-Adresse, Spieler aus dem Internet die öffentliche."""
     if not d.get("invite") or not steambot_ctl.settings().get("enabled"):
         return
     ids = (tour.team(d, m["t1"]) or {}).get("players", []) + (tour.team(d, m["t2"]) or {}).get("players", [])
-    j = join_info(s)
     when = "in 10 Minuten" if soon else "JETZT"
-    text = (f"🏆 {d['name']}: Dein Match {tour.team_name(d, m['t1'])} vs {tour.team_name(d, m['t2'])} ({m['label']}, "
-            f"Map {m.get('map')}) startet {when} auf {s['name']}.\nVerbinden: {j['address']}" + (f"\n{j['url']}" if j.get("url") else "")
-            + ("\nIm Spiel .ready schreiben, sobald ihr bereit seid." if not soon else ""))
+    head = (f"🏆 {d['name']}: Dein Match {tour.team_name(d, m['t1'])} vs {tour.team_name(d, m['t2'])} ({m['label']}, "
+            f"Map {m.get('map')}) startet {when} auf {s['name']}.")
+    tail = "\nIm Spiel .ready schreiben, sobald ihr bereit seid." if not soon else ""
     try:
         st = await steambot_ctl.status()
         friends = {f["steamid"] for f in ((st.get("bot") or {}).get("friends") or []) if f.get("rel") == "Friend"}
         send = [x for x in ids if x in friends]
-        if send:
-            await steambot_ctl.api("POST", "/msg", {"steamids": send, "text": text}, timeout=30)
+        for lan, group in _split_lan(send).items():
+            if group:
+                await steambot_ctl.api("POST", "/msg", {"steamids": group, "text": head + await invite_join_text(s, lan) + tail}, timeout=30)
     except Exception as e:  # noqa: BLE001
         log.info("Turnier-Einladung: %s", e)
+
+
+def _split_lan(steamids: list[str]) -> dict[bool, list[str]]:
+    out: dict[bool, list[str]] = {True: [], False: []}
+    for sid in steamids:
+        p = playerdb.get(sid)
+        out[bool(p and playerdb.on_lan(p))].append(sid)
+    return out
+
+
+async def invite_join_text(s: dict, lan: bool) -> str:
+    """Adresse + klickbarer Link für Steam-Chat-Nachrichten. Steam macht steam://-Links nicht klickbar, darum ein
+    http-Link aufs Tool, der CS2 startet und verbindet (LAN: LAN-Adresse des Tools, sonst die öffentliche)."""
+    host = _join_host(s)
+    addr = join_info(s)["address"]
+    wan = None if lan else await wan_host()
+    if wan:
+        addr = addr.replace(host, wan)
+    base = f"http://{wan}:{TOOL_PORT}" if wan else f"http://{host}:{TOOL_PORT}"
+    return f"\nVerbinden: {addr}\nKlick zum Beitreten: {base}/j/{s['id']}"
+
+
+@app.get("/j/{sid}")
+async def join_redirect(sid: str, request: Request):
+    """Kurzer Beitritts-Link für Chat-Nachrichten: öffnet CS2/Steam und verbindet (LAN- oder öffentliche Adresse je nach Besucher)."""
+    s = next((x for x in load_servers() if x["id"] == sid), None)
+    if not s:
+        raise HTTPException(404, "Server nicht gefunden")
+    j = await localize_join(request, s, join_info(s)) or {}
+    url, addr = j.get("url") or "", j.get("address") or ""
+    import html as _h
+    page = f"""<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Beitreten: {_h.escape(s.get('name') or '')}</title>
+<style>body{{font-family:system-ui,sans-serif;background:#0b130c;color:#f1f1ec;display:grid;place-items:center;min-height:100vh;margin:0}}
+.c{{text-align:center;padding:24px}}a.b{{display:inline-block;margin:14px 0;padding:12px 22px;border-radius:10px;background:#a8c51f;color:#10170a;font-weight:700;text-decoration:none}}
+code{{background:#1a241b;padding:3px 8px;border-radius:6px}}</style>
+<div class="c"><h2>{_h.escape(s.get('name') or '')}</h2>
+<a class="b" href="{_h.escape(url)}">▶ Jetzt beitreten</a>
+<p>Startet das Spiel nicht? In der Konsole: <code>connect {_h.escape(addr)}</code></p></div>
+<script>{"location.href=" + json.dumps(url) + ";" if url else ""}</script>"""
+    return _Resp(content=page, media_type="text/html")
 
 
 async def _tour_load(d: dict, m: dict, bots: bool = False) -> None:
