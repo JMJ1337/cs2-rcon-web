@@ -288,20 +288,29 @@ def plan(d: dict) -> None:
             if m["status"] == "live":
                 free[m["server"]] = max(free[m["server"]], t_end)
             ends[m["id"]] = t_end
-    order = sorted(d["matches"], key=lambda m: (m["round"], {"G": 0, "R": 0, "W": 0, "K": 0, "L": 1, "F": 2}.get(m["stage"], 0), m["id"]))
+    order = sorted(d["matches"], key=lambda m: (m["round"], {"G": 0, "R": 0, "L": 0, "W": 1, "K": 1, "F": 2}.get(m["stage"], 0), m["id"]))
+    seq, seq_end = False, 0.0            # ab dem Halbfinale: nur noch ein Spiel gleichzeitig (alle können zuschauen)
     for m in order:
+        if is_late(m) and not seq:
+            seq = True
+            seq_end = max([seq_end] + list(ends.values()))   # Halbfinale erst, wenn alle früheren Spiele vorbei sind
         if m["status"] == "done":
             ends.setdefault(m["id"], m.get("ended") or start)
+            if seq:
+                seq_end = max(seq_end, ends[m["id"]])
             continue
         if m["status"] == "live":
+            if seq:
+                seq_end = max(seq_end, ends.get(m["id"]) or start)
             continue
+        m["seq"] = seq
         dep = []
         for s in (m.get("src1"), m.get("src2")):
             if s and "m" in s:
                 dep.append(ends.get(s["m"], start))
             elif s and "g" in s:
                 dep += [ends.get(x["id"], start) for x in d["matches"] if x["stage"] == "G" and x["group"] == s["g"]]
-        earliest = max([start, time.time() if d.get("status") == "running" else start] + dep)
+        earliest = max([start, time.time() if d.get("status") == "running" else start, seq_end if seq else 0] + dep)
         if not servers:
             m["planned"], m["server"] = earliest, None
             ends[m["id"]] = earliest + dur
@@ -312,6 +321,14 @@ def plan(d: dict) -> None:
         m["planned"], m["server"] = t0, srv
         free[srv] = t0 + dur
         ends[m["id"]] = t0 + dur
+        if seq:
+            seq_end = t0 + dur
+
+
+def is_late(m: dict) -> bool:
+    """Halbfinale, Finale, Großes Finale (K.-o.-Teil) – ab hier laufen die Spiele nacheinander."""
+    lab = (m.get("label") or "").split(" · ")[-1]
+    return m.get("stage") in ("W", "K", "F") and ("Halbfinale" in lab or "Finale" in lab)
 
 
 def needed_servers(d: dict) -> int:

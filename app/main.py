@@ -3491,7 +3491,7 @@ async def _tour_invite(d: dict, m: dict, s: dict, soon: bool = False) -> None:
         log.info("Turnier-Einladung: %s", e)
 
 
-async def _tour_load(d: dict, m: dict) -> None:
+async def _tour_load(d: dict, m: dict, bots: bool = False) -> None:
     s = get_server(m["server"])
     await ensure_matchzy(s)
     t1, t2 = tour.team(d, m["t1"]), tour.team(d, m["t2"])
@@ -3500,6 +3500,8 @@ async def _tour_load(d: dict, m: dict) -> None:
     cfg = build_match(data)
     mzid = int(time.time()) % 10_000_000
     cfg["matchid"] = mzid
+    if bots:                                  # Bot-Test: Bots füllen die Teams (Bots melden sich nie „bereit“ -> Start erzwingen)
+        cfg["cvars"] = {**cfg.get("cvars", {}), **BOT_CVARS}
     token = secrets.token_urlsafe(12)
     store.save(f"matches/{token}.json", cfg)
     base = (automation.get_settings().get("public_url") or f"http://{s['host']}:{TOOL_PORT}").rstrip("/")
@@ -3509,7 +3511,26 @@ async def _tour_load(d: dict, m: dict) -> None:
     _tour_names[s["id"]] = title
     await run(s, f'game_type {p["game_type"]}; game_mode {p["game_mode"]}; hostname "{title}"; matchzy_loadmatch_url "{url}"')
     m.update(status="live", started=time.time(), mz_id=str(mzid), token=token)
-    asyncio.create_task(_tour_invite(d, m, s))
+    if bots:
+        asyncio.create_task(_tour_bots_start(s))
+    else:
+        asyncio.create_task(_tour_invite(d, m, s))
+
+
+BOT_CVARS = {"bot_join_after_player": "0", "bot_quota_mode": "normal", "bot_quota": "4", "bot_difficulty": "2",
+             "sv_hibernate_when_empty": "0", "mp_autoteambalance": "1", "mp_limitteams": "1"}
+
+
+async def _tour_bots_start(s: dict) -> None:
+    """Nach dem Mapwechsel durch MatchZy: Bots rein (die Map-Configs setzen bot_quota zurück) und das Match per
+    MatchZy-Befehl starten – Bots schreiben nie .ready."""
+    bots = "; ".join(f"{k} {v}" for k, v in BOT_CVARS.items())
+    for wait, extra in ((20, ""), (20, ""), (15, "; css_start"), (30, "; css_start")):
+        await asyncio.sleep(wait)
+        try:
+            await run(s, bots + extra)
+        except Exception as e:  # noqa: BLE001
+            log.info("Bot-Test %s: %s", s.get("id"), e)
 
 
 def _tour_test(d: dict) -> str | None:
@@ -3553,7 +3574,7 @@ async def tour_tick() -> None:
         s = next((x for x in load_servers() if x["id"] == m.get("server")), None)
         if s:
             _tour_names[s["id"]] = f"Turnier: {tour.team_name(d, m['t1'])} vs {tour.team_name(d, m['t2'])}"[:63]
-        if test == "bots":                      # Bot-Test: Ergebnis aus dem Server-Log (Game Over), Seiten nach Halbzeit getauscht
+        if test == "bots" and not m.get("mz_id"):   # alter Bot-Test ohne MatchZy: Ergebnis aus dem Server-Log
             res = next((x for x in matchlog.recent(m.get("server"), 10) if x.get("source") == "log"
                         and (x.get("started") or 0) >= (m.get("started") or 0) - 30), None)
             if res:
@@ -3584,6 +3605,8 @@ async def tour_tick() -> None:
     for m in sorted(d["matches"], key=lambda x: x.get("planned") or 0):
         if m["status"] != "ready" or not m.get("server") or not m.get("planned"):
             continue
+        if m.get("seq") and busy:               # ab dem Halbfinale nie parallel zu einem anderen Spiel
+            continue
         if test == "sim":
             if m["planned"] <= now + 5 and m["server"] not in busy:
                 m.update(status="live", started=now, sim_len=random.randint(15, int((d.get("test") or {}).get("match_sec") or 60)))
@@ -3597,7 +3620,7 @@ async def tour_tick() -> None:
             asyncio.create_task(_tour_invite(d, m, s, soon=True))
         if m["planned"] <= now + 30 and m["server"] not in busy and (_state.get(s["id"]) or {}).get("online"):
             try:
-                await (_tour_load_bots(d, m) if test == "bots" else _tour_load(d, m))
+                await _tour_load(d, m, bots=test == "bots")
                 busy.add(m["server"])
             except Exception as e:  # noqa: BLE001
                 log.warning("Turnier-Match %s laden: %s", m["id"], e)
