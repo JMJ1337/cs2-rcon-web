@@ -1045,6 +1045,7 @@ def _mode_hostname(s: dict, hostname: str | None, mode_label: str, settings: dic
 
 _mzlog_set: dict[str, float] = {}
 _tvpw_set: dict[str, float] = {}
+_tvpw_map: dict[str, str] = {}
 _cslog_set: dict[str, float] = {}
 TOOL_PORT = int(os.getenv("TOOL_PORT", "8090"))
 
@@ -1184,10 +1185,13 @@ async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = 
             _cslog_set[s["id"]] = time.time()
         except RconError:
             pass
-    if str(cv.get("tv_enable") or "").strip() in ("1", "1.000000", "true") and time.time() - _tvpw_set.get(s["id"], 0) > 600:
-        try:   # Zuschauer brauchen kein Passwort (Image-Standard „changeme“ überschreiben)
-            await c.execute('tv_password ""')
+    tvkey = f'{st.get("map")}'
+    if str(cv.get("tv_enable") or "").strip() in ("1", "1.000000", "true") and (
+            time.time() - _tvpw_set.get(s["id"], 0) > 120 or _tvpw_map.get(s["id"]) != tvkey):
+        try:   # Zuschauer brauchen kein Passwort (Image-Standard „changeme“ überschreiben) – nach jedem Mapwechsel
+            await c.execute('tv_password ""')   # erneut, weil server.cfg (und MatchZy) es beim Laden wieder setzen
             _tvpw_set[s["id"]] = time.time()
+            _tvpw_map[s["id"]] = tvkey
         except RconError:
             pass
     ws = _last_workshop.get(s["id"])
@@ -4578,7 +4582,7 @@ def build_match(data: MatchIn) -> dict:
         "side_type": side,
         "clinch_series": data.clinch_series,
         "players_per_team": data.players_per_team,
-        "cvars": cvars,
+        "cvars": {**cvars, "tv_password": ""},
     }
     if data.players_per_team == 2:
         cfg["wingman"] = True
