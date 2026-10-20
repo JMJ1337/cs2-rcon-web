@@ -3834,9 +3834,28 @@ async def invite_join_text(s: dict, lan: bool) -> str:
         pw = (await _join_password(s) or "").strip()
     except Exception:  # noqa: BLE001
         pw = ""
-    link = f"steam://connect/{addr}" + (f"/{pw}" if pw else "")
     con = f"connect {addr}" + (f"; password {pw}" if pw else "")
-    return f"\n▶ Beitreten: {link}\n⌨ Oder in der CS2-Konsole: {con}"
+    # Steam-Chat macht nur http(s)-Links klickbar: /c/<server> leitet sofort auf steam://connect weiter (keine Webseite)
+    base = f"http://{wan}:{TOOL_PORT}" if wan else f"http://{host}:{TOOL_PORT}"
+    return f"\n▶ Klick zum Beitreten: {base}/c/{s['id']}\n⌨ Oder in der CS2-Konsole: {con}"
+
+
+@app.get("/c/{sid}")
+async def connect_redirect(sid: str, request: Request):
+    """Klickbarer Link für Steam-Chat-Nachrichten: leitet direkt auf steam://connect/<adresse>[/passwort] weiter
+    (LAN- oder öffentliche Adresse je nach Besucher) – Steam/CS2 öffnet sich und verbindet."""
+    s = next((x for x in load_servers() if x["id"] == sid), None)
+    if not s:
+        raise HTTPException(404, "Server nicht gefunden")
+    j = await localize_join(request, s, join_info(s)) or {}
+    addr = j.get("address") or ""
+    try:
+        pw = (await _join_password(s) or "").strip()
+    except Exception:  # noqa: BLE001
+        pw = ""
+    if not addr:
+        raise HTTPException(404, "Keine Adresse")
+    return RedirectResponse(f"steam://connect/{addr}" + (f"/{urllib.parse.quote(pw)}" if pw else ""), status_code=302)
 
 
 @app.get("/j/{sid}")
