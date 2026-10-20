@@ -3919,6 +3919,22 @@ $("#tourAddTeam").onclick = async () => {
   const r = await tourCall("/api/tournament/teams", {body: {name, players: [$("#tourNewP1").value, $("#tourNewP2").value].filter(Boolean)}}, "Team angelegt");
   if (r){ $("#tourNewTeam").value = ""; document.activeElement.blur(); loadTour(); }
 };
+$("#tourShift").onclick = async () => {
+  const cur = tourData && tourData.start ? new Date(tourData.start * 1000) : null;
+  const a = prompt(`Turnier verschieben${cur ? ` (Start bisher ${cur.toLocaleString("de-DE", {weekday: "short", hour: "2-digit", minute: "2-digit"})} Uhr)` : ""}:\n\n` +
+    "• um Minuten: z. B. 30 (später) oder -15 (früher)\n• oder neue Uhrzeit: z. B. 19:30", "30");
+  if (a == null || !a.trim()) return;
+  let body;
+  const t = a.trim().match(/^(\d{1,2})[:.](\d{2})$/);
+  if (t){
+    const d = cur ? new Date(cur) : new Date(); d.setHours(+t[1], +t[2], 0, 0);
+    if (!cur && d < new Date()) d.setDate(d.getDate() + 1);
+    body = {start: d.getTime() / 1000};
+  } else if (/^[+-]?\d+$/.test(a.trim())) body = {minutes: parseInt(a.trim(), 10)};
+  else return toast("Bitte Minuten (z. B. 30) oder Uhrzeit (z. B. 19:30) eingeben", true);
+  const r = await tourCall("/api/tournament/shift", {body});
+  if (r){ toast(`Verschoben – neuer Start ${new Date(r.start * 1000).toLocaleString("de-DE", {weekday: "short", hour: "2-digit", minute: "2-digit"})} Uhr`); tourLoaded = false; }
+};
 $("#tourAddBot").onclick = async () => {
   const n = Math.max(1, Math.min(16, +$("#tourBotN").value || 1));
   const r = await tourCall("/api/tournament/bots", {body: {count: n}}, `${n} Bot${n > 1 ? "s" : ""} hinzugefügt – jetzt einem Team zuordnen`);

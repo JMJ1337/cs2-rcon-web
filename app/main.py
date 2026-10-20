@@ -3965,6 +3965,31 @@ async def _tour_announce(d: dict, force: bool = False) -> dict:
     return {"sent": len(sent), "skipped": len(skipped)}
 
 
+class TourShiftIn(BaseModel):
+    start: float | None = None          # neue Startzeit (Unix) …
+    minutes: int | None = Field(None, ge=-1440, le=10080)   # … oder um so viele Minuten verschieben
+
+
+@app.post("/api/tournament/shift", dependencies=auth)
+async def tour_shift(data: TourShiftIn, request: Request):
+    """Turnier verschieben: Startzeit ändern, noch nicht gespielte Matches neu einplanen (auch während es läuft),
+    Erinnerungen/Ankündigung gehen zur neuen Zeit erneut raus."""
+    _need_right(request, "tournament")
+    d = tour.load()
+    old = d.get("start") or time.time()
+    new = data.start if data.start else old + (data.minutes or 0) * 60
+    if new < time.time() - 60 and d.get("status") != "running":
+        raise HTTPException(400, "Die neue Startzeit liegt in der Vergangenheit")
+    d["start"] = new
+    for m in d["matches"]:
+        if m["status"] in ("ready", "wait"):
+            m.pop("reminded", None)
+    if d["matches"]:
+        tour.plan(d)
+    tour.save(d)
+    return {"ok": True, "start": new, "delta_min": round((new - old) / 60)}
+
+
 @app.post("/api/tournament/announce", dependencies=auth)
 async def tour_announce_now(request: Request):
     """Ankündigung sofort an alle Teilnehmer schicken (sonst automatisch 15 min vor dem Start)."""

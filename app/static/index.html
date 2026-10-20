@@ -417,7 +417,7 @@
               <label><input type="checkbox" id="tourActive"> Turniermodus an (Turnier auf der Übersicht und der öffentlichen Seite zeigen)</label>
               <label>Name <input id="tourName" maxlength="60" style="width:260px"></label>
               <label>Modus <select id="tourMode"><option value="groups">Gruppen + K.-o.</option><option value="ko">K.-o.-System</option><option value="double">Doppel-K.-o.</option><option value="rr">Jeder gegen jeden</option></select></label>
-              <label>Start <input type="datetime-local" id="tourStartAt"></label>
+              <label>Start <input type="datetime-local" id="tourStartAt"> <button type="button" class="small" id="tourShift" title="Turnier verschieben – auch wenn es schon läuft: offene Spiele werden neu eingeplant">⏱ Verschieben …</button></label>
               <label>Dauer je Match <input type="number" id="tourMatchMin" min="10" style="width:70px"> min + Pause <input type="number" id="tourPauseMin" min="0" style="width:60px"> min</label>
               <label>Maps (der Reihe nach) <input id="tourMaps" style="width:320px" placeholder="de_inferno, de_nuke, de_overpass, de_vertigo"></label>
               <label><input type="checkbox" id="tourReg"> Anmeldung auf der öffentlichen Seite offen</label>
@@ -1011,6 +1011,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=160"></script>
+<script src="/static/app.js?v=161"></script>
 </body>
 </html>
