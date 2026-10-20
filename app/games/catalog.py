@@ -17,13 +17,13 @@ ICH_BINDS = ["{data}/steamcmd:/serverdata/steamcmd", "{data}/serverfiles:/server
 CATALOG = {
     "l4d2": {
         "label": "Left 4 Dead 2", "short": "L4D2", "color": "#b5402f", "appid": 550, "image": _ich("l4d2"), "uid": 99, "gid": 100,
-        "env": ICH_ENV + ["GAME_ID=222860"], "binds": ICH_BINDS, "params": "+map c1m1_hotel +sv_lan 1",
+        "env": ICH_ENV + ["GAME_ID=222860", "GAME_NAME=left4dead2"], "binds": ICH_BINDS, "params": "+map c1m1_hotel +sv_lan 1",
         "ports": [["port", "Spielport (TCP+UDP)", 27060, "tcp,udp", 27015]], "web": True,
         "status": ("a2s", "port"), "join": ("steam", "port"),
     },
     "garrysmod": {
         "label": "Garry's Mod", "short": "GMod", "color": "#1d8fe0", "appid": 4000, "image": _ich("garrysmod"), "uid": 99, "gid": 100,
-        "env": ICH_ENV + ["GAME_ID=4020"], "binds": ICH_BINDS, "params": "+gamemode sandbox +map gm_construct +maxplayers 16",
+        "env": ICH_ENV + ["GAME_ID=4020", "GAME_NAME=garrysmod"], "binds": ICH_BINDS, "params": "+gamemode sandbox +map gm_construct +maxplayers 16",
         "ports": [["port", "Spielport (TCP+UDP)", 27065, "tcp,udp", 27015]], "web": True,
         "status": ("a2s", "port"), "join": ("steam", "port"),
     },
@@ -126,10 +126,11 @@ CATALOG = {
 
 
 
-def _src(label, short, color, appid, tag, game_id, params, host_port, hint=""):
+def _src(label, short, color, appid, tag, game_id, params, host_port, hint="", name="", mod=""):
     """Source-/GoldSrc-Server von ich777: ein Port (TCP+UDP), Status per A2S, Beitreten per steam://connect."""
     e = {"label": label, "short": short, "color": color, "appid": appid, "image": _ich(tag), "uid": 99, "gid": 100,
-         "env": ICH_ENV + [f"GAME_ID={game_id}", "GAME_PORT={port}"], "binds": ICH_BINDS, "params": params,
+         "env": ICH_ENV + [f"GAME_ID={game_id}", "GAME_PORT={port}"] + ([f"GAME_NAME={name}"] if name else [])
+         + ([f"GAME_MOD={mod}"] if mod else []), "binds": ICH_BINDS, "params": params,
          "ports": [["port", "Spielport (TCP+UDP)", host_port, "tcp,udp", 27015]], "web": True,
          "status": ("a2s", "port"), "join": ("steam", "port"), "port_params": {"port": "-port"}}
     if hint:
@@ -150,24 +151,24 @@ def _ue(label, short, color, appid, tag, game_id, params, ports, status_port="qu
 # SteamCMD-Images von ich777 (Standardwerte aus ich777/docker-templates).
 CATALOG.update({
     # --- Klassiker (GoldSrc / Source) ---
-    "cs16": _src("Counter-Strike 1.6", "CS 1.6", "#d9a441", 10, "cstrike1.6", "90", "+maxplayers 16 +map de_dust2 +sv_lan 1", 27070),
-    "czero": _src("Counter-Strike: Condition Zero", "CS:CZ", "#c98b2e", 80, "cstrikeczero", "90 +app_set_config 90 mod czero +app_update 90",
-                  "+maxplayers 16 +map de_dust2_cz +sv_lan 1", 27071),
-    "dod": _src("Day of Defeat", "DoD", "#6b7a3a", 30, "dodclassic", "90 +app_set_config 90 mod dod +app_update 90",
-                "+maxplayers 24 +map dod_avalanche +sv_lan 1", 27073),
-    "dods": _src("Day of Defeat: Source", "DoD:S", "#7d8b3f", 300, "dods", "232290", "+maxplayers 24 +map dod_avalanche +sv_lan 1", 27074),
-    "tfc": _src("Team Fortress Classic", "TFC", "#b5562b", 20, "tf", "90 +app_set_config 90 mod tfc +app_update 90", "+maxplayers 24 +map 2fort +sv_lan 1", 27075),
-    "hldm": _src("Half-Life Deathmatch", "HLDM", "#e07b1a", 70, "hldm", "90", "+maxplayers 16 +map crossfire +sv_lan 1", 27076),
-    "hl2dm": _src("Half-Life 2: Deathmatch", "HL2DM", "#f08c1a", 320, "hl2dm", "232370", "+maxplayers 16 +map dm_lockdown +sv_lan 1", 27077),
+    "cs16": _src("Counter-Strike 1.6", "CS 1.6", "#d9a441", 10, "cstrike1.6", "90", "+maxplayers 16 +map de_dust2 +sv_lan 1", 27070, name="cstrike", mod="90 mod cstrike"),
+    "czero": _src("Counter-Strike: Condition Zero", "CS:CZ", "#c98b2e", 80, "cstrikeczero", "90",
+                  "+maxplayers 16 +map de_dust2_cz +sv_lan 1", 27071, name="czero", mod="90 mod czero"),
+    "dod": _src("Day of Defeat", "DoD", "#6b7a3a", 30, "dodclassic", "90",
+                "+maxplayers 24 +map dod_avalanche +sv_lan 1", 27073, name="dod", mod="90 mod dod"),
+    "dods": _src("Day of Defeat: Source", "DoD:S", "#7d8b3f", 300, "dods", "232290", "+maxplayers 24 +map dod_avalanche +sv_lan 1", 27074, name="dod"),
+    "tfc": _src("Team Fortress Classic", "TFC", "#b5562b", 20, "tf", "90", "+maxplayers 24 +map 2fort +sv_lan 1", 27075, name="tfc", mod="90 mod tfc"),
+    "hldm": _src("Half-Life Deathmatch", "HLDM", "#e07b1a", 70, "hl", "90", "+maxplayers 16 +map crossfire +sv_lan 1", 27076),
+    "hl2dm": _src("Half-Life 2: Deathmatch", "HL2DM", "#f08c1a", 320, "hl2dm", "232370", "+maxplayers 16 +map dm_lockdown +sv_lan 1", 27077, name="hl2mp"),
     "svencoop": _src("Sven Co-op", "Sven", "#4a7fb5", 225840, "svencoop", "276060",
                      "+maxplayers 16 +map hl_c00.bsp +servercfgfile servers/server.cfg", 27078),
-    "l4d": _src("Left 4 Dead", "L4D", "#8f2f24", 500, "l4d", "222840", "+map l4d_hospital01_apartment +sv_lan 1", 27079),
-    "nmrih": _src("No More Room in Hell", "NMRiH", "#7a1f1f", 224260, "nomoreroominhell", "317670", "+map nmo_broadway -maxplayers 8 +sv_lan 1", 27080),
-    "zps": _src("Zombie Panic! Source", "ZPS", "#5e7d2e", 17500, "zombiepanic", "17505", "+maxplayers 16 +map zpo_biotec +sv_lan 1", 27081),
-    "fof": _src("Fistful of Frags", "FoF", "#a0743c", 265630, "fistfuloffrags", "295230", "+maxplayers 16 +map fof_fistful +sv_lan 1", 27082),
-    "pvkii": _src("Pirates, Vikings & Knights II", "PVKII", "#3c6e8f", 17570, "pvkii", "17575", "+maxplayers 16 +map bt_island +sv_lan 1", 27083),
+    "l4d": _src("Left 4 Dead", "L4D", "#8f2f24", 500, "l4d", "222840", "+map l4d_hospital01_apartment +sv_lan 1", 27079, name="left4dead"),
+    "nmrih": _src("No More Room in Hell", "NMRiH", "#7a1f1f", 224260, "nomoreroominhell", "317670", "+map nmo_broadway -maxplayers 8 +sv_lan 1", 27080, name="nmrih"),
+    "zps": _src("Zombie Panic! Source", "ZPS", "#5e7d2e", 17500, "zombiepanic", "17505", "+maxplayers 16 +map zpo_biotec +sv_lan 1", 27081, name="zps"),
+    "fof": _src("Fistful of Frags", "FoF", "#a0743c", 265630, "fistfuloffrags", "295230", "+maxplayers 16 +map fof_fistful +sv_lan 1", 27082, name="fof"),
+    "pvkii": _src("Pirates, Vikings & Knights II", "PVKII", "#3c6e8f", 17570, "pvkii", "17575", "+maxplayers 16 +map bt_island +sv_lan 1", 27083, name="pvkii"),
     "asrd": _src("Alien Swarm: Reactive Drop", "AS:RD", "#3f8f8f", 563560, "alienswarmreactivedrop", "563560",
-                 "+map lobby -maxplayers 4 +exec server.cfg", 27084),
+                 "+map lobby -maxplayers 4 +exec server.cfg", 27084, name="reactivedrop"),
     # --- Koop & Survival ---
     "killingfloor": _ue("Killing Floor", "KF", "#8a1515", 1250, "killingfloor", "215360",
                         "KF-bioticslab.rom?game=KFmod.KFGameType?VACSecured=true?MaxPlayers=6",
