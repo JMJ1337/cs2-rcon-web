@@ -4056,3 +4056,19 @@ $("#apiOptSave").onclick = async () => {
   try { await api("/api/apikeys/options", {method: "PUT", body: {public_read: $("#apiPublic").checked, origins: $("#apiOrigins").value.split(/\s+/).filter(Boolean)}}); toast("Gespeichert"); loadApi(); }
   catch (e) { toast(e.message, true); }
 };
+
+// Zuschauen (CSTV): Steam-Link öffnen und zusätzlich den Konsolenbefehl anzeigen (falls CS2 schon läuft oder der Link nicht greift)
+document.addEventListener("click", e => {
+  const a = e.target.closest && e.target.closest("a.tvbtn");
+  if (!a) return;
+  const m = decodeURIComponent(a.getAttribute("href") || "").match(/connect\s+([\w.\-]+:\d+)/);
+  if (!m) return;
+  const addr = m[1];
+  let box = document.getElementById("tvHelp");
+  if (!box){ box = document.createElement("div"); box.id = "tvHelp"; document.body.appendChild(box); }
+  box.innerHTML = `<div class="tvhelp"><b>👁 Zuschauen per CSTV</b><div>CS2 startet und verbindet sich. Läuft CS2 schon oder klappt es nicht:<br>Konsole öffnen (^) und eingeben:</div>
+    <div class="row" style="gap:6px;align-items:center;margin-top:6px"><code style="user-select:all">connect ${esc(addr)}</code><button class="small" id="tvHelpCopy">kopieren</button><button class="small" id="tvHelpX">✕</button></div></div>`;
+  document.getElementById("tvHelpCopy").onclick = () => copyQuiet("connect " + addr, "Befehl kopiert");
+  document.getElementById("tvHelpX").onclick = () => box.remove();
+  setTimeout(() => box.isConnected && box.remove(), 30000);
+});

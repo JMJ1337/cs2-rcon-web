@@ -741,3 +741,6 @@ main .topbar{top:34px}
 .glstreamslot{aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden;border:1px solid var(--gline);box-shadow:0 0 40px hsl(72 72% 48% / .15)}
 .glvideo{width:100%;height:100%;display:block;background:#000}
 .gltree.cup{padding-top:170px}
+
+#tvHelp{position:fixed;right:16px;bottom:16px;z-index:60;max-width:380px}
+.tvhelp{background:var(--panel);border:1px solid var(--accent);border-radius:10px;padding:12px 14px;font-size:13px;box-shadow:0 10px 30px #000a;display:flex;flex-direction:column;gap:4px}
