@@ -709,3 +709,7 @@ main .topbar{top:34px}
 .streambox{max-width:1100px;margin:0 auto 16px;padding:0 4px}
 .streambox video{width:100%;aspect-ratio:16/9;background:#000;border-radius:12px;border:1px solid var(--line);display:block}
 .streamcap{font-size:15px;margin:0 0 6px}
+
+.srvcheck{border-radius:8px;padding:8px 12px;font-size:13px;border:1px solid var(--line)}
+.srvcheck.ok{border-color:var(--ok);color:var(--ok)}
+.srvcheck.warn{border-color:var(--accent);background:rgba(240,164,58,.08)}

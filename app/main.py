@@ -3267,7 +3267,57 @@ async def tour_get(request: Request):
     return {**_tour_out(d), "settings": {k: d.get(k) for k in ("maps", "auto_servers", "invite")},
             "pool": [{"id": s["id"], "name": s["name"], "online": bool((_state.get(s["id"]) or {}).get("online"))} for s in pool],
             "needed": tour.needed_servers(d) if d["matches"] else None, "lan_players": lan,
-            "bot": steambot_ctl.settings().get("enabled")}
+            "bot": steambot_ctl.settings().get("enabled"), "servercheck": _tour_servercheck(d, pool)}
+
+
+def _cs2_creating() -> int:
+    """CS2-Server, die gerade angelegt werden (laufende Anlege-Aufträge)."""
+    n = 0
+    for j in list(_jobs.values()):
+        if j.get("done") or j.get("error") or j.get("game") != "cs2":
+            continue
+        n += max(1, len(j.get("plans") or []) - len([b for b in (j.get("batch") or []) if b.get("server_id")])) if j.get("plans") else 1
+    return n
+
+
+def _tour_servercheck(d: dict, pool: list[dict]) -> dict:
+    """Reichen die Server? Nötig = Spiele der ersten Runde gleichzeitig (ohne Spielplan: geschätzt aus den Teams)."""
+    if d["matches"]:
+        need = tour.needed_servers(d)
+    else:
+        full = sum(1 for t in d["teams"] if len(t["players"]) == 2)
+        need = full // 2 if full >= 2 else len(d["players"]) // 4
+    online = [s for s in pool if (_state.get(s["id"]) or {}).get("online")]
+    offline = [s for s in pool if s not in online]
+    creating = _cs2_creating()
+    create = max(0, need - len(pool) - creating)
+    return {"need": need, "online": len(online), "offline": [{"id": s["id"], "name": s["name"]} for s in offline],
+            "creating": creating, "create": min(10, create), "ok": len(online) >= need}
+
+
+class TourServersIn(BaseModel):
+    create: int = Field(0, ge=0, le=10)
+    start_offline: bool = False
+
+
+@app.post("/api/tournament/servers", dependencies=auth)
+async def tour_servers(data: TourServersIn, request: Request):
+    """Vorschlag umsetzen: ausgeschaltete Turnier-Server starten und/oder fehlende neu anlegen."""
+    _need_admin(request)
+    _need_docker()
+    started, errors = [], []
+    if data.start_offline:
+        for s in _tour_pool():
+            if not (_state.get(s["id"]) or {}).get("online"):
+                try:
+                    await wake_server(s)
+                    started.append(s["name"])
+                except HTTPException as e:
+                    errors.append(f"{s['name']}: {e.detail}")
+    job = None
+    if data.create:
+        job = await _tour_create_servers(data.create)
+    return {"ok": True, "started": started, "errors": errors, "job": job, "created": data.create if job else 0}
 
 
 @app.put("/api/tournament", dependencies=auth)
@@ -3365,7 +3415,7 @@ async def tour_generate(request: Request):
     d["status"] = "setup"
     tour.plan(d)
     tour.save(d)
-    return {"ok": True, "needed": tour.needed_servers(d), "have": len(d["servers"])}
+    return {"ok": True, "needed": tour.needed_servers(d), "have": len(d["servers"]), "servercheck": _tour_servercheck(d, _tour_pool())}
 
 
 async def _tour_create_servers(n: int) -> str | None:
@@ -3393,9 +3443,10 @@ async def tour_start(request: Request):
     pool = _tour_pool()
     need = tour.needed_servers(d)
     job = None
-    if d.get("auto_servers") and len(pool) < need:
+    missing = need - len(pool) - _cs2_creating()          # schon laufende Anlege-Aufträge nicht doppelt
+    if d.get("auto_servers") and missing > 0:
         try:
-            job = await _tour_create_servers(min(10, need - len(pool)))
+            job = await _tour_create_servers(min(10, missing))
         except HTTPException as e:
             raise HTTPException(e.status_code, f"Server anlegen: {e.detail}")
     d["servers"] = [s["id"] for s in pool]
@@ -3404,7 +3455,7 @@ async def tour_start(request: Request):
     d["start"] = d.get("start") or time.time()
     tour.plan(d)
     tour.save(d)
-    return {"ok": True, "creating": need - len(pool) if job else 0, "job": job}
+    return {"ok": True, "creating": min(10, missing) if job else 0, "job": job}
 
 
 @app.post("/api/tournament/stop", dependencies=auth)

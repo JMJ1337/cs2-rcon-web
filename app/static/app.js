@@ -3643,6 +3643,30 @@ function glShow(v){
       <div class="glgm">${ms.sort((a, b) => a.round - b.round || (a.no || 0) - (b.no || 0)).map(tmMini).join("")}</div></div></div>`).join("")}</div></div>`;
   return `<div class="gl">${h}</div>`;
 }
+
+function tourSrvCheckHtml(c){
+  if (!c || !c.need) return "";
+  if (c.ok) return `<div class="srvcheck ok">✓ ${c.online} von ${c.need} nötigen Servern online – genug, damit die erste Runde gleichzeitig läuft.</div>`;
+  const parts = [];
+  if (c.offline.length) parts.push(`<button class="small" data-tsrv="start">▶ ${c.offline.length} ausgeschaltete starten</button>`);
+  if (c.create) parts.push(`<button class="small primary" data-tsrv="create" data-n="${c.create}">+ ${c.create} neue${c.create === 1 ? "n" : ""} Server anlegen</button>`);
+  if (c.offline.length && c.create) parts.push(`<button class="small primary" data-tsrv="both" data-n="${c.create}">Beides</button>`);
+  return `<div class="srvcheck warn">⚠ Nur <b>${c.online}</b> von <b>${c.need}</b> nötigen Servern online${c.offline.length ? ` · ${c.offline.length} aus (${c.offline.map(x => esc(x.name)).join(", ")})` : ""}${c.creating ? ` · ${c.creating} werden gerade angelegt` : ""}.
+    Sonst laufen Spiele der ersten Runde nacheinander.
+    <div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap">${parts.join("") || `<span class="hint">warte auf die neuen Server …</span>`}</div></div>`;
+}
+function bindTourSrvCheck(){
+  $$("[data-tsrv]").forEach(b => b.onclick = async () => {
+    const a = b.dataset.tsrv, n = +b.dataset.n || 0;
+    if ((a === "create" || a === "both") && !confirm(`${n} neue CS2-Server fürs Turnier anlegen? (Spieldateien werden aus der Vorlage kopiert, Ports aus dem freigegebenen Bereich)`)) return;
+    b.disabled = true;
+    try {
+      const r = await api("/api/tournament/servers", {method: "POST", body: {create: a === "start" ? 0 : n, start_offline: a !== "create"}});
+      toast([r.started.length ? `${r.started.length} Server gestartet` : "", r.created ? `${r.created} Server werden angelegt` : "", ...r.errors].filter(Boolean).join(" · ") || "Erledigt", !!r.errors.length);
+    } catch (e) { toast(e.message, true); }
+    loadTour();
+  });
+}
 let tourData = null, tourLoaded = false;
 const toLocalInput = t => { if (!t) return ""; const d = new Date(t * 1000); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 async function loadTour(){
@@ -3657,6 +3681,8 @@ async function loadTour(){
   }
   $("#tourStatus").textContent = "· " + (tStatus[d.status] || d.status) + (d.active ? " · auf der Übersicht sichtbar" : "") + (d.test ? ` · TEST (${d.test === "sim" ? "simuliert" : "Bots"})` : "");
   $("#ttStart").disabled = !!d.test; $("#ttEnd").disabled = !d.test;
+  $("#tourSrvCheck").innerHTML = tourSrvCheckHtml(d.servercheck);
+  bindTourSrvCheck();
   $("#tourServers").innerHTML = `Server fürs Turnier: ${d.pool.length ? d.pool.map(s => `${s.online ? "🟢" : "⚪"} ${esc(s.name)}`).join(", ") : "keine (außer CS #1)"}${d.needed ? ` · für die erste Runde gleichzeitig nötig: ${d.needed}` : ""}${d.needed && d.pool.length < d.needed ? (d.settings.auto_servers !== false ? ` – ${d.needed - d.pool.length} werden beim Start angelegt` : ` – zu wenige, Matches laufen nacheinander`) : ""}${d.bot ? "" : " · Steam-Bot ist aus (keine Einladungen)"}`;
   const reg = new Set(d.players.map(p => p.steamid));
   $("#tourAddSel").innerHTML = `<option value="">– LAN-Spieler hinzufügen –</option>` + d.lan_players.filter(p => !reg.has(p.steamid)).map(p => `<option value="${esc(p.steamid)}">${esc(p.name)}</option>`).join("");
@@ -3692,7 +3718,12 @@ $("#tourSave").onclick = async () => {
 };
 $("#tourAdd").onclick = () => $("#tourAddSel").value && tourCall("/api/tournament/players", {body: {steamid: $("#tourAddSel").value}});
 $("#tourAddTeam").onclick = () => $("#tourNewTeam").value.trim() && tourCall("/api/tournament/teams", {body: {name: $("#tourNewTeam").value.trim(), players: []}}).then(() => { $("#tourNewTeam").value = ""; });
-$("#tourGen").onclick = async () => { if (tourData && tourData.matches.length && !confirm("Spielplan neu erstellen? Bisherige Ergebnisse gehen verloren.")) return; const r = await tourCall("/api/tournament/generate", {method: "POST"}); if (r) toast(`Spielplan erstellt – ${r.needed} Server gleichzeitig nötig, ${r.have} vorhanden`); };
+$("#tourGen").onclick = async () => { if (tourData && tourData.matches.length && !confirm("Spielplan neu erstellen? Bisherige Ergebnisse gehen verloren.")) return; const r = await tourCall("/api/tournament/generate", {method: "POST"}); if (!r) return; toast(`Spielplan erstellt – ${r.needed} Server gleichzeitig nötig, ${r.have} vorhanden`);
+  const c = r.servercheck;
+  if (c && !c.ok && (c.create || c.offline.length) && confirm(`Für die erste Runde sind ${c.need} Server nötig, online sind ${c.online}.\n\n${[c.offline.length ? `${c.offline.length} ausgeschaltete starten` : "", c.create ? `${c.create} neue anlegen` : ""].filter(Boolean).join(" und ")}?`)){
+    try { const x = await api("/api/tournament/servers", {method: "POST", body: {create: c.create, start_offline: true}}); toast([x.started.length ? `${x.started.length} gestartet` : "", x.created ? `${x.created} werden angelegt` : ""].filter(Boolean).join(" · ") || "Erledigt"); } catch (e) { toast(e.message, true); }
+    loadTour();
+  } };
 $("#tourStart").onclick = async () => { if (!confirm("Turnier starten? Die Anmeldung schließt, Matches werden zur geplanten Zeit automatisch auf den Servern geladen.")) return; const r = await tourCall("/api/tournament/start", {method: "POST"}); if (r) toast(r.creating ? `Turnier läuft – ${r.creating} Server werden angelegt` : "Turnier läuft"); };
 $("#ttKind").onchange = () => $("#ttSecL").classList.toggle("hidden", $("#ttKind").value !== "sim");
 $("#ttStart").onclick = async () => {
