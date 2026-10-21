@@ -1513,6 +1513,32 @@ async def _auto_bots(s: dict, c, st: dict, cv: dict, mode: dict | None, slots: i
     return f"Bots aktiv ({quota})" if s["id"] in _bots_set and quota else None
 
 
+_tv_miss: dict[str, float] = {}
+
+
+async def _tv_watchdog(s: dict, c, st: dict) -> None:
+    """CSTV ist an, der Zuschauer-Bot aber weg (z. B. durch bot_kick): neu starten; ohne Spieler notfalls Map neu laden."""
+    try:
+        out = await c.execute("tv_status")
+    except RconError:
+        return
+    if not re.search(r"not active|nicht aktiv", out, re.I):
+        _tv_miss.pop(s["id"], None)
+        return
+    first = _tv_miss.setdefault(s["id"], time.time())
+    try:
+        if time.time() - first < 20:
+            await c.execute("tv_enable 0; tv_enable 1")
+            log.info("%s: CSTV war weg – neu gestartet", s["name"])
+        elif not (st.get("humans") or 0) and time.time() - first < 600:
+            mp = re.sub(r"[^\w\-/]", "", st["map"])
+            await c.execute(f"tv_enable 1; changelevel {mp}")
+            _tv_miss[s["id"]] = time.time() + 600       # nicht ständig wiederholen
+            log.info("%s: CSTV per Map-Neuladen zurückgeholt (%s)", s["name"], mp)
+    except RconError:
+        pass
+
+
 async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = False) -> dict:
     """Status + wichtige Cvars lesen, optional Spieleranzahl automatisch setzen."""
     if game_of(s) != "cs2":
@@ -1524,6 +1550,10 @@ async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = 
     settings = automation.get_settings()
     mode = automation.mode_for(cv["game_type"], cv["game_mode"], settings)
     target, reason = automation.target_players(st["map"], cv["game_type"], cv["game_mode"], settings)
+    tv_on = str(cv.get("tv_enable") or "").strip() in ("1", "1.000000", "true")
+    game_slots = target
+    if target and tv_on:                       # CSTV belegt einen Platz – immer einen mehr als das Spiel braucht
+        target, reason = target + 1, f"{reason} + 1 CSTV"
     capped = False
     if target and st["max_players"] and target > st["max_players"]:
         target, capped = st["max_players"], True
@@ -1545,7 +1575,7 @@ async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = 
         except RconError:
             pass
     if apply_auto and s.get("auto_bots", True) and settings.get("auto_bots", True):
-        bots_auto = await _auto_bots(s, c, st, cv, mode, target or visible)
+        bots_auto = await _auto_bots(s, c, st, cv, mode, game_slots or visible)
     mzc = (_state.get(s["id"], {}).get("_matchzy") or {})
     if apply_auto and mzc.get("installed") and not mzc.get("unloaded") and time.time() - _mzlog_set.get(s["id"], 0) > 1800:
         try:   # MatchZy meldet Matches (Teams, Spielstand, Spielerwerte) an das Tool
@@ -1582,6 +1612,8 @@ async def collect_state(s: dict, apply_auto: bool = False, with_matchzy: bool = 
             _tvpw_map[s["id"]] = tvkey
         except RconError:
             pass
+    if apply_auto and tv_on and st.get("map"):
+        await _tv_watchdog(s, c, st)
     ws = _last_workshop.get(s["id"])
     base = automation.map_basename(st["map"])
     if ws:

@@ -9,7 +9,7 @@ SETTINGS_FILE = "settings.json"
 # (game_type, game_mode) -> Modus
 DEFAULT_MODES = [
     {"key": "competitive", "label": "Competitive (5v5)", "game_type": 0, "game_mode": 1, "players": 10},
-    {"key": "wingman", "label": "Wingman (2v2)", "game_type": 0, "game_mode": 2, "players": 5},   # 4 Spieler + CSTV
+    {"key": "wingman", "label": "Wingman (2v2)", "game_type": 0, "game_mode": 2, "players": 4},   # +1 CSTV automatisch
     {"key": "casual", "label": "Casual", "game_type": 0, "game_mode": 0, "players": 20},
     {"key": "deathmatch", "label": "Deathmatch", "game_type": 1, "game_mode": 2, "players": 16},
     {"key": "armsrace", "label": "Arms Race", "game_type": 1, "game_mode": 0, "players": 10},
@@ -60,6 +60,11 @@ def get_settings() -> dict:
             if m.get("key") == "wingman" and int(m.get("players") or 0) == 4:
                 m["players"] = 5
         s["modes"], s["_wingman5"] = out["modes"], True
+    if not s.get("_tvslot"):                   # einmalig: CSTV-Platz wird jetzt automatisch addiert -> Wingman wieder 4
+        for m in out["modes"]:
+            if m.get("key") == "wingman" and int(m.get("players") or 0) == 5:
+                m["players"] = 4
+        s["modes"], s["_tvslot"] = out["modes"], True
         store.save(SETTINGS_FILE, s)
     return out
 
