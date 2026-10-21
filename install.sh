@@ -494,6 +494,17 @@ if [ "$GSM_USER" != "admin" ] && [ "${GSM_SKIP_SETUP:-0}" != 1 ]; then
   rm -f "$JAR2"
 fi
 
+# Hinweis am Anmeldebildschirm der Konsole (agetty: \4 = aktuelle IPv4-Adresse)
+if [ -d /etc/issue.d ] || mkdir -p /etc/issue.d 2>/dev/null; then
+  cat > /etc/issue.d/gsm.issue <<ISSUE || true
+
+  GrohLAN Spielservermanager:  http://\\4:$GSM_PORT   (Bedienung im Browser)
+  Portainer:                   https://\\4:9443
+  Diese Konsolen-Anmeldung ist nur für Linux-Wartung (Benutzer mit sudo, z. B. gsm).
+
+ISSUE
+fi
+
 echo
 printf '%s\n' "${c_ok}${c_b}Fertig!${c_0}"
 echo

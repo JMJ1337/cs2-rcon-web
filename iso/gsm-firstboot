@@ -17,7 +17,11 @@ while true; do
   fi
   if bash "$S"; then
     touch /var/lib/gsm-installed
-    echo; read -r -p "  Fertig. Enter für die Anmeldung … " _
+    echo
+    echo "  Fertig! Die Bedienung läuft ab jetzt im Browser (Adresse siehe oben)."
+    echo "  Die folgende Anmeldung an der Konsole brauchst du nur für Linux-Wartung:"
+    echo "  Benutzer gsm + das Passwort aus der Debian-Installation (Tastatur: deutsch)."
+    echo; read -r -p "  Enter … " _
     exit 0
   fi
   echo
