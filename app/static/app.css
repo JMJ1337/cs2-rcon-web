@@ -859,3 +859,6 @@ dialog.dlgwide{width:min(860px,calc(100vw - 32px));max-height:calc(100vh - 40px)
 .act .actx{position:absolute;top:4px;right:4px;padding:0 6px;font-size:12px;line-height:18px;background:transparent;border:1px solid var(--line);color:var(--muted)}
 .act .actx:hover{color:var(--bad,#e5534b);border-color:var(--bad,#e5534b)}
 .act.err .t{padding-right:24px}
+
+.wflive{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr));gap:10px}
+.wflive>div{display:grid;gap:4px}.wflive label{font-size:12px;color:var(--muted)}

@@ -6,7 +6,7 @@
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap">
-<link rel="stylesheet" href="/static/app.css?v=124">
+<link rel="stylesheet" href="/static/app.css?v=125">
 </head>
 <body>
 
@@ -632,6 +632,19 @@
             <div class="hint" id="gActHint" style="margin-top:10px"></div>
           </div>
         </div>
+        <div class="panel hidden" id="wfLivePanel" style="margin-top:16px">
+          <h2>Live-Steuerung <span class="hint">über das Serverfenster – kein Neustart, Spieler bleiben drin</span></h2>
+          <div class="wflive">
+            <div><label>Bots</label><div class="row" style="gap:6px"><input id="wfLBots" type="number" min="0" max="24" value="8" style="width:80px"><button class="primary" id="btnWfLBots">Setzen</button><button class="small" data-wfl="bots 0" title="alle Bots raus">0</button><button class="small" data-wfl="bots 24" title="volles Feld">24</button></div></div>
+            <div><label>Strecke (nächstes Event)</label><div class="row" style="gap:6px"><select id="wfLTrack" style="flex:1"></select><button id="btnWfLTrack">Wechseln</button></div></div>
+            <div><label>Spielmodus</label><div class="row" style="gap:6px"><select id="wfLMode" style="flex:1"></select><button id="btnWfLMode">Setzen</button></div></div>
+            <div><label>Runden</label><div class="row" style="gap:6px"><input id="wfLLaps" type="number" min="1" max="99" value="3" style="width:80px"><button id="btnWfLLaps">Setzen</button></div></div>
+          </div>
+          <div class="btns" style="margin-top:10px"><button class="small" data-wfl="/eventloop" title="Rotation an/aus">Rotation an/aus</button><button class="small" data-wfl="list">Spieler anzeigen</button><button class="small" data-wfl="?">Aktuelle Einstellungen</button><button class="small" data-wfl="/balanceteams">Teams ausgleichen</button></div>
+          <div class="row" style="margin-top:8px;gap:6px"><input id="wfLCmd" placeholder="eigener Befehl fürs Serverfenster, z. B. car_class_restriction b"><button id="btnWfLCmd">Senden</button></div>
+          <pre class="out hidden" id="wfLOut" style="max-height:220px;margin-top:8px"></pre>
+          <div class="hint" style="margin-top:6px">Änderungen gelten sofort bzw. ab dem nächsten Event und werden nicht in server_config.cfg gespeichert – dauerhaft unten bei den Einstellungen bzw. der Rotation.</div>
+        </div>
         <div class="panel hidden mgronly" id="wfPanel" style="margin-top:16px">
           <h2>Wreckfest-Einstellungen <span class="hint">server_config.cfg</span></h2>
           <div id="wfLan" style="margin-bottom:12px"></div>
@@ -1102,6 +1115,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=174"></script>
+<script src="/static/app.js?v=175"></script>
 </body>
 </html>

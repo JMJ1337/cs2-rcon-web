@@ -2094,13 +2094,43 @@ function renderGeneric(st){
   $("#gActHint").textContent = g === "valheim" ? "Valheim hat keine Remote-Konsole – Neustart und Logs über den Container-Tab." :
     g === "wreckfest" ? "Wreckfest hat keine Remote-Konsole. Die Server-Konsole erreichst du über „Webkonsole ↗“ oben rechts (beim ich777-Image), Neustart und Logs über den Container-Tab." :
     g === "satisfactory" && st.privilege === "Client" ? "Ohne Admin-Passwort nur Lesezugriff – Passwort unter „Bearbeiten“ eintragen." : "";
-  if (g === "wreckfest"){ loadWfConfig(); loadWfRotation(); } else { $("#wfPanel").classList.add("hidden"); $("#wfRotPanel").classList.add("hidden"); }
+  if (g === "wreckfest"){ loadWfConfig(); loadWfRotation(); wfLiveInit(); } else { $("#wfPanel").classList.add("hidden"); $("#wfRotPanel").classList.add("hidden"); $("#wfLivePanel").classList.add("hidden"); }
   const list = st.players || [];
   $("#playerRows").innerHTML = list.length ? list.map(p => `<tr><td></td><td class="name">${esc(p.name)}</td><td colspan="2"></td><td class="mono">${esc(p.time || "")}</td><td colspan="3"></td></tr>`).join("")
     : `<tr><td colspan="8" class="muted">${st.humans ? `${st.humans} Spieler online (Namen liefert dieses Spiel nicht)` : "Keine Spieler verbunden."}</td></tr>`;
   $("#stUpdated").textContent = "aktualisiert " + new Date().toLocaleTimeString("de-DE");
   renderHistory();
 }
+/* Wreckfest: Live-Steuerung über das Serverfenster (screen) – ohne Neustart */
+let wfLiveFor = null;
+async function wfCmd(cmd, msg){
+  try {
+    const r = await api(`/api/servers/${current.id}/wreckfest/console`, {body: {cmd}});
+    $("#wfLOut").classList.remove("hidden"); $("#wfLOut").textContent = r.output || "(keine Ausgabe)";
+    toast(msg || `Gesendet: ${cmd}`); setTimeout(refreshStatus, 2000);
+  } catch (e) { toast(e.message, true); }
+}
+async function wfLiveInit(){
+  if (permOf(current) < 2) return;
+  $("#wfLivePanel").classList.remove("hidden");
+  if (wfLiveFor === current.id) return;
+  wfLiveFor = current.id; $("#wfLOut").classList.add("hidden");
+  try {
+    const r = await api(`/api/servers/${current.id}/wreckfest/rotation`);
+    if (!r.exists) return;
+    $("#wfLTrack").innerHTML = ["race", "derby"].map(t => `<optgroup label="${t === "race" ? "Rennstrecken" : "Derby-Arenen"}">${r.tracks.filter(x => x.type === t).map(x => `<option value="${esc(x.id)}" ${x.id === r.current.track ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</optgroup>`).join("");
+    $("#wfLMode").innerHTML = r.gamemodes.map(([k, l]) => `<option value="${esc(k)}" ${k === r.current.gamemode ? "selected" : ""}>${esc(l)}</option>`).join("");
+    if (r.current.bots !== "") $("#wfLBots").value = r.current.bots;
+    if (r.current.laps) $("#wfLLaps").value = r.current.laps;
+  } catch {}
+}
+$("#btnWfLBots").onclick = () => { const n = Math.max(0, Math.min(24, parseInt($("#wfLBots").value) || 0)); wfCmd(`bots ${n}`, `Bots: ${n}`); };
+$("#btnWfLTrack").onclick = () => wfCmd(`track ${$("#wfLTrack").value}`, `Strecke: ${$("#wfLTrack").selectedOptions[0]?.textContent || ""}`);
+$("#btnWfLMode").onclick = () => wfCmd(`gamemode ${$("#wfLMode").value}`, `Modus: ${$("#wfLMode").selectedOptions[0]?.textContent || ""}`);
+$("#btnWfLLaps").onclick = () => { const n = Math.max(1, Math.min(99, parseInt($("#wfLLaps").value) || 3)); wfCmd(`laps ${n}`, `Runden: ${n}`); };
+$$("[data-wfl]").forEach(b => b.onclick = () => wfCmd(b.dataset.wfl));
+$("#btnWfLCmd").onclick = () => { const c = $("#wfLCmd").value.trim(); if (c) { wfCmd(c); $("#wfLCmd").value = ""; } };
+$("#wfLCmd").addEventListener("keydown", e => { if (e.key === "Enter") $("#btnWfLCmd").click(); });
 /* Wreckfest: server_config.cfg bearbeiten + LAN-Sichtbarkeit */
 let wfLoadedFor = null;
 const WF_FIELDS = [["server_name","Servername"],["password","Passwort (leer = keins)"],["max_players","Max. Spieler"],["welcome_message","Begrüßung"],
