@@ -1765,6 +1765,8 @@ async def collect_generic(s: dict) -> dict:
         if q:
             st["hostname"] = q["name"]
     pw = st.pop("password", None) if g == "wreckfest" else None
+    if (catmod.CATALOG.get(g) or {}).get("rcon") and s.get("container") and (_lib().get(g)):
+        asyncio.create_task(_lib_restore(s))      # Maps (+ gewählte Mods) aus der Bibliothek, auch nach Neuanlegen
     if (catmod.CATALOG.get(g) or {}).get("rcon"):
         pw = s["join_pw"] if "join_pw" in s else templates.DEFAULT_JOIN_PW
         if _jpw_applied.get(s["id"]) != pw and time.time() - _jpw_try.get(s["id"], 0) > 60:
@@ -7893,6 +7895,7 @@ async def _install_maps(s: dict, filename: str, data: bytes) -> dict:
     except (filebrowser.FileError, docker_api.DockerError) as e:
         raise _fb_err(e)
     maps = [posixpath_basename(f)[:-4] for f in written if f.lower().endswith(".bsp")]
+    asyncio.create_task(_lib_save(s, "maps", "", written))      # auch für spätere/neue Server merken
     # FastDL: Spieler laden fehlende Maps/Inhalte schnell per HTTP vom Tool statt langsam vom Spielserver
     url = f"{_tool_url(s)}/fastdl/{s['id']}/"
     note = ""
@@ -7979,8 +7982,9 @@ async def _ws_import(s: dict, ids: list[str]) -> None:
                     if not any(f.lower().endswith(".bsp") for f in files):
                         job["errors"].append(f"{title}: keine Map gefunden" if lst.strip() else f"{title}: nicht geladen")
                     else:
-                        await filebrowser.upload_tree(c, base, files)
+                        written = await filebrowser.upload_tree(c, base, files)
                         job["maps"] += [posixpath_basename(f)[:-4] for f in files if f.lower().endswith(".bsp")]
+                        job.setdefault("_written", []).extend(written)
                 except (gma.GmaError, filebrowser.FileError, docker_api.DockerError, HTTPException) as e:
                     job["errors"].append(f"{title}: {getattr(e, 'detail', e)}")
                 job["done"] += 1
@@ -7996,6 +8000,9 @@ async def _ws_import(s: dict, ids: list[str]) -> None:
                     await docker_api.exec_cmd(c, ["sh", "-c", CVARCFG_SH, "sh", kk, v], timeout=15)
             except (HTTPException, docker_api.DockerError):
                 pass
+        if job.get("_written"):
+            job["step"] = "Maps in die Bibliothek übernehmen …"
+            await _lib_save(s, "maps", "", job.pop("_written"))
         job["step"] = f"Fertig: {len(job['maps'])} Map(s)"
     except Exception as e:  # noqa: BLE001
         log.exception("Workshop-Import")
@@ -8032,6 +8039,193 @@ async def maps_workshop(sid: str, data: WsImportIn):
 @app.get("/api/servers/{sid}/maps/workshop", dependencies=auth)
 async def maps_workshop_state(sid: str):
     return _ws_imports.get(sid) or {"running": False}
+
+
+# ---------------------------------------------------------------- Inhalts-Bibliothek (Maps, Mods) – übersteht Löschen/Neuanlegen
+# Alles, was über die Oberfläche auf einen Server kam, liegt zusätzlich unter <games_base>/_bibliothek/<spiel>/:
+#   maps/<pfad im Spielordner>          -> kommt automatisch auf jeden Server dieses Spiels
+#   mods/<name>/<pfad im Spielordner>   -> pro Server auswählbar
+LIB_FILE = "library.json"
+
+
+def _lib() -> dict:
+    return store.load(LIB_FILE, {})
+
+
+def _lib_root(game: str) -> str:
+    base = os.path.normpath(automation.get_settings().get("games_base") or "/mnt/grohlan")
+    return f"{base}/_bibliothek/{game}"
+
+
+async def _serverfiles_host(container: str) -> str | None:
+    info = await docker_api.inspect(container)
+    return next((m.get("Source") for m in info.get("Mounts") or [] if (m.get("Destination") or "").rstrip("/") == "/serverdata/serverfiles"), None)
+
+
+async def _lib_save(s: dict, kind: str, name: str, rel_files: list[str]) -> None:
+    """Gerade auf den Server gelegte Dateien zusätzlich in die Bibliothek kopieren."""
+    g, c = game_of(s), s["container"]
+    rel_files = [f for f in rel_files if f and ".." not in f]
+    if not rel_files:
+        return
+    try:
+        src = await _serverfiles_host(c)
+        gd = (await _game_dir(s)).rsplit("/", 1)[-1]
+        if not src:
+            return
+        await filebrowser.upload(c, "/serverdata/serverfiles", "_gsm_lib.txt", ("\n".join(f"{gd}/{f}" for f in rel_files) + "\n").encode())
+        dest = "/lib/maps" if kind == "maps" else f"/lib/mods/{name}"
+        sh = (f'mkdir -p "{dest}"; cd /src; while IFS= read -r f; do [ -f "$f" ] || continue; r="${{f#*/}}"; '
+              f'mkdir -p "{dest}/$(dirname "$r")"; cp -p "$f" "{dest}/$r"; done < /src/_gsm_lib.txt; echo ok')
+        await docker_api.run_helper([f"{src}:/src:ro", f"{_lib_root(g)}:/lib"], ["sh", "-c", sh], timeout=1800)
+        await docker_api.exec_cmd(c, ["rm", "-f", "/serverdata/serverfiles/_gsm_lib.txt"], timeout=15)
+    except (docker_api.DockerError, filebrowser.FileError) as e:
+        log.warning("Bibliothek (%s): %s", g, e)
+        return
+    lib = _lib()
+    gl = lib.setdefault(g, {"maps": {}, "mods": {}, "v": 0})
+    if kind == "maps":
+        for f in rel_files:
+            if f.lower().endswith(".bsp"):
+                gl["maps"][posixpath_basename(f)[:-4]] = {"added": int(time.time()), "from": s.get("name")}
+        gl.setdefault("map_files", [])
+        gl["map_files"] = sorted(set(gl["map_files"]) | set(rel_files))
+    else:
+        gl["mods"][name] = {"files": sorted(set((gl["mods"].get(name) or {}).get("files", [])) | set(rel_files)),
+                            "added": int(time.time()), "from": s.get("name")}
+    gl["v"] = int(gl.get("v") or 0) + 1
+    store.save(LIB_FILE, lib)
+
+
+_lib_check: dict[str, float] = {}
+
+
+async def _lib_restore(s: dict, force: bool = False) -> None:
+    """Maps der Bibliothek (und ausgewählte Mods) auf den Server kopieren, wenn sich die Bibliothek seitdem geändert hat."""
+    g, c = game_of(s), s.get("container")
+    gl = _lib().get(g)
+    if not gl or not c:
+        return
+    want_v = f'{gl.get("v")}:{",".join(sorted(s.get("lib_mods") or []))}'
+    if not force and (s.get("lib_v") == want_v or time.time() - _lib_check.get(s["id"], 0) < 300):
+        return
+    _lib_check[s["id"]] = time.time()
+    try:
+        dst = await _serverfiles_host(c)
+        gd = (await _game_dir(s)).rsplit("/", 1)[-1]
+        if not dst:
+            return
+        parts = ["[ -d /lib/maps ] && cp -rnp /lib/maps/. \"/dst/" + gd + "/\""]
+        for m in s.get("lib_mods") or []:
+            if m in (gl.get("mods") or {}):
+                parts.append(f'[ -d "/lib/mods/{m}" ] && cp -rnp "/lib/mods/{m}/." "/dst/{gd}/"')
+        sh = f'if [ ! -d "/dst/{gd}" ]; then echo skip; exit 0; fi; ' + "; ".join(parts) + "; echo ok"
+        out = await docker_api.run_helper([f"{_lib_root(g)}:/lib:ro", f"{dst}:/dst"], ["sh", "-c", sh], timeout=1800)
+        if "ok" not in out:
+            return                                  # Spiel noch nicht installiert – beim nächsten Mal
+        await _set_server_fields(s["id"], lib_v=want_v)
+        log.info("%s: Bibliothek übertragen (Maps%s)", s.get("name"), f" + Mods {s.get('lib_mods')}" if s.get("lib_mods") else "")
+    except docker_api.DockerError as e:
+        log.warning("Bibliothek -> %s: %s", s.get("name"), e)
+
+
+@app.get("/api/library/{game}", dependencies=auth)
+async def library_get(game: str):
+    gl = _lib().get(game) or {}
+    return {"maps": sorted((gl.get("maps") or {}).keys()),
+            "mods": [{"name": k, "files": len(v.get("files", [])), "added": v.get("added"), "from": v.get("from")}
+                     for k, v in sorted((gl.get("mods") or {}).items())]}
+
+
+@app.delete("/api/library/{game}/{kind}/{name}", dependencies=auth)
+async def library_delete(game: str, kind: str, name: str):
+    """Aus der Bibliothek entfernen (auf bestehenden Servern bleibt die Datei, kommt aber nicht mehr auf neue)."""
+    lib = _lib()
+    gl = lib.get(game) or {}
+    if kind == "maps" and name in (gl.get("maps") or {}):
+        gl["maps"].pop(name)
+        files = [f for f in gl.get("map_files", []) if posixpath_basename(f).lower().startswith(name.lower() + ".")]
+        gl["map_files"] = [f for f in gl.get("map_files", []) if f not in files]
+        rm = " ".join(shlex_quote(f"/lib/maps/{f}") for f in files)
+    elif kind == "mods" and name in (gl.get("mods") or {}):
+        gl["mods"].pop(name)
+        rm = shlex_quote(f"/lib/mods/{name}")
+    else:
+        raise HTTPException(404, "Nicht in der Bibliothek")
+    if rm:
+        try:
+            await docker_api.run_helper([f"{_lib_root(game)}:/lib"], ["sh", "-c", f"rm -rf {rm}"], timeout=300)
+        except docker_api.DockerError as e:
+            raise HTTPException(502, str(e))
+    gl["v"] = int(gl.get("v") or 0) + 1
+    store.save(LIB_FILE, lib)
+    return {"ok": True}
+
+
+def shlex_quote(x: str) -> str:
+    import shlex
+    return shlex.quote(x)
+
+
+class ModSelIn(BaseModel):
+    mods: list[str] = []
+
+
+@app.post("/api/servers/{sid}/mods", dependencies=auth)
+async def server_mods(sid: str, data: ModSelIn):
+    """Mods aus der Bibliothek für diesen Server an-/abwählen: neue werden kopiert, abgewählte entfernt."""
+    s = get_server(sid)
+    gl = _lib().get(game_of(s)) or {}
+    want = [m for m in data.mods if m in (gl.get("mods") or {})]
+    removed = [m for m in (s.get("lib_mods") or []) if m not in want]
+    if removed and s.get("container"):
+        base = await _game_dir(s)
+        files = [f"{base}/{f}" for m in removed for f in (gl["mods"].get(m) or {}).get("files", [])]
+        for k in range(0, len(files), 200):
+            try:
+                await docker_api.exec_cmd(s["container"], ["rm", "-f", *files[k:k + 200]], timeout=60)
+            except docker_api.DockerError:
+                pass
+    await _set_server_fields(sid, lib_mods=want)
+    await _lib_restore(get_server(sid), force=True)
+    return {"ok": True, "mods": want}
+
+
+@app.post("/api/servers/{sid}/mods/upload", dependencies=auth)
+async def mods_upload(sid: str, request: Request, name: str, mod: str = ""):
+    """Mod als ZIP hochladen: Inhalt wird in den Spielordner gelegt (Ordnerstruktur wie im Spiel, z. B. addons/, cfg/,
+    materials/) und in die Bibliothek übernommen – auf neuen Servern per Auswahl."""
+    import io
+    import zipfile
+    s = get_server(sid)
+    if not (catmod.CATALOG.get(game_of(s)) or {}).get("rcon") or not s.get("container"):
+        raise HTTPException(400, "Nur für Source-/GoldSrc-Server mit Container")
+    body = await request.body()
+    if len(body) > MAX_MAP_DL:
+        raise HTTPException(413, "Datei zu groß (max. 600 MB)")
+    modname = re.sub(r"[^\w\-. ]", "", mod or name.rsplit(".", 1)[0]).strip()[:48] or "mod"
+    try:
+        z = zipfile.ZipFile(io.BytesIO(body))
+    except zipfile.BadZipFile:
+        raise HTTPException(400, "Bitte als .zip hochladen")
+    gd = (await _game_dir(s)).rsplit("/", 1)[-1].lower()
+    names = [m for m in z.infolist() if not m.is_dir()]
+    top = {m.filename.replace("\\", "/").split("/")[0].lower() for m in names}
+    strip = 1 if len(top) == 1 and (top == {gd} or top == {modname.lower()}) and all("/" in m.filename for m in names) else 0
+    files = {}
+    for m in names:
+        parts = [x for x in m.filename.replace("\\", "/").split("/") if x and x != ".."][strip:]
+        if parts:
+            files["/".join(parts)] = z.read(m)
+    if not files:
+        raise HTTPException(400, "ZIP ist leer")
+    try:
+        written = await filebrowser.upload_tree(s["container"], await _game_dir(s), files)
+    except (filebrowser.FileError, docker_api.DockerError) as e:
+        raise _fb_err(e)
+    await _lib_save(s, "mods", modname, written)
+    await _set_server_fields(sid, lib_mods=sorted(set(s.get("lib_mods") or []) | {modname}))
+    return {"ok": True, "mod": modname, "files": len(written), "note": "Mods mit Plugins/Server-Code brauchen meist einen Mapwechsel oder Neustart"}
 
 
 class MapUrlIn(BaseModel):

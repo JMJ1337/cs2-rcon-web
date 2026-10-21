@@ -367,6 +367,7 @@ def build(game: str, v: dict, data_dir: str) -> dict:
         srv = {"port": sp, "password": rcon_pw, "game_port": jp}
         if c.get("rcon"):
             srv["join_pw"] = re.sub(r'["\s;]', "", v.get("server_pw") or "")[:64]
+            srv["lib_mods"] = [x.strip() for x in str(v.get("lib_mods") or "").split(",") if x.strip()]
         if c.get("web"):
             srv["web_url"] = f"http://{{host}}:{wport}"
     elif game == "wreckfest":

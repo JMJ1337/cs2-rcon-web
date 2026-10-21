@@ -1542,6 +1542,7 @@ function renderGq(){
   $("#gqJoinPw").value = current.join_pw ?? (lastStatus && lastStatus.join_password) ?? "";
   $("#gqMapPanel").classList.toggle("hidden", !!d.noMaps);
   $("#gqMapAdd").classList.toggle("hidden", !GAMES[g]?.rcon || !current.container);
+  if (GAMES[g]?.rcon && current.container) gqLibRender();
   if (GAMES[g]?.rcon && current.container && window.gqWsPoll) window.gqWsPoll();
   $("#gqMapHint").textContent = d.hint || "";
   if (gqMapsFor !== current.id){
@@ -1549,6 +1550,36 @@ function renderGq(){
     if (WS_GAMES.has(g) && wsFavGame !== g) api(`/api/workshop/favorites?game=${g}`).then(f => { favs = f; wsFavGame = g; gqFillMaps(); }).catch(() => {});
   }
   gqFillMaps();
+}
+async function gqLibRender(){
+  const g = gameOf(current), sid = current.id;
+  let lib; try { lib = await api(`/api/library/${g}`); } catch { return; }
+  if (!current || current.id !== sid) return;
+  const sel = new Set(current.lib_mods || []);
+  $("#gqLib").innerHTML = `<div class="hint">📦 Bibliothek ${esc(GAMES[g].label)}: ${lib.maps.length} Map(s) – kommen automatisch auf jeden ${esc(GAMES[g].short)}-Server, auch nach Löschen und Neuanlegen.</div>
+    ${lib.mods.length ? `<div class="row" style="flex-wrap:wrap;gap:10px;margin-top:6px">${lib.mods.map(m => `<label class="hint"><input type="checkbox" data-gqmod="${esc(m.name)}" ${sel.has(m.name) ? "checked" : ""} style="width:auto"> ${esc(m.name)} <a href="#" data-gqmoddel="${esc(m.name)}" title="aus der Bibliothek löschen">✕</a></label>`).join("")}</div>` : ""}
+    <div class="row" style="gap:6px;margin-top:6px"><label class="btn small" style="cursor:pointer">＋ Mod (.zip) hochladen<input type="file" id="gqModFile" accept=".zip" style="display:none"></label>
+    ${lib.maps.length ? `<details style="flex:1"><summary class="hint" style="cursor:pointer">Maps in der Bibliothek</summary><div class="hint" style="max-height:140px;overflow:auto">${lib.maps.map(m => `${esc(m)} <a href="#" data-gqmapdel="${esc(m)}" title="aus der Bibliothek löschen">✕</a>`).join(" · ")}</div></details>` : ""}</div>`;
+  $$("[data-gqmod]").forEach(c => c.onchange = async () => {
+    const mods = $$("[data-gqmod]").filter(x => x.checked).map(x => x.dataset.gqmod);
+    try { const r = await api(`/api/servers/${current.id}/mods`, {body: {mods}}); current.lib_mods = r.mods; toast("Mods aktualisiert – Plugins wirken meist erst nach Mapwechsel"); }
+    catch (e) { toast(e.message, true); }
+  });
+  $$("[data-gqmoddel]").forEach(a => a.onclick = async e => { e.preventDefault(); if (!confirm(`Mod „${a.dataset.gqmoddel}“ aus der Bibliothek löschen? (auf Servern bleibt er, bis du ihn dort abwählst)`)) return;
+    try { await api(`/api/library/${g}/mods/${encodeURIComponent(a.dataset.gqmoddel)}`, {method: "DELETE"}); gqLibRender(); } catch (er) { toast(er.message, true); } });
+  $$("[data-gqmapdel]").forEach(a => a.onclick = async e => { e.preventDefault(); if (!confirm(`Map „${a.dataset.gqmapdel}“ aus der Bibliothek löschen? (kommt dann nicht mehr auf neue Server)`)) return;
+    try { await api(`/api/library/${g}/maps/${encodeURIComponent(a.dataset.gqmapdel)}`, {method: "DELETE"}); gqLibRender(); } catch (er) { toast(er.message, true); } });
+  const mf = $("#gqModFile");
+  if (mf) mf.onchange = async () => {
+    const f = mf.files[0]; if (!f) return;
+    const mod = prompt("Name des Mods:", f.name.replace(/\.zip$/i, "")); if (!mod) return;
+    toast(`${f.name} wird hochgeladen …`);
+    try {
+      const r = await fetch(`/api/servers/${current.id}/mods/upload?name=${encodeURIComponent(f.name)}&mod=${encodeURIComponent(mod)}`, {method: "POST", body: f});
+      const j = await r.json(); if (!r.ok) throw new Error(j.detail || r.statusText);
+      current.lib_mods = [...new Set([...(current.lib_mods || []), j.mod])]; toast(`Mod ${j.mod}: ${j.files} Datei(en) – ${j.note}`); gqLibRender();
+    } catch (e) { toast(e.message, true); }
+  };
 }
 (function initGq(){
   if (!$("#gqActions")) return;
@@ -1560,7 +1591,7 @@ function renderGq(){
   $("#btnGqReload").onclick = () => { const m = gqMapNow(); m ? go(m) : toast("Aktuelle Map unbekannt", true); };
   $("#btnGqMapsLoad").onclick = () => gqLoadMaps(false);
   const mapDone = r => { toast(`${r.maps.length ? "Map " + r.maps.join(", ") : r.files + " Datei(en)"} hinzugefügt${r.note ? " – " + r.note : ""}`, !!r.note);
-    gqLoadMaps(true).then(() => { if (r.maps[0]) { $("#gqMap").value = r.maps[0]; gqThumb(r.maps[0]); } }); };
+    gqLoadMaps(true).then(() => { if (r.maps[0]) { $("#gqMap").value = r.maps[0]; gqThumb(r.maps[0]); } }); setTimeout(gqLibRender, 5000); };
   $("#btnGqMapUrl").onclick = async () => {
     const url = $("#gqMapUrl").value.trim(); if (!url) return toast("Link zur Map (.bsp, .bsp.bz2 oder .zip) einfügen", true);
     $("#btnGqMapUrl").disabled = true; toast("Map wird geladen …");
@@ -2505,6 +2536,14 @@ async function initCreate(){
     type === "select" ? `<select data-cf="${k}">${hint.split(",").map(o => `<option ${o===def?"selected":""}>${o}</option>`).join("")}</select>`
     : `<input data-cf="${k}" type="${type==="password"?"password":"text"}" value="${esc(fill(def, k))}" ${type==="number"?'inputmode="numeric"':""} autocomplete="off">`
   }${hint && type !== "select" ? `<div class="hint">${esc(hint)}</div>` : ""}</div>`).join("");
+  if (GAMES[createGame]?.rcon){            // Inhalts-Bibliothek: Maps kommen automatisch, Mods per Auswahl
+    let lib = null; try { lib = await api(`/api/library/${createGame}`); } catch {}
+    if (lib && (lib.maps.length || lib.mods.length)) $("#createFields").insertAdjacentHTML("beforeend", `<div class="field" style="grid-column:1/-1"><label>Aus der Bibliothek</label>
+      <div class="hint">${lib.maps.length ? `📦 ${lib.maps.length} Map(s) kommen automatisch auf den neuen Server.` : ""}</div>
+      ${lib.mods.length ? `<div class="row" style="flex-wrap:wrap;gap:10px;margin-top:4px">${lib.mods.map(m => `<label class="hint"><input type="checkbox" data-libmod="${esc(m.name)}" style="width:auto"> ${esc(m.name)}</label>`).join("")}</div><div class="hint">Mods auswählen, die mit installiert werden sollen.</div>` : ""}
+      <input type="hidden" data-cf="lib_mods" value=""></div>`);
+    $$("[data-libmod]").forEach(c => c.onchange = () => { $('[data-cf="lib_mods"]').value = $$("[data-libmod]").filter(x => x.checked).map(x => x.dataset.libmod).join(","); });
+  }
   const same = createGame === "cs2" ? servers.filter(s => gameOf(s) === createGame && s.container) : [];   // Kopieren nur bei CS2
   let tplInfo = null;
   if (createGame === "cs2"){ try { tplInfo = await api("/api/cs2-template"); } catch {} }
