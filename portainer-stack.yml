@@ -27,7 +27,7 @@ services:
       - /proc:/host/proc:ro
     labels:
       org.spielservermanager.description: "Spielservermanager"
-      org.spielservermanager.build: "129ea37"   # wird nach jedem Image-Build automatisch aktualisiert (Auto-Update)
+      org.spielservermanager.build: "abe5354"   # wird nach jedem Image-Build automatisch aktualisiert (Auto-Update)
 
 volumes:
   rcon-data:
