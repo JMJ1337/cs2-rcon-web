@@ -312,7 +312,22 @@ pt_wait || die "Portainer startet nicht (docker logs portainer)"
 pt_body() { jq -n --arg u "$PORTAINER_USER" --arg p "$PORTAINER_PASSWORD" '{Username:$u,Password:$p}'; }
 pt_auth() { curl -ks -X POST "$P/auth" -H 'Content-Type: application/json' -d "$(pt_body)" | jq -r '.jwt // empty' 2>/dev/null; }
 pt_has_admin() { [ "$(curl -ks -o /dev/null -w '%{http_code}' "$P/users/admin/check")" = 204 ]; }
-pt_init() { curl -ks -o /tmp/pt_init.out -w '%{http_code}' -X POST "$P/users/admin/init" -H 'Content-Type: application/json' -d "$(pt_body)"; }
+# Neuere Portainer-Versionen verlangen bei der Ersteinrichtung ein Setup-Token (Header X-Setup-Token),
+# das beim Start ins Log geschrieben wird („no administrator account configured … setup_token=…“). Ältere ignorieren den Header.
+pt_token() {
+  local t="" i
+  for i in 1 2 3 4 5; do   # Token steht direkt nach dem Start im Log; ältere Versionen haben keins
+    t=$(docker logs portainer 2>&1 | grep -i 'setup.token' | grep -oE '[0-9a-fA-F]{64}' | tail -1 || true)
+    [ -n "$t" ] && break
+    sleep 1
+  done
+  printf '%s' "$t"
+}
+pt_init() {
+  local tok; tok=$(pt_token)
+  curl -ks -o /tmp/pt_init.out -w '%{http_code}' -X POST "$P/users/admin/init" -H 'Content-Type: application/json' \
+    ${tok:+-H "X-Setup-Token: $tok"} -d "$(pt_body)"
+}
 
 if ! pt_has_admin; then
   code=$(pt_init)
