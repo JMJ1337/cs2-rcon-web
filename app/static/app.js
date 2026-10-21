@@ -247,7 +247,7 @@ function renderPublic(){
     const thumb = mapThumb({map: MAP_GAMES.has(x.game) && x.online ? x.map : "", workshop: x.workshop, map_image: x.map_image, map_title: x.map_label, map_layout: x.online ? x.map_layout : null}, x.game);
     return `<div class="pubcard${x.online || x.sleeping || x.install ? "" : " off"}" style="--gc:${g.color}" ${x.pending ? `title="wird gerade angelegt"` : `data-pub="${esc(x.id)}" tabindex="0" title="Details: Spieler, Rotation"`}>
       ${thumb ? `<div class="pubthumb">${thumb}<span class="pubmap">${MAP_GAMES.has(x.game) && x.online ? esc(x.map_label || x.map || "") : ""}</span></div>` : ""}
-      <div class="pubtop">${gameTile(x.game, 18)}<div class="pubname"><b title="${esc(x.name)}">${esc(x.name)}</b><span class="hint">${esc(g.label)} ${x.online ? reachPill(x.reach) : ""}</span></div>
+      <div class="pubtop">${gameTile(x.game, 18)}<div class="pubname"><b title="${esc(x.name)}">${esc(x.name)}</b>${x.online && reachPill(x.reach) ? `<span class="hint">${reachPill(x.reach)}</span>` : ""}</div>
         <span class="pill ${x.online ? "ok" : ""}">${x.online ? `● ${x.players ?? 0}${x.max_players ? "/" + x.max_players : ""} Spieler${x.bots ? ` · ${x.bots} Bots` : ""}` : x.sleeping ? "💤 schläft" : x.install ? "⬇ wird installiert" : "offline"}</span></div>
       ${x.install ? `<div class="pubinst"><div class="bar"><i style="width:${Math.min(100, x.install.pct)}%"></i></div><span>${esc(x.install.label)} · ${Math.round(x.install.pct)} %${x.install.rate_bps ? ` · ${x.install.rate_kind === "Kopieren" ? "⇄" : "↓"} ${fmtRate(x.install.rate_bps)}` : ""}${x.install.eta ? ` · fertig ca. ${etaClock(x.install.eta)} Uhr` : ""}</span></div>` : ""}
       ${x.sleeping ? `<div class="pubjoin"><button class="small primary" data-pwake="${esc(x.id)}">Aufwecken</button><span class="hint">Server ruht, weil niemand drauf war – startet in ${x.sleeping === "pause" ? "1–2 Sekunden" : "ca. 1–3 Minuten"}.</span></div>` : ""}
@@ -1538,6 +1538,7 @@ function renderGq(){
   $("#gqPwBox").classList.toggle("hidden", !(GAMES[g]?.rcon || g === "tf2"));
   $("#gqJoinPw").value = current.join_pw ?? (lastStatus && lastStatus.join_password) ?? "";
   $("#gqMapPanel").classList.toggle("hidden", !!d.noMaps);
+  $("#gqMapAdd").classList.toggle("hidden", !GAMES[g]?.rcon || !current.container);
   $("#gqMapHint").textContent = d.hint || "";
   if (gqMapsFor !== current.id){
     gqMapsLive = []; gqMapsFor = current.id; if (!d.noMaps) gqLoadMaps(true);
@@ -1554,6 +1555,23 @@ function renderGq(){
   $("#btnGqRandMap").onclick = () => { const o = $$("#gqMap option").map(x => x.value).filter(m => !/^(mvm|tr)_/.test(m) && m !== gqMapNow()); if (o.length) go(o[Math.floor(Math.random() * o.length)]); };
   $("#btnGqReload").onclick = () => { const m = gqMapNow(); m ? go(m) : toast("Aktuelle Map unbekannt", true); };
   $("#btnGqMapsLoad").onclick = () => gqLoadMaps(false);
+  const mapDone = r => { toast(`${r.maps.length ? "Map " + r.maps.join(", ") : r.files + " Datei(en)"} hinzugefügt${r.note ? " – " + r.note : ""}`, !!r.note);
+    gqLoadMaps(true).then(() => { if (r.maps[0]) { $("#gqMap").value = r.maps[0]; gqThumb(r.maps[0]); } }); };
+  $("#btnGqMapUrl").onclick = async () => {
+    const url = $("#gqMapUrl").value.trim(); if (!url) return toast("Link zur Map (.bsp, .bsp.bz2 oder .zip) einfügen", true);
+    $("#btnGqMapUrl").disabled = true; toast("Map wird geladen …");
+    try { mapDone(await api(`/api/servers/${current.id}/maps/add`, {body: {url}})); $("#gqMapUrl").value = ""; }
+    catch (e) { toast(e.message, true); } finally { $("#btnGqMapUrl").disabled = false; }
+  };
+  $("#gqMapFile").onchange = async () => {
+    const f = $("#gqMapFile").files[0]; if (!f) return;
+    toast(`${f.name} wird hochgeladen …`);
+    try {
+      const r = await fetch(`/api/servers/${current.id}/maps/upload?name=${encodeURIComponent(f.name)}`, {method: "POST", body: f});
+      const j = await r.json(); if (!r.ok) throw new Error(j.detail || r.statusText); mapDone(j);
+    } catch (e) { toast(e.message, true); }
+    $("#gqMapFile").value = "";
+  };
   $("#btnGqMode").onclick = async () => {
     const d = gqDef(); let v = $("#gqMode").value;
     if (v.startsWith("2:")) { v = v.slice(2); return gqSend(d.mode2.cmd(v), `${d.mode2.title}: ${v}`); }

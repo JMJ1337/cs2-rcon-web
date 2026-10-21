@@ -174,3 +174,32 @@ async def saves(container: str, game: str) -> list[dict]:
             out.append({**it, "path": posixpath.join(d, it["name"]), "dirpath": d})
     out.sort(key=lambda x: -(x["mtime"] or 0))
     return out
+
+
+async def upload_tree(container: str, base: str, files: dict[str, bytes]) -> list[str]:
+    """Mehrere Dateien mit Unterordnern (z. B. maps/, materials/) in einen Ordner des Containers legen."""
+    d = await check(container, base)
+    owner = (await docker_api.exec_cmd(container, ["sh", "-c", f"stat -c '%u:%g' {shlex.quote(d)}"], timeout=10)).strip()
+    uid, gid = (int(x) for x in owner.split(":")) if re.fullmatch(r"\d+:\d+", owner) else (0, 0)
+    buf = io.BytesIO()
+    dirs, out = set(), []
+    with tarfile.open(fileobj=buf, mode="w") as tf:
+        for rel, data in files.items():
+            rel = posixpath.normpath(rel.replace("\\", "/")).lstrip("/")
+            if not rel or rel.startswith("..") or "\x00" in rel:
+                continue
+            parts = rel.split("/")
+            for i in range(1, len(parts)):
+                sub = "/".join(parts[:i])
+                if sub not in dirs:
+                    dirs.add(sub)
+                    di = tarfile.TarInfo(sub)
+                    di.type, di.mode, di.uid, di.gid, di.mtime = tarfile.DIRTYPE, 0o775, uid, gid, int(time.time())
+                    tf.addfile(di)
+            ti = tarfile.TarInfo(rel)
+            ti.size, ti.mtime, ti.uid, ti.gid, ti.mode = len(data), int(time.time()), uid, gid, 0o664
+            tf.addfile(ti, io.BytesIO(data))
+            out.append(rel)
+    await docker_api._req("PUT", f"/containers/{container}/archive", params={"path": d}, content=buf.getvalue(),
+                          headers={"Content-Type": "application/x-tar"}, timeout=900)
+    return out

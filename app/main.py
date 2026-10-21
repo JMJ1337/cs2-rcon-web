@@ -7703,6 +7703,138 @@ async def set_join_password(sid: str, data: JoinPwIn):
     return {"ok": True, "password": pw}
 
 
+# ---------------------------------------------------------------- Eigene Maps (Source/GoldSrc) + FastDL
+MAP_DIRS = ("maps", "materials", "models", "sound", "sounds", "resource", "particles", "scripts", "gfx", "sprites", "overviews", "media")
+FASTDL_EXT = re.compile(r"\.(bsp|bz2|nav|vtf|vmt|mdl|vvd|vtx|phy|ani|wav|mp3|ogg|wad|res|spr|tga|bmp|pcf|txt)$", re.I)
+MAX_MAP_DL = 600 * 1024 * 1024
+
+
+def _map_files(filename: str, data: bytes) -> dict[str, bytes]:
+    """.bsp / .bsp.bz2 / .zip in {relativer Pfad im Spielordner: Inhalt} zerlegen."""
+    import bz2
+    import io
+    import zipfile
+    name = posixpath_basename(filename).lower()
+    if name.endswith(".bz2"):
+        return _map_files(filename[:-4], bz2.decompress(data))
+    if name.endswith(".bsp"):
+        return {f"maps/{posixpath_basename(filename)}": data}
+    if name.endswith(".zip") or data[:2] == b"PK":
+        out = {}
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            for m in z.infolist():
+                if m.is_dir() or m.file_size > MAX_MAP_DL:
+                    continue
+                parts = [x for x in m.filename.replace("\\", "/").split("/") if x and x != ".."]
+                low = [x.lower() for x in parts]
+                idx = next((i for i, x in enumerate(low) if x in MAP_DIRS), None)
+                fn = low[-1]
+                if idx is not None:
+                    rel = "/".join(parts[idx:])
+                elif fn.endswith((".bsp", ".nav", ".res", ".bsp.bz2")):
+                    rel = "maps/" + parts[-1]
+                elif fn.endswith(".wad"):
+                    rel = parts[-1]
+                else:
+                    continue
+                if rel.lower().endswith(".bsp.bz2"):
+                    out[rel[:-4]] = bz2.decompress(z.read(m))
+                else:
+                    out[rel] = z.read(m)
+        if not any(k.lower().endswith(".bsp") for k in out):
+            raise HTTPException(400, "Im ZIP ist keine .bsp-Map")
+        return out
+    raise HTTPException(400, "Bitte .bsp, .bsp.bz2 oder .zip (RAR/7z vorher entpacken)")
+
+
+def posixpath_basename(p: str) -> str:
+    return (p or "").replace("\\", "/").rstrip("/").split("/")[-1]
+
+
+async def _game_dir(s: dict) -> str:
+    info = await docker_api.inspect(s["container"])
+    env = dict(e.split("=", 1) for e in (info.get("Config") or {}).get("Env") or [] if "=" in e)
+    return "/serverdata/serverfiles/" + (env.get("GAME_NAME") or "valve")
+
+
+async def _install_maps(s: dict, filename: str, data: bytes) -> dict:
+    if not (catmod.CATALOG.get(game_of(s)) or {}).get("rcon") or not s.get("container"):
+        raise HTTPException(400, "Eigene Maps gehen bei Source-/GoldSrc-Servern mit Container")
+    files = _map_files(filename, data)
+    base = await _game_dir(s)
+    try:
+        written = await filebrowser.upload_tree(s["container"], base, files)
+    except (filebrowser.FileError, docker_api.DockerError) as e:
+        raise _fb_err(e)
+    maps = [posixpath_basename(f)[:-4] for f in written if f.lower().endswith(".bsp")]
+    # FastDL: Spieler laden fehlende Maps/Inhalte schnell per HTTP vom Tool statt langsam vom Spielserver
+    url = f"{_tool_url(s)}/fastdl/{s['id']}/"
+    note = ""
+    if s.get("password"):
+        try:
+            await run(s, f'sv_allowdownload 1; sv_downloadurl "{url}"; net_maxfilesize 64')
+            for k, v in (("sv_allowdownload", "1"), ("sv_downloadurl", url), ("net_maxfilesize", "64")):
+                await docker_api.exec_cmd(s["container"], ["sh", "-c", CVARCFG_SH, "sh", k, v], timeout=15)
+        except (HTTPException, docker_api.DockerError) as e:
+            note = f"Download-Adresse für Spieler nicht gesetzt: {getattr(e, 'detail', e)}"
+    return {"ok": True, "maps": maps, "files": len(written), "fastdl": url, "note": note}
+
+
+class MapUrlIn(BaseModel):
+    url: str = Field(min_length=8, max_length=1000)
+
+
+@app.post("/api/servers/{sid}/maps/add", dependencies=auth)
+async def maps_add(sid: str, data: MapUrlIn):
+    """Map per Link holen (.bsp, .bsp.bz2, .zip – z. B. von GameBanana) und in den Maps-Ordner legen – ohne Neustart."""
+    s = get_server(sid)
+    if not re.match(r"^https?://", data.url):
+        raise HTTPException(400, "Link muss mit http(s):// beginnen")
+    try:
+        async with httpx.AsyncClient(timeout=300, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 Spielservermanager"}) as cl:
+            async with cl.stream("GET", data.url) as r:
+                r.raise_for_status()
+                buf = bytearray()
+                async for chunk in r.aiter_bytes():
+                    buf += chunk
+                    if len(buf) > MAX_MAP_DL:
+                        raise HTTPException(413, "Datei zu groß (max. 600 MB)")
+                cd = r.headers.get("content-disposition", "")
+                m = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)', cd)
+                fname = urllib.parse.unquote(m.group(1)) if m else posixpath_basename(urllib.parse.urlparse(str(r.url)).path)
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"Download fehlgeschlagen: {e.__class__.__name__}")
+    return await _install_maps(s, fname or "map.zip", bytes(buf))
+
+
+@app.post("/api/servers/{sid}/maps/upload", dependencies=auth)
+async def maps_upload(sid: str, request: Request, name: str):
+    body = await request.body()
+    if len(body) > MAX_MAP_DL:
+        raise HTTPException(413, "Datei zu groß (max. 600 MB)")
+    return await _install_maps(get_server(sid), name, body)
+
+
+@app.get("/fastdl/{sid}/{path:path}")
+async def fastdl(sid: str, path: str):
+    """Schnelldownload für Spieler (sv_downloadurl): nur Inhalts-Dateien aus dem Spielordner, ohne Login."""
+    try:
+        s = get_server(sid)
+    except HTTPException:
+        raise HTTPException(404)
+    p = posixpath_basename(path)
+    rel = "/".join(x for x in path.split("/") if x and x not in ("..", "."))
+    if not (catmod.CATALOG.get(game_of(s)) or {}).get("rcon") or not FASTDL_EXT.search(p) or not s.get("container"):
+        raise HTTPException(404)
+    if rel.split("/")[0].lower() not in MAP_DIRS and not p.lower().endswith((".wad", ".res")):
+        raise HTTPException(404)
+    try:
+        _name, data, _mt = await filebrowser.download(s["container"], f"{await _game_dir(s)}/{rel}")
+    except (filebrowser.FileError, docker_api.DockerError):
+        raise HTTPException(404)
+    return _Resp(content=data, media_type="application/octet-stream")
+
+
 class RconEnableIn(BaseModel):
     password: str = ""
 
