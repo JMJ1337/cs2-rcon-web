@@ -6,7 +6,7 @@
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap">
-<link rel="stylesheet" href="/static/app.css?v=121">
+<link rel="stylesheet" href="/static/app.css?v=122">
 </head>
 <body>
 
@@ -258,7 +258,7 @@
     <!-- Spieler -->
     <section id="view-players" class="hidden">
       <div class="topbar"><div><div class="title">Spieler &amp; SteamIDs</div><div class="sub">Alle, die jemals auf einem Server waren – automatisch aus Server-Logs, Status und TeamSpeak. Nicknames vergeben, Einträge zusammenführen.</div></div></div>
-      <div class="content">
+      <div class="content wide">
         <div class="panel">
           <h2>Spieler hinzufügen</h2>
           <div class="row">
@@ -287,7 +287,7 @@
             <button class="small danger" data-plbulk="ignore" title="Löschen und nicht wieder automatisch eintragen, wenn sie erneut auf einem Server gesehen werden">Löschen + nicht mehr erfassen</button>
             <a href="#" class="hint" id="plUnignore" style="margin-left:auto" title="Ignorierte Spieler werden wieder automatisch erfasst">Ignorierliste leeren</a>
           </div>
-          <div style="overflow:auto"><table class="pltable"><thead><tr><th><input type="checkbox" id="plSelAll" style="width:auto" title="alle (gefilterten) auswählen"></th><th></th><th>Nickname</th><th>Erkannt als</th><th>Gerade auf</th><th>SteamID64</th><th title="Auf der LAN? Automatisch nach IP (LAN-IP = ja, Internet-IP = nein) – Haken setzen/entfernen überschreibt das">LAN</th><th>LAN-IP</th><th>Online-IP</th><th>Admin</th><th>Zuletzt</th><th></th></tr></thead><tbody id="plRows"></tbody></table></div>
+          <table class="pltable"><thead><tr><th><input type="checkbox" id="plSelAll" style="width:auto" title="alle (gefilterten) auswählen"></th><th>Spieler</th><th>Status</th><th>Steam</th><th title="Auf der LAN? Automatisch nach IP (LAN-IP = ja, Internet-IP = nein) – Haken setzen/entfernen überschreibt das">Netz</th><th></th></tr></thead><tbody id="plRows"></tbody></table>
           <div class="hint" style="margin-top:6px">Nickname leer lassen = automatischer Name (TeamSpeak-Name, sonst Spielname). „⇄“ führt zwei Einträge derselben Person zusammen (z. B. TeamSpeak-Eintrag + Steam-Eintrag).</div>
         </div>
       </div>
@@ -545,19 +545,21 @@
     </section>
 
     <section id="view-users" class="hidden">
-      <div class="topbar"><div><div class="title">Benutzer</div><div class="sub">bleiben bei Updates erhalten (Volume)</div></div></div>
-      <div class="content">
+      <div class="topbar"><div><div class="title">Benutzer &amp; Rechte</div><div class="sub">Profile = Rechte-Vorlagen. Benutzer bekommen ein Profil, Abweichungen nur wo nötig.</div></div>
+        <div style="margin-left:auto;display:flex;gap:8px"><button id="btnUNewProfile">＋ Profil</button><button class="primary" id="btnUNew">＋ Benutzer</button></div></div>
+      <div class="content wide">
         <div class="panel">
-          <h2>Benutzer anlegen</h2>
-          <div class="row">
-            <input id="uName" placeholder="Benutzername" maxlength="32">
-            <input id="uPw" type="password" placeholder="Passwort (min. 6 Zeichen)" autocomplete="new-password">
-            <select id="uRole"></select>
-            <button class="primary" id="btnUAdd">Anlegen</button>
-          </div>
-          <div class="hint" style="margin-top:8px">Administrator: alles inkl. Benutzer, Speicher, Prefill und Einstellungen. Alle anderen bekommen unter „Rechte“ pro Spiel eine Stufe: <b>Sehen</b> · <b>Bedienen</b> (Start/Stopp, Konsole, Map) · <b>Verwalten</b> (Konfiguration, Dateien, Spielstände laden) · <b>Anlegen</b> (neue Server anlegen und löschen). Ohne Login sieht jeder die Serverliste mit Beitrittsdaten.</div>
+          <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:10px"><h2 style="margin:0">Profile</h2><span class="hint">Klick auf ein Profil filtert die Benutzer</span></div>
+          <div class="upgrid" id="uProfiles"></div>
         </div>
-        <div class="panel"><div style="overflow:auto"><table><thead><tr><th>Benutzer</th><th>Rolle</th><th>Rechte</th><th>Angelegt</th><th>Letzter Login</th><th></th></tr></thead><tbody id="uRows"></tbody></table></div></div>
+        <div class="panel">
+          <div class="utool">
+            <h2 style="margin:0">Benutzer <span class="hint" id="uCount"></span></h2>
+            <input id="uFilter" placeholder="Suchen …">
+            <div class="ubulk" id="uBulk"><span class="hint" id="uSelCount">0 ausgewählt</span><select id="uBulkProfile"></select><button class="small" id="btnUBulk">Profil zuweisen</button><label class="hint"><input type="checkbox" id="uBulkClear" style="width:auto"> eigene Abweichungen entfernen</label></div>
+          </div>
+          <div class="ugrid" id="uCards"></div>
+        </div>
       </div>
     </section>
 
@@ -1039,14 +1041,43 @@
   <div class="row" style="justify-content:flex-end;margin-top:12px"><button type="button" onclick="this.closest('dialog').close()">Schließen</button></div>
 </dialog>
 
-<dialog id="dlgPerm" style="width:min(620px,calc(100vw - 32px))">
-  <form method="dialog" id="permForm">
-    <h2>Rechte für <span id="permUser"></span></h2>
-    <div class="hint" id="permHints" style="margin-bottom:10px"></div>
-    <div class="permgrid" id="permGrid"></div>
-    <h3 style="margin:14px 0 6px">Sonderrechte</h3>
-    <div id="permRights" class="pfopts"></div>
-    <div class="row" style="justify-content:flex-end;margin-top:12px"><button type="button" id="btnPermCancel">Abbrechen</button><button class="primary" type="submit">Speichern</button></div>
+<dialog id="dlgUser" class="dlgwide">
+  <form method="dialog" id="uForm">
+    <h2 id="uFormTitle">Benutzer</h2>
+    <div class="ufgrid">
+      <div><label>Benutzername</label><input id="ufName" maxlength="32" autocomplete="off"></div>
+      <div><label id="ufPwLabel">Passwort (min. 6 Zeichen)</label><input id="ufPw" type="password" autocomplete="new-password"></div>
+      <div><label>Notiz (z. B. Aufgabe)</label><input id="ufNote" maxlength="80"></div>
+      <div><label>Art</label><div class="seg" id="ufKind"><button type="button" data-kind="user" class="active">Benutzer</button><button type="button" data-kind="admin">Administrator</button></div></div>
+    </div>
+    <div id="ufProfileBox">
+      <h3 class="pdsec">Profil</h3>
+      <div class="ufprof" id="ufProfiles"></div>
+      <details id="ufOwn" class="ufown"><summary>Eigene Abweichungen vom Profil <span class="hint" id="ufOwnInfo"></span></summary>
+        <div class="row" style="gap:8px;margin:8px 0;align-items:center"><label class="hint"><input type="checkbox" id="ufAllGames" style="width:auto"> alle Spiele zeigen (sonst nur Spiele mit Servern)</label><button type="button" class="small" id="ufOwnReset">Abweichungen entfernen</button></div>
+        <div class="permed" id="ufPerms"></div>
+        <h3 class="pdsec">Sonderrechte zusätzlich</h3><div id="ufRights" class="pfopts"></div>
+      </details>
+    </div>
+    <div class="hint" id="ufAdminHint" style="display:none">Administratoren dürfen alles, inkl. Benutzer, Speicher, Prefill und Einstellungen.</div>
+    <div class="hint" id="ufLegend" style="margin-top:8px"></div>
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:8px"><button type="button" id="btnUfCancel">Abbrechen</button><button class="primary" type="submit">Speichern</button></div>
+  </form>
+</dialog>
+
+<dialog id="dlgProfile" class="dlgwide">
+  <form method="dialog" id="pfForm">
+    <h2 id="pfTitle">Profil</h2>
+    <div class="ufgrid">
+      <div><label>Name</label><input id="pfName" maxlength="40"></div>
+      <div><label>Farbe</label><input id="pfColor" type="color" value="#3e8f5a" style="height:36px;padding:2px"></div>
+      <div style="grid-column:1/-1"><label>Beschreibung</label><input id="pfDesc" maxlength="120"></div>
+    </div>
+    <h3 class="pdsec">Rechte pro Spiel</h3>
+    <div class="row" style="gap:8px;margin-bottom:8px"><label class="hint"><input type="checkbox" id="pfAllGames" style="width:auto"> alle Spiele zeigen (sonst nur Spiele mit Servern)</label></div>
+    <div class="permed" id="pfPerms"></div>
+    <h3 class="pdsec">Sonderrechte</h3><div id="pfRights" class="pfopts"></div>
+    <div class="row" style="justify-content:space-between;margin-top:12px"><button type="button" class="danger" id="btnPfDel">Profil löschen</button><span class="row" style="gap:8px"><button type="button" id="btnPfCancel">Abbrechen</button><button class="primary" type="submit">Speichern</button></span></div>
   </form>
 </dialog>
 
@@ -1071,6 +1102,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=171"></script>
+<script src="/static/app.js?v=172"></script>
 </body>
 </html>

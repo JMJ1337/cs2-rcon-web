@@ -114,7 +114,7 @@ def token_user(token: str | None) -> dict | None:
     return u
 
 
-ADMIN_PATHS = ("/api/users", "/api/gslt", "/api/notify", "/api/backup", "/api/settings", "/api/prefill", "/api/storage", "/api/scan", "/api/cache/measure", "/api/cache/reset", "/api/docker/image-check", "/api/docker/helperlogs")
+ADMIN_PATHS = ("/api/users", "/api/user-profiles", "/api/gslt", "/api/notify", "/api/backup", "/api/settings", "/api/prefill", "/api/storage", "/api/scan", "/api/cache/measure", "/api/cache/reset", "/api/docker/image-check", "/api/docker/helperlogs")
 
 # Benötigte Rechtestufe für Server-Unterseiten (users.LEVELS): 1 sehen, 2 bedienen, 3 verwalten, 4 anlegen/löschen
 _MANAGE_RX = re.compile(r"(config(/file)?|files(/.*)?|saves/load|container(/(env|diag|use-lancache|steamfix))?|wreckfest/(?!console).*|sleep/config|gslt|cstv|"
@@ -152,7 +152,7 @@ def require_auth(request: Request):
     path, method = request.url.path, request.method
     if path.startswith("/api/me"):
         return u
-    if path.startswith(("/api/tournament", "/api/stream")) and "tournament" in (u.get("rights") or []):
+    if path.startswith(("/api/tournament", "/api/stream")) and users.has_right(u, "tournament"):
         return u                                  # Sonderrecht Turnier (Prüfung im Endpunkt)
     if path.startswith(ADMIN_PATHS) and not (path in ("/api/settings", "/api/scan") and method == "GET"):
         raise HTTPException(403, "Nur für Administratoren")
@@ -552,7 +552,7 @@ def _need_admin(request: Request) -> None:
 def _need_right(request: Request, right: str) -> None:
     """Sonderrecht (z. B. „tournament“: Turniere anlegen/bearbeiten, Live-Stream) – Admins haben alles."""
     u = getattr(request.state, "user", None) or {}
-    if u.get("role") != "admin" and right not in (u.get("rights") or []):
+    if not users.has_right(u, right):
         raise HTTPException(403, "Keine Berechtigung für diesen Bereich")
 
 
@@ -562,13 +562,62 @@ class UserIn(BaseModel):
     role: str | None = None
     perms: dict[str, int] | None = None
     rights: list[str] | None = None
+    profile: str | None = None
+    note: str | None = Field(None, max_length=80)
 
 
 @app.get("/api/users", dependencies=auth)
 async def list_users():
     linked = {p.get("user"): playerdb.display(p) for p in playerdb.all_players() if p.get("user")}
     return {"users": [{**users.public(u), "player": linked.get(u["username"])} for u in users.load()], "roles": users.ROLE_LABELS,
-            "levels": users.LEVELS, "level_hints": users.LEVEL_HINTS, "rights": users.RIGHTS}
+            "levels": users.LEVELS, "level_hints": users.LEVEL_HINTS, "rights": users.RIGHTS, "profiles": users.profiles(),
+            "games_used": sorted({game_of(x) for x in load_servers()})}
+
+
+class ProfileIn(BaseModel):
+    id: str = ""
+    name: str = Field(min_length=1, max_length=40)
+    color: str = "#6b7a8f"
+    desc: str = Field("", max_length=120)
+    perms: dict[str, int] = {}
+    rights: list[str] = []
+
+
+@app.post("/api/user-profiles", dependencies=auth)
+async def save_user_profile(data: ProfileIn):
+    try:
+        return users.save_profile(data.model_dump())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/user-profiles/{pid}", dependencies=auth)
+async def del_user_profile(pid: str):
+    users.delete_profile(pid)
+    return {"ok": True}
+
+
+class BulkUsersIn(BaseModel):
+    usernames: list[str]
+    profile: str | None = None
+    clear_own: bool = False
+
+
+@app.post("/api/users-bulk", dependencies=auth)
+async def users_bulk(data: BulkUsersIn):
+    """Mehreren Benutzern ein Profil geben (optional eigene Abweichungen entfernen)."""
+    n = 0
+    for name in data.usernames:
+        u = users.find(name)
+        if not u or u.get("role") == "admin":
+            continue
+        try:
+            users.upsert(u["username"], None, None, {} if data.clear_own else None, [] if data.clear_own else None,
+                         profile_id=data.profile if data.profile is not None else None)
+            n += 1
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    return {"ok": True, "changed": n}
 
 
 @app.post("/api/users", dependencies=auth)
@@ -576,7 +625,7 @@ async def add_user(data: UserIn):
     if users.find(data.username):
         raise HTTPException(400, "Benutzer existiert bereits")
     try:
-        return users.public(users.upsert(data.username, data.password, data.role or "user", data.perms, data.rights))
+        return users.public(users.upsert(data.username, data.password, data.role or "user", data.perms, data.rights, data.profile, data.note))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -586,7 +635,7 @@ async def update_user(username: str, data: UserIn):
     if not users.find(username):
         raise HTTPException(404, "Benutzer nicht gefunden")
     try:
-        return users.public(users.upsert(username, data.password or None, data.role, data.perms, data.rights))
+        return users.public(users.upsert(username, data.password or None, data.role, data.perms, data.rights, data.profile, data.note))
     except ValueError as e:
         raise HTTPException(400, str(e))
 

@@ -20,16 +20,90 @@ ROLE_DEFAULT = {"user": 2, "viewer": 1}
 RIGHTS = {"tournament": "Turniere anlegen/bearbeiten (inkl. Live-Stream)"}
 
 
+# ---------------------------------------------------------------- Profile (Rechte-Vorlagen)
+PROFILES_FILE = "user_profiles.json"
+DEFAULT_PROFILES = [
+    {"id": "zuschauer", "name": "Zuschauer", "color": "#6b7a8f", "desc": "sieht alle Server, Spieler und Logs", "perms": {"*": 1}, "rights": []},
+    {"id": "spielleiter", "name": "Spielleiter", "color": "#3e8f5a", "desc": "bedient alle Server (Start/Stopp, Konsole, Maps, Bots)",
+     "perms": {"*": 2}, "rights": []},
+    {"id": "turnierorga", "name": "Turnier-Orga", "color": "#d9a441", "desc": "Turniere + Stream, CS2 bedienen",
+     "perms": {"*": 1, "cs2": 2}, "rights": ["tournament"]},
+    {"id": "betreuer", "name": "Server-Betreuer", "color": "#3e6fa8", "desc": "verwaltet alle Server (Konfiguration, Dateien, Spielstände)",
+     "perms": {"*": 3}, "rights": ["tournament"]},
+    {"id": "techniker", "name": "Techniker", "color": "#b5562b", "desc": "darf zusätzlich Server anlegen und löschen",
+     "perms": {"*": 4}, "rights": ["tournament"]},
+]
+
+
+def profiles() -> list[dict]:
+    p = store.load(PROFILES_FILE, None)
+    if p is None:
+        p = DEFAULT_PROFILES
+        store.save(PROFILES_FILE, p)
+    return p
+
+
+def profile(pid: str | None) -> dict | None:
+    return next((p for p in profiles() if p["id"] == pid), None) if pid else None
+
+
+def save_profile(data: dict) -> dict:
+    name = str(data.get("name") or "").strip()[:40]
+    if not name:
+        raise ValueError("Name fehlt")
+    allp = profiles()
+    pid = data.get("id") or ""
+    cur = next((p for p in allp if p["id"] == pid), None)
+    if cur is None:
+        base = "".join(ch for ch in name.lower().replace(" ", "-") if ch.isalnum() or ch == "-")[:24] or "profil"
+        pid, n = base, 2
+        while any(p["id"] == pid for p in allp):
+            pid, n = f"{base}-{n}", n + 1
+        cur = {"id": pid}
+        allp.append(cur)
+    cur.update(name=name, color=str(data.get("color") or "#6b7a8f")[:9], desc=str(data.get("desc") or "")[:120],
+               perms=clean_perms(data.get("perms")) or {"*": 1}, rights=[r for r in (data.get("rights") or []) if r in RIGHTS])
+    store.save(PROFILES_FILE, allp)
+    return cur
+
+
+def delete_profile(pid: str) -> None:
+    store.save(PROFILES_FILE, [p for p in profiles() if p["id"] != pid])
+    users = load()
+    for u in users:
+        if u.get("profile") == pid:
+            u.pop("profile", None)
+    store.save(FILE, users)
+
+
+def effective_perms(u: dict) -> dict:
+    """Profil-Rechte + eigene Abweichungen des Benutzers."""
+    pr = profile(u.get("profile"))
+    base = dict(pr["perms"]) if pr else {"*": ROLE_DEFAULT.get(u.get("role"), 0)}
+    return base | (u.get("perms") or {})
+
+
+def effective_rights(u: dict) -> list[str]:
+    if u.get("role") == "admin":
+        return list(RIGHTS)
+    pr = profile(u.get("profile"))
+    return [r for r in RIGHTS if r in (u.get("rights") or []) or (pr and r in pr.get("rights", []))]
+
+
+def has_right(u: dict | None, right: str) -> bool:
+    return bool(u) and right in effective_rights(u)
+
+
 def level(u: dict | None, game: str | None) -> int:
-    """Rechtestufe des Benutzers für ein Spiel."""
+    """Rechtestufe des Benutzers für ein Spiel (Profil + eigene Abweichungen)."""
     if not u:
         return 0
     if u.get("role") == "admin":
         return 4
-    perms = u.get("perms") or {}
+    perms = effective_perms(u)
     if game and game in perms:
         return int(perms[game])
-    return int(perms.get("*", ROLE_DEFAULT.get(u.get("role"), 0)))
+    return int(perms.get("*", 0))
 
 
 def max_level(u: dict | None, games) -> int:
@@ -67,10 +141,11 @@ def load() -> list[dict]:
 
 
 def public(u: dict) -> dict:
-    return {k: u.get(k) for k in ("username", "role", "created", "last_login")} | {
-        "rights": list(RIGHTS) if u.get("role") == "admin" else [r for r in (u.get("rights") or []) if r in RIGHTS],
+    return {k: u.get(k) for k in ("username", "role", "created", "last_login", "profile", "note")} | {
+        "rights": effective_rights(u), "own_rights": [r for r in (u.get("rights") or []) if r in RIGHTS],
         "role_label": ROLE_LABELS.get(u.get("role"), ""),
-        "perms": {"*": level(u, None)} if u.get("role") == "admin" else ({"*": ROLE_DEFAULT.get(u.get("role"), 0)} | (u.get("perms") or {}))}
+        "own_perms": u.get("perms") or {},
+        "perms": {"*": 4} if u.get("role") == "admin" else effective_perms(u)}
 
 
 def find(username: str) -> dict | None:
@@ -90,7 +165,8 @@ def verify(username: str, password: str) -> dict | None:
     return None
 
 
-def upsert(username: str, password: str | None, role: str | None, perms: dict | None = None, rights: list | None = None) -> dict:
+def upsert(username: str, password: str | None, role: str | None, perms: dict | None = None, rights: list | None = None,
+           profile_id: str | None = None, note: str | None = None) -> dict:
     username = (username or "").strip().lower()
     if not username or len(username) > 32 or not username.replace("_", "").replace("-", "").replace(".", "").isalnum():
         raise ValueError("Benutzername: 1–32 Zeichen, Buchstaben/Ziffern/._-")
@@ -116,6 +192,15 @@ def upsert(username: str, password: str | None, role: str | None, perms: dict | 
         u["perms"] = clean_perms(perms)
     if rights is not None:
         u["rights"] = [r for r in rights if r in RIGHTS]
+    if profile_id is not None:
+        if profile_id and not profile(profile_id):
+            raise ValueError("Unbekanntes Profil")
+        if profile_id:
+            u["profile"] = profile_id
+        else:
+            u.pop("profile", None)
+    if note is not None:
+        u["note"] = note.strip()[:80]
     store.save(FILE, users)
     return u
 

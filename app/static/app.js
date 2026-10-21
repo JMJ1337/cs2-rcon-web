@@ -1817,18 +1817,18 @@ function renderPlayerRows(){
   plVisible = list.map(p => p.id);
   for (const id of [...plSel]) if (!players.some(p => p.id === id)) plSel.delete(id);
   $("#plRows").innerHTML = list.length ? list.map(p => `<tr class="${(p.online || []).length ? "plon" : ""}${plMerge === p.id ? " plmerge" : ""}${plSel.has(p.id) ? " plsel" : ""}">
-    <td><input type="checkbox" data-plsel="${esc(p.id)}" ${plSel.has(p.id) ? "checked" : ""} style="width:auto"></td>
-    <td>${p.avatar ? `<img class="avatar" src="${esc(p.avatar)}" alt="">` : `<span class="avatar" style="display:inline-block"></span>`}</td>
-    <td><input value="${esc(p.nick || "")}" placeholder="${esc(p.name)}" data-rename="${esc(p.id)}" style="max-width:180px"></td>
-    <td class="hint">${(p.names || []).slice(-3).map(esc).join(", ")}${p.ts_name ? ` <span class="pill" title="TeamSpeak">🎧 ${esc(p.ts_name)}</span>` : ""}</td>
-    <td>${(p.online || []).map(o => `<span class="pill ok">${gameTile(o.game, 12)} ${esc(o.server)}</span>`).join(" ") || `<span class="hint">${esc(Object.values(p.servers || {}).sort((a, b) => b.last - a.last).slice(0, 1).map(x => x.name).join("") || "")}</span>`}</td>
-    <td class="mono">${p.steamid ? `<a href="https://steamcommunity.com/profiles/${esc(p.steamid)}" target="_blank" rel="noopener" style="color:inherit">${esc(p.steamid)}</a>` : "–"}</td>
-    <td style="white-space:nowrap"><input type="checkbox" data-pllan="${esc(p.id)}" ${p.on_lan ? "checked" : ""} style="width:auto" title="${p.lan_manual ? "von Hand gesetzt" : "automatisch nach IP"}">${p.lan_manual ? ` <a href="#" class="hint" data-pllanauto="${esc(p.id)}" title="wieder automatisch nach IP">auto</a>` : ""}</td>
-    <td class="mono">${esc(p.lan_ip || "–")}</td><td class="mono">${esc(p.wan_ip || "–")}</td>
-    <td>${(p.admin_eff || []).length ? `<span class="pill warn" title="${esc((p.admin_eff || []).map(g => g === "*" ? "alle Spiele" : (GAMES[g]?.label || g)).join(", "))}${p.user ? " · Konto " + esc(p.user) : ""}">★ ${(p.admin_eff || []).includes("*") ? "alle" : (p.admin_eff || []).map(g => GAMES[g]?.short || g).join(", ")}</span>` : ""}</td>
-    <td class="hint" title="${p.last_seen ? new Date(p.last_seen * 1000).toLocaleString("de-DE") : ""}">${agoTxt(p.last_seen)}</td>
-    <td style="white-space:nowrap"><button class="small" data-pledit="${esc(p.id)}" title="bearbeiten">✎</button><button class="small" data-plmerge="${esc(p.id)}" title="${plMerge ? (plMerge === p.id ? "Zusammenführen abbrechen" : "in den markierten Eintrag übernehmen") : "mit anderem Eintrag zusammenführen"}">⇄</button><button class="small danger" data-pldel="${esc(p.id)}">✕</button></td></tr>`).join("")
-    : `<tr><td colspan="12" class="muted">${players.length ? "Keine Treffer." : "Noch keine Spieler – sie erscheinen automatisch, sobald jemand auf einen Server kommt."}</td></tr>`;
+    <td class="plck"><input type="checkbox" data-plsel="${esc(p.id)}" ${plSel.has(p.id) ? "checked" : ""} style="width:auto"></td>
+    <td class="plwho"><div class="plwho-in">${p.avatar ? `<img class="avatar" src="${esc(p.avatar)}" alt="">` : `<span class="avatar"></span>`}
+      <div class="plnm"><input value="${esc(p.nick || "")}" placeholder="${esc(p.name)}" data-rename="${esc(p.id)}">
+      <div class="hint plalias">${(p.names || []).slice(-3).map(esc).join(", ")}${p.ts_name ? ` <span class="pill" title="TeamSpeak">🎧 ${esc(p.ts_name)}</span>` : ""}</div></div></div></td>
+    <td class="plst">${(p.online || []).map(o => `<span class="pill ok">${gameTile(o.game, 12)} ${esc(o.server)}</span>`).join(" ") || `<span class="hint">${esc(Object.values(p.servers || {}).sort((a, b) => b.last - a.last).slice(0, 1).map(x => x.name).join("") || "–")}</span>`}
+      <div class="hint" title="${p.last_seen ? new Date(p.last_seen * 1000).toLocaleString("de-DE") : ""}">zuletzt ${agoTxt(p.last_seen)}</div></td>
+    <td class="plsteam">${p.steamid ? `<a class="mono" href="https://steamcommunity.com/profiles/${esc(p.steamid)}" target="_blank" rel="noopener">${esc(p.steamid)}</a>` : `<span class="hint">keine SteamID</span>`}
+      ${(p.admin_eff || []).length ? `<div><span class="pill warn" title="${esc((p.admin_eff || []).map(g => g === "*" ? "alle Spiele" : (GAMES[g]?.label || g)).join(", "))}${p.user ? " · Konto " + esc(p.user) : ""}">★ Admin ${(p.admin_eff || []).includes("*") ? "alle" : (p.admin_eff || []).map(g => GAMES[g]?.short || g).join(", ")}</span></div>` : ""}</td>
+    <td class="plnet"><label class="hint pllan"><input type="checkbox" data-pllan="${esc(p.id)}" ${p.on_lan ? "checked" : ""} style="width:auto" title="${p.lan_manual ? "von Hand gesetzt" : "automatisch nach IP"}"> LAN${p.lan_manual ? ` <a href="#" data-pllanauto="${esc(p.id)}" title="wieder automatisch nach IP">(auto)</a>` : ""}</label>
+      <div class="mono hint">${p.lan_ip ? `🏠 ${esc(p.lan_ip)}` : ""}${p.lan_ip && p.wan_ip ? "<br>" : ""}${p.wan_ip ? `🌐 ${esc(p.wan_ip)}` : ""}</div></td>
+    <td class="plact"><button class="small" data-pledit="${esc(p.id)}" title="bearbeiten">✎</button><button class="small" data-plmerge="${esc(p.id)}" title="${plMerge ? (plMerge === p.id ? "Zusammenführen abbrechen" : "in den markierten Eintrag übernehmen") : "mit anderem Eintrag zusammenführen"}">⇄</button><button class="small danger" data-pldel="${esc(p.id)}">✕</button></td></tr>`).join("")
+    : `<tr><td colspan="6" class="muted">${players.length ? "Keine Treffer." : "Noch keine Spieler – sie erscheinen automatisch, sobald jemand auf einen Server kommt."}</td></tr>`;
   $$("[data-plsel]").forEach(c => c.onchange = () => { c.checked ? plSel.add(c.dataset.plsel) : plSel.delete(c.dataset.plsel); c.closest("tr").classList.toggle("plsel", c.checked); plSelInfo(); });
   plSelInfo();
   $$("[data-rename]").forEach(i => i.onchange = async () => { players = await api(`/api/players/${encodeURIComponent(i.dataset.rename)}`, {method: "PUT", body: {name: i.value.trim()}}); toast("Nickname gespeichert"); renderPlayerRows(); });
@@ -1855,7 +1855,7 @@ async function openPlayerEdit(id, tr){
   const games = [...new Set(servers.map(s => gameOf(s)))].filter(g => ["cs2", "wreckfest", "valheim", "tf2"].includes(g) || true);
   const adm = new Set(p.admin || []);
   const row = document.createElement("tr"); row.className = "pledit";
-  row.innerHTML = `<td colspan="10"><div class="pleditbox">
+  row.innerHTML = `<td colspan="6"><div class="pleditbox">
     <div><label>Nickname</label><input data-pe="nick" value="${esc(p.nick || "")}" placeholder="${esc(p.name)}"></div>
     <div><label>SteamID (SteamID64, STEAM_0:…, [U:1:…] oder Profil-Link)</label><input data-pe="steamid" class="mono" value="${esc(p.steamid || "")}"></div>
     <div><label>Notiz</label><input data-pe="notes" value="${esc(p.notes || "")}"></div>
@@ -2511,72 +2511,162 @@ function pollJob(id){
   }).catch(err => { $("#createStep").textContent = err.message; });
 }
 
-/* ================= Benutzer ================= */
-async function loadUsers(){
-  try {
-    const r = await api("/api/users");
-    $("#uRole").innerHTML = Object.entries(r.roles).map(([k,l]) => `<option value="${k}" ${k==="user"?"selected":""}>${esc(l)}</option>`).join("");
-    $("#uRows").innerHTML = r.users.map(u => `<tr>
-      <td><b>${esc(u.username)}</b>${me && u.username === me.username ? ' <span class="pill">du</span>' : ""}${u.player ? `<div class="hint">🎮 ${esc(u.player)}</div>` : ""}</td>
-      <td><select data-urole="${esc(u.username)}">${Object.entries(r.roles).map(([k,l]) => `<option value="${k}" ${k===u.role?"selected":""}>${esc(l)}</option>`).join("")}</select></td>
-      <td>${u.role === "admin" ? `<span class="hint">alles</span>` : `<span class="hint">${esc(permSummary(u.perms, r.levels))}${(u.rights || []).includes("tournament") ? " · 🏆 Turnier" : ""}</span> <button class="small" data-uperm="${esc(u.username)}">Rechte …</button>`}</td>
-      <td>${u.created ? fmtDate(u.created) : "–"}</td><td>${u.last_login ? fmtDate(u.last_login) : "nie"}</td>
-      <td><button class="small" data-upw="${esc(u.username)}">Passwort setzen</button> <button class="small danger" data-udel="${esc(u.username)}">Löschen</button></td></tr>`).join("");
-    $$("[data-urole]").forEach(sel => sel.onchange = async () => {
-      try { await api(`/api/users/${sel.dataset.urole}`, {method:"PUT", body:{username: sel.dataset.urole, role: sel.value}}); toast("Rolle geändert"); }
-      catch(err){ toast(err.message, true); loadUsers(); }
-    });
-    $$("[data-uperm]").forEach(b => b.onclick = () => openPerms(r.users.find(x => x.username === b.dataset.uperm), r));
-    $$("[data-upw]").forEach(b => b.onclick = async () => {
-      const pw = prompt(`Neues Passwort für ${b.dataset.upw} (min. 6 Zeichen):`); if (!pw) return;
-      try { await api(`/api/users/${b.dataset.upw}`, {method:"PUT", body:{username: b.dataset.upw, password: pw}}); toast("Passwort gesetzt – Benutzer muss sich neu anmelden"); }
-      catch(err){ toast(err.message, true); }
-    });
-    $$("[data-udel]").forEach(b => b.onclick = async () => {
-      if (!confirm(`Benutzer ${b.dataset.udel} löschen?`)) return;
-      try { await api(`/api/users/${b.dataset.udel}`, {method:"DELETE"}); loadUsers(); } catch(err){ toast(err.message, true); }
-    });
-  } catch(err){ toast(err.message, true); }
-}
-function permSummary(p, levels){
-  p = p || {};
-  const def = +(p["*"] || 0);
+/* ================= Benutzer & Profile ================= */
+let U = {users: [], profiles: [], levels: {}, level_hints: {}, rights: {}, games_used: []}, uSel = new Set(), uProfFilter = "";
+const LV_SHORT = {0: "–", 1: "Sehen", 2: "Bedienen", 3: "Verwalten", 4: "Anlegen"};
+const LV_COL = {0: "#555c69", 1: "#6b7a8f", 2: "#3e8f5a", 3: "#3e6fa8", 4: "#b5562b"};
+const profOf = id => U.profiles.find(p => p.id === id);
+function permChips(perms, max = 6){
+  const p = perms || {}, def = +(p["*"] ?? 0);
   const ex = Object.entries(p).filter(([k, v]) => k !== "*" && +v !== def);
-  return `Alle Spiele: ${levels[def]}` + (ex.length ? ` · ${ex.map(([k, v]) => `${GAMES[k]?.short || GAMES[k]?.label || k}: ${levels[v]}`).join(", ")}` : "");
+  return `<span class="lvchip" style="--c:${LV_COL[def]}">Alle: ${LV_SHORT[def]}</span>` +
+    ex.slice(0, max).map(([k, v]) => `<span class="lvchip" style="--c:${LV_COL[+v]}">${esc(GAMES[k]?.short || k)}: ${LV_SHORT[+v]}</span>`).join("") +
+    (ex.length > max ? `<span class="hint">+${ex.length - max}</span>` : "");
 }
-let permEditing = null;
-function openPerms(u, r){
-  if (!u) return;
-  permEditing = u.username;
-  $("#permUser").textContent = u.username;
-  $("#permHints").innerHTML = Object.entries(r.level_hints).map(([k, h]) => `<b>${esc(r.levels[k])}</b>: ${esc(h)}`).join("<br>");
-  const p = u.perms || {};
-  const opts = (val, withDefault) => (withDefault ? `<option value="" ${val == null ? "selected" : ""}>Standard</option>` : "") +
-    Object.entries(r.levels).map(([k, l]) => `<option value="${k}" ${val != null && +val === +k ? "selected" : ""}>${esc(l)}</option>`).join("");
-  const games = Object.entries(GAMES).sort((a, b) => a[1].label.localeCompare(b[1].label));
-  $("#permGrid").innerHTML = `<label class="permrow permall"><span><b>Alle Spiele (Standard)</b></span><select data-pg="*">${opts(p["*"] ?? 0, false)}</select></label>` +
-    games.map(([k, g]) => `<label class="permrow"><span><span class="gtile" style="background:${g.color};width:16px;height:16px">${gicon(k, 11)}</span>${esc(g.label)}</span><select data-pg="${k}">${opts(k in p ? p[k] : null, true)}</select></label>`).join("");
-  const rr = r.rights || {};
-  $("#permRights").innerHTML = Object.entries(rr).map(([k, l]) => `<label><input type="checkbox" data-pr="${k}" ${(u.rights || []).includes(k) ? "checked" : ""}> ${esc(l)}</label>`).join("") || `<span class="hint">–</span>`;
-  $("#dlgPerm").showModal();
+async function loadUsers(){
+  try { U = await api("/api/users"); } catch (err) { return toast(err.message, true); }
+  renderProfiles(); renderUserCards();
+  $("#uBulkProfile").innerHTML = `<option value="">– kein Profil –</option>` + U.profiles.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
 }
-$("#btnPermCancel").onclick = () => $("#dlgPerm").close();
-$("#permForm").addEventListener("submit", async e => {
-  e.preventDefault();
-  const perms = {};
-  $$("#permGrid [data-pg]").forEach(sel => { if (sel.value !== "") perms[sel.dataset.pg] = +sel.value; });
+function renderProfiles(){
+  const cnt = id => U.users.filter(u => u.profile === id && u.role !== "admin").length;
+  $("#uProfiles").innerHTML = U.profiles.map(p => `<div class="upcard ${uProfFilter === p.id ? "on" : ""}" data-upf="${esc(p.id)}" style="--c:${esc(p.color || "#6b7a8f")}">
+      <div class="uph"><b>${esc(p.name)}</b><span class="hint">${cnt(p.id)} Benutzer</span><button type="button" class="small" data-upedit="${esc(p.id)}" title="Profil bearbeiten">✎</button></div>
+      <div class="hint">${esc(p.desc || "")}</div>
+      <div class="lvchips">${permChips(p.perms, 4)}${(p.rights || []).includes("tournament") ? `<span class="lvchip" style="--c:#d9a441">🏆 Turnier</span>` : ""}</div></div>`).join("") +
+    `<div class="upcard upnew" id="uProfAdd"><b>＋ Neues Profil</b><div class="hint">Rechte-Vorlage für mehrere Benutzer</div></div>`;
+  $$("[data-upf]").forEach(c => c.onclick = e => { if (e.target.closest("[data-upedit]")) return; uProfFilter = uProfFilter === c.dataset.upf ? "" : c.dataset.upf; renderProfiles(); renderUserCards(); });
+  $$("[data-upedit]").forEach(b => b.onclick = () => openProfile(profOf(b.dataset.upedit)));
+  $("#uProfAdd").onclick = () => openProfile(null);
+}
+function renderUserCards(){
+  const f = $("#uFilter").value.trim().toLowerCase();
+  const list = U.users.filter(u => (!f || [u.username, u.note, u.player, profOf(u.profile)?.name].filter(Boolean).join(" ").toLowerCase().includes(f))
+    && (!uProfFilter || u.profile === uProfFilter));
+  $("#uCount").textContent = `${U.users.length}${list.length !== U.users.length ? ` · ${list.length} angezeigt` : ""}`;
+  for (const n of [...uSel]) if (!U.users.some(u => u.username === n)) uSel.delete(n);
+  $("#uCards").innerHTML = list.map(u => {
+    const pr = profOf(u.profile), adm = u.role === "admin", own = Object.keys(u.own_perms || {}).length + (u.own_rights || []).length;
+    return `<div class="ucard ${uSel.has(u.username) ? "sel" : ""}" style="--c:${adm ? "#e5534b" : esc(pr?.color || "#555c69")}">
+      <div class="uch">${adm ? "" : `<input type="checkbox" data-usel="${esc(u.username)}" ${uSel.has(u.username) ? "checked" : ""} style="width:auto">`}
+        <span class="uav">${esc(u.username.slice(0, 1).toUpperCase())}</span>
+        <div class="ucn"><b>${esc(u.username)}</b>${me && u.username === me.username ? ' <span class="pill">du</span>' : ""}
+          <div class="hint">${esc(u.note || "")}${u.player ? `${u.note ? " · " : ""}🎮 ${esc(u.player)}` : ""}</div></div>
+        <span class="ubadge">${adm ? "Administrator" : pr ? esc(pr.name) : u.role === "viewer" ? "Nur ansehen" : "ohne Profil"}</span></div>
+      <div class="lvchips">${adm ? `<span class="lvchip" style="--c:#e5534b">alles</span>` : permChips(u.perms) + ((u.rights || []).includes("tournament") ? `<span class="lvchip" style="--c:#d9a441">🏆 Turnier</span>` : "")}
+        ${own && !adm ? `<span class="hint" title="eigene Abweichungen vom Profil">✱ ${own} Abweichung${own > 1 ? "en" : ""}</span>` : ""}</div>
+      <div class="ucf"><span class="hint">Login: ${u.last_login ? fmtDate(u.last_login) : "nie"}</span>
+        <span><button class="small" data-uedit="${esc(u.username)}">Bearbeiten</button><button class="small danger" data-udel="${esc(u.username)}" title="Löschen">✕</button></span></div></div>`;
+  }).join("") || `<div class="hint">Keine Benutzer${uProfFilter ? " mit diesem Profil" : ""}.</div>`;
+  $$("[data-usel]").forEach(c => c.onchange = () => { c.checked ? uSel.add(c.dataset.usel) : uSel.delete(c.dataset.usel); c.closest(".ucard").classList.toggle("sel", c.checked); uBulkInfo(); });
+  $$("[data-uedit]").forEach(b => b.onclick = () => openUser(U.users.find(x => x.username === b.dataset.uedit)));
+  $$("[data-udel]").forEach(b => b.onclick = async () => {
+    if (!confirm(`Benutzer ${b.dataset.udel} löschen?`)) return;
+    try { await api(`/api/users/${b.dataset.udel}`, {method: "DELETE"}); loadUsers(); } catch (err) { toast(err.message, true); }
+  });
+  uBulkInfo();
+}
+function uBulkInfo(){ $("#uSelCount").textContent = `${uSel.size} ausgewählt`; $("#uBulk").classList.toggle("dim", !uSel.size); }
+$("#uFilter").addEventListener("input", renderUserCards);
+$("#btnUBulk").onclick = async () => {
+  if (!uSel.size) return toast("Erst Benutzer auswählen", true);
   try {
-    const rights = $$("#permRights [data-pr]").filter(c => c.checked).map(c => c.dataset.pr);
-    await api(`/api/users/${permEditing}`, {method: "PUT", body: {username: permEditing, perms, rights}});
-    $("#dlgPerm").close(); toast("Rechte gespeichert"); loadUsers();
-  } catch(err){ toast(err.message, true); }
-});
-$("#btnUAdd").onclick = async () => {
-  try {
-    await api("/api/users", {body:{username: $("#uName").value.trim(), password: $("#uPw").value, role: $("#uRole").value}});
-    toast("Benutzer angelegt"); $("#uName").value = ""; $("#uPw").value = ""; loadUsers();
-  } catch(err){ toast(err.message, true); }
+    const r = await api("/api/users-bulk", {body: {usernames: [...uSel], profile: $("#uBulkProfile").value, clear_own: $("#uBulkClear").checked}});
+    toast(`${r.changed} Benutzer geändert`); uSel.clear(); loadUsers();
+  } catch (e) { toast(e.message, true); }
 };
+// Rechte-Editor: Zeile je Spiel mit Stufen-Buttons; inherit = Wert aus Profil (nur bei Benutzern)
+function permEditor(root, values, inherit, allGames){
+  const games = Object.entries(GAMES).filter(([k]) => allGames || U.games_used.includes(k) || k in values)
+    .sort((a, b) => a[1].label.localeCompare(b[1].label));
+  const row = (k, label, icon) => {
+    const own = k in values;
+    const eff = own ? +values[k] : inherit ? +(k in inherit ? inherit[k] : ("*" in values ? values["*"] : (inherit["*"] ?? 0))) : +(values["*"] ?? 0);
+    return `<div class="perow ${own ? "own" : ""}" data-pek="${k}"><span class="pelabel">${icon}${esc(label)}</span><span class="pebtns">
+      ${(inherit || k !== "*") ? `<button type="button" class="pe0 ${!own ? "on" : ""}" data-pev="" title="${inherit ? "wie im Profil" : "wie „Alle Spiele“"}">${inherit ? "Profil" : "Standard"}</button>` : ""}
+      ${[0, 1, 2, 3, 4].map(v => `<button type="button" data-pev="${v}" class="${eff === v ? (own ? "on" : "inh") : ""}" style="--c:${LV_COL[v]}" title="${esc(U.level_hints[v] || U.levels[v] || "")}">${LV_SHORT[v]}</button>`).join("")}</span></div>`;
+  };
+  root.innerHTML = row("*", "Alle Spiele", "") + games.map(([k, g]) => row(k, g.label, `<span class="gtile" style="background:${g.color};width:16px;height:16px">${gicon(k, 11)}</span>`)).join("");
+  root.querySelectorAll("[data-pev]").forEach(b => b.onclick = () => {
+    const k = b.closest("[data-pek]").dataset.pek;
+    if (b.dataset.pev === "") delete values[k]; else values[k] = +b.dataset.pev;
+    permEditor(root, values, inherit, allGames);
+    root.dispatchEvent(new Event("permchange"));
+  });
+}
+const legend = () => Object.entries(U.level_hints).map(([k, h]) => `<b>${LV_SHORT[k]}</b>: ${esc(h)}`).join(" · ");
+let ufEdit = null, ufVals = {}, ufKind = "user", ufProfile = "";
+function openUser(u){
+  ufEdit = u ? u.username : null; ufVals = {...(u?.own_perms || {})}; ufKind = u?.role === "admin" ? "admin" : "user";
+  ufProfile = u ? (u.profile || "") : (U.profiles[1]?.id || U.profiles[0]?.id || "");
+  $("#uFormTitle").textContent = u ? `Benutzer ${u.username}` : "Neuer Benutzer";
+  $("#ufName").value = u?.username || ""; $("#ufName").disabled = !!u;
+  $("#ufPw").value = ""; $("#ufPwLabel").textContent = u ? "Neues Passwort (leer = unverändert)" : "Passwort (min. 6 Zeichen)";
+  $("#ufNote").value = u?.note || "";
+  $("#ufRights").innerHTML = Object.entries(U.rights).map(([k, l]) => `<label><input type="checkbox" data-ufr="${k}" ${(u?.own_rights || []).includes(k) ? "checked" : ""}> ${esc(l)}</label>`).join("");
+  $("#ufOwn").open = Object.keys(ufVals).length > 0;
+  $("#ufLegend").innerHTML = legend();
+  ufRender();
+  $("#dlgUser").showModal();
+}
+function ufRender(){
+  $$("#ufKind [data-kind]").forEach(b => b.classList.toggle("active", b.dataset.kind === ufKind));
+  $("#ufProfileBox").style.display = ufKind === "admin" ? "none" : "";
+  $("#ufAdminHint").style.display = ufKind === "admin" ? "" : "none";
+  $("#ufProfiles").innerHTML = [{id: "", name: "Ohne Profil", desc: "nur eigene Rechte", color: "#555c69", perms: {"*": 0}}, ...U.profiles].map(p =>
+    `<button type="button" class="ufpc ${ufProfile === p.id ? "on" : ""}" data-ufp="${esc(p.id)}" style="--c:${esc(p.color || "#6b7a8f")}"><b>${esc(p.name)}</b><span class="hint">${esc(p.desc || "")}</span></button>`).join("");
+  $$("[data-ufp]").forEach(b => b.onclick = () => { ufProfile = b.dataset.ufp; ufRender(); });
+  const inherit = profOf(ufProfile)?.perms || {"*": 0};
+  permEditor($("#ufPerms"), ufVals, inherit, $("#ufAllGames").checked);
+  const n = Object.keys(ufVals).length;
+  $("#ufOwnInfo").textContent = n ? `(${n})` : "(keine – es gilt nur das Profil)";
+}
+$("#ufPerms").addEventListener("permchange", () => { const n = Object.keys(ufVals).length; $("#ufOwnInfo").textContent = n ? `(${n})` : "(keine – es gilt nur das Profil)"; });
+$$("#ufKind [data-kind]").forEach(b => b.onclick = () => { ufKind = b.dataset.kind; ufRender(); });
+$("#ufAllGames").onchange = ufRender;
+$("#ufOwnReset").onclick = () => { ufVals = {}; $$("#ufRights [data-ufr]").forEach(c => c.checked = false); ufRender(); };
+$("#btnUfCancel").onclick = () => $("#dlgUser").close();
+$("#btnUNew").onclick = () => openUser(null);
+$("#uForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const body = {username: ufEdit || $("#ufName").value.trim(), note: $("#ufNote").value.trim(),
+    role: ufKind === "admin" ? "admin" : "user", profile: ufKind === "admin" ? null : ufProfile,
+    perms: ufKind === "admin" ? null : ufVals, rights: ufKind === "admin" ? null : $$("#ufRights [data-ufr]").filter(c => c.checked).map(c => c.dataset.ufr)};
+  const pw = $("#ufPw").value;
+  if (pw) body.password = pw;
+  if (!ufEdit && !pw) return toast("Passwort fehlt", true);
+  try {
+    if (ufEdit) await api(`/api/users/${ufEdit}`, {method: "PUT", body}); else await api("/api/users", {body});
+    $("#dlgUser").close(); toast(ufEdit ? "Gespeichert" + (pw ? " – Benutzer muss sich neu anmelden" : "") : "Benutzer angelegt"); loadUsers();
+  } catch (err) { toast(err.message, true); }
+});
+let pfEdit = null, pfVals = {};
+function openProfile(p){
+  pfEdit = p ? p.id : ""; pfVals = {...(p?.perms || {"*": 1})};
+  $("#pfTitle").textContent = p ? `Profil ${p.name}` : "Neues Profil";
+  $("#pfName").value = p?.name || ""; $("#pfColor").value = p?.color || "#3e8f5a"; $("#pfDesc").value = p?.desc || "";
+  $("#pfRights").innerHTML = Object.entries(U.rights).map(([k, l]) => `<label><input type="checkbox" data-pfr="${k}" ${(p?.rights || []).includes(k) ? "checked" : ""}> ${esc(l)}</label>`).join("");
+  $("#btnPfDel").style.visibility = p ? "" : "hidden";
+  permEditor($("#pfPerms"), pfVals, null, $("#pfAllGames").checked);
+  $("#dlgProfile").showModal();
+}
+$("#pfAllGames").onchange = () => permEditor($("#pfPerms"), pfVals, null, $("#pfAllGames").checked);
+$("#btnPfCancel").onclick = () => $("#dlgProfile").close();
+$("#btnUNewProfile").onclick = () => openProfile(null);
+$("#btnPfDel").onclick = async () => {
+  const n = U.users.filter(u => u.profile === pfEdit).length;
+  if (!confirm(`Profil löschen?${n ? ` ${n} Benutzer verlieren es (behalten nur ihre eigenen Rechte).` : ""}`)) return;
+  try { await api(`/api/user-profiles/${pfEdit}`, {method: "DELETE"}); $("#dlgProfile").close(); if (uProfFilter === pfEdit) uProfFilter = ""; loadUsers(); } catch (e) { toast(e.message, true); }
+};
+$("#pfForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  if (!("*" in pfVals)) pfVals["*"] = 0;
+  try {
+    await api("/api/user-profiles", {body: {id: pfEdit, name: $("#pfName").value.trim(), color: $("#pfColor").value, desc: $("#pfDesc").value.trim(),
+      perms: pfVals, rights: $$("#pfRights [data-pfr]").filter(c => c.checked).map(c => c.dataset.pfr)}});
+    $("#dlgProfile").close(); toast("Profil gespeichert"); loadUsers();
+  } catch (err) { toast(err.message, true); }
+});
 $("#btnMyPw").onclick = async () => {
   $("#pwForm").reset();
   let m = null; try { m = await api("/api/me"); } catch {}
