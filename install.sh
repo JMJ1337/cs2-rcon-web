@@ -47,19 +47,26 @@ fi
 command -v jq >/dev/null || die "jq fehlt und konnte nicht installiert werden"
 WT=0; [ "$INTERACTIVE" = 1 ] && command -v whiptail >/dev/null && WT=1
 BT="GrohLAN Spielservermanager – Einrichtung"
-H=20; W=74
+ROWS=$(stty size <"$TTY" 2>/dev/null | awk '{print $1}' || true); COLS=$(stty size <"$TTY" 2>/dev/null | awk '{print $2}' || true)
+ROWS=${ROWS:-24}; COLS=${COLS:-80}; [ "$ROWS" -ge 12 ] 2>/dev/null || ROWS=24; [ "$COLS" -ge 40 ] 2>/dev/null || COLS=80
+W=$(( COLS - 4 )); [ $W -gt 78 ] && W=78
+H=$(( ROWS - 4 )); [ $H -gt 22 ] && H=22
+hgt() {   # hgt "Text" Zusatzzeilen -> passende Fensterhöhe (Text umbrochen auf die Breite)
+  local n; n=$(printf '%b\n' "$1" | fold -s -w $(( W - 4 )) | wc -l)
+  n=$(( n + $2 )); [ $n -gt $(( ROWS - 2 )) ] && n=$(( ROWS - 2 )); [ $n -lt 8 ] && n=8; echo $n
+}
 
-wt() { whiptail --backtitle "$BT" "$@" 3>&1 1>"$TTY" 2>&3 <"$TTY"; }
+wt() { whiptail --backtitle "$BT" --ok-button "OK" --cancel-button "Abbrechen" "$@" 3>&1 1>"$TTY" 2>&3 <"$TTY"; }
 msg() {   # msg "Titel" "Text"
-  if [ "$WT" = 1 ]; then wt --title "$1" --msgbox "$2" $H $W || true
+  if [ "$WT" = 1 ]; then wt --title "$1" --msgbox "$2" $(hgt "$2" 7) $W || true
   elif [ "$INTERACTIVE" = 1 ]; then printf '\n%s\n%s\n' "${c_b}$1${c_0}" "$2"; fi
 }
 ask() {   # ask VAR "Titel" "Frage" "Vorgabe"
   local v=$1 t=$2 q=$3 d=${4:-} a=""
   [ -n "${!v:-}" ] && return
   if [ "$INTERACTIVE" != 1 ]; then printf -v "$v" '%s' "$d"; return; fi
-  if [ "$WT" = 1 ]; then a=$(wt --title "$t" --inputbox "$q" 12 $W "$d") || die "Abgebrochen"
-  else read -r -p "  $q${d:+ [$d]}: " a < $TTY || true; a=${a:-$d}; fi
+  if [ "$WT" = 1 ]; then a=$(wt --title "$t" --inputbox "$q" $(hgt "$q" 8) $W "$d") || die "Abgebrochen"
+  else printf '\n%b\n' "$q"; read -r -p "  > ${d:+[$d] }" a < $TTY || true; a=${a:-$d}; fi
   printf -v "$v" '%s' "$a"
 }
 ask_pw() {  # ask_pw VAR "Titel" "Frage" Mindestlänge
@@ -68,7 +75,7 @@ ask_pw() {  # ask_pw VAR "Titel" "Frage" Mindestlänge
   [ "$INTERACTIVE" = 1 ] || die "$q: bitte als Umgebungsvariable $v übergeben"
   while true; do
     if [ "$WT" = 1 ]; then
-      a=$(wt --title "$t" --passwordbox "$q\n(mindestens $m Zeichen)" 11 $W) || die "Abgebrochen"
+      a=$(wt --title "$t" --passwordbox "$q\n\n(mindestens $m Zeichen)" $(hgt "$q\n\n." 8) $W) || die "Abgebrochen"
       b=$(wt --title "$t" --passwordbox "Passwort wiederholen" 9 $W) || die "Abgebrochen"
     else
       read -r -s -p "  $q (mind. $m Zeichen): " a < $TTY; echo; read -r -s -p "  wiederholen: " b < $TTY; echo
@@ -83,7 +90,7 @@ yesno() {   # yesno VAR "Titel" "Frage" j|n
   [ -n "${!v:-}" ] && return
   if [ "$INTERACTIVE" != 1 ]; then [ "$d" = j ] && printf -v "$v" 1 || printf -v "$v" 0; return; fi
   if [ "$WT" = 1 ]; then
-    if wt --title "$t" --yes-button "Ja" --no-button "Nein" $([ "$d" = n ] && echo --defaultno) --yesno "$q" 14 $W; then printf -v "$v" 1; else printf -v "$v" 0; fi
+    if wt --title "$t" --yes-button "Ja" --no-button "Nein" $([ "$d" = n ] && echo --defaultno) --yesno "$q" $(hgt "$q" 7) $W; then printf -v "$v" 1; else printf -v "$v" 0; fi
   else
     read -r -p "  $q (j/n) [$d]: " a < $TTY || true; a=${a:-$d}
     case "${a,,}" in j|ja|y|yes) printf -v "$v" 1 ;; *) printf -v "$v" 0 ;; esac
@@ -94,7 +101,7 @@ menu() {   # menu VAR "Titel" "Text" Vorgabe tag "Beschreibung" tag "Beschreibun
   [ -n "${!v:-}" ] && return
   if [ "$INTERACTIVE" != 1 ]; then printf -v "$v" '%s' "$d"; return; fi
   if [ "$WT" = 1 ]; then
-    a=$(wt --title "$t" --default-item "$d" --menu "$q" $H $W $(( $# / 2 )) "$@") || die "Abgebrochen"
+    a=$(wt --title "$t" --default-item "$d" --menu "$q" $(hgt "$q" $(( $# / 2 + 8 ))) $W $(( $# / 2 )) "$@") || die "Abgebrochen"
   else
     printf '\n  %s\n' "$q"; local i=1 tags=(); while [ $# -gt 0 ]; do printf '   %d) %s\n' $i "$2"; tags+=("$1"); shift 2; i=$((i+1)); done
     read -r -p "  Auswahl [$d]: " a < $TTY || true
@@ -104,9 +111,23 @@ menu() {   # menu VAR "Titel" "Text" Vorgabe tag "Beschreibung" tag "Beschreibun
 }
 
 # ---------------------------------------------------------------- Netzwerk: IP automatisch
-LAN_IP=${LAN_IP:-$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || true)}
-[ -n "$LAN_IP" ] || LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
-[ -n "$LAN_IP" ] || ask LAN_IP "Netzwerk" "Die IP-Adresse konnte nicht erkannt werden. IP dieses Rechners im LAN:" ""
+IP_GIVEN=${LAN_IP:-}
+DET_IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || true)
+[ -n "$DET_IP" ] || DET_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+VIRT=$(systemd-detect-virt 2>/dev/null || true)
+if [ -z "$IP_GIVEN" ] && [ -n "$DET_IP" ]; then
+  ALL_IPS=$(ip -4 -o addr show scope global 2>/dev/null | awk '{split($4,a,"/"); printf "%s (%s)  ", a[1], $2}' || true)
+  IPQ="Erkannte IP-Adresse dieses Rechners: $DET_IP\nAlle Adressen: ${ALL_IPS:-$DET_IP}\n\nUnter dieser Adresse müssen Spieler und Weboberfläche den Rechner im LAN erreichen. Bitte prüfen und ggf. ändern."
+  case "$DET_IP" in 172.1[6-9].*|172.2[0-9].*|172.3[01].*|10.0.2.*|192.168.122.*)
+    if [ "$VIRT" = microsoft ] || [ "$VIRT" = oracle ] || [ "$VIRT" = kvm ] || [ "$VIRT" = qemu ]; then
+      msg "Netzwerk – Achtung" "Erkannte IP: $DET_IP\n\nDas sieht nach einem internen NAT-Netz der VM aus (Hyper-V „Default Switch“, VirtualBox-NAT, libvirt default). Darüber ist die VM aus dem LAN NICHT erreichbar – Spieler können nicht joinen.\nAbhilfe: Die VM an einen externen Switch / eine Netzwerkbrücke hängen (Hyper-V-Manager → Manager für virtuelle Switches → Externes Netzwerk mit der echten Netzwerkkarte), dann die VM neu starten und das Skript erneut ausführen.\n\nIm nächsten Schritt kannst du die IP trotzdem übernehmen oder ändern."
+    fi ;;
+  esac
+  LAN_IP=$DET_IP
+  [ "$INTERACTIVE" = 1 ] && { LAN_IP=""; ask LAN_IP "Netzwerk" "$IPQ" "$DET_IP"; }
+fi
+LAN_IP=${LAN_IP:-$DET_IP}
+[ -n "$LAN_IP" ] || ask LAN_IP "Netzwerk" "Die IP-Adresse konnte nicht automatisch erkannt werden.\n\nGib die Adresse ein, unter der dieser Rechner im LAN erreichbar ist (z. B. 192.168.1.10). Über diese Adresse erreichen Spieler die Server und du die Weboberfläche.\n\nTipp: Im Router eine feste IP für diesen Rechner einstellen, sonst ändert sie sich evtl. nach einem Neustart." ""
 [ -n "$LAN_IP" ] || die "Keine IP-Adresse"
 GSM_PORT=${GSM_PORT:-8090}
 
@@ -119,23 +140,23 @@ HOME_DIR=$( [ -n "$HOME_USER" ] && getent passwd "$HOME_USER" | cut -d: -f6 || t
 HOME_DIR=${HOME_DIR:-/srv}
 
 # ---------------------------------------------------------------- Fragen
-msg "Willkommen" "Dieser Assistent richtet ein:\n\n  • Docker\n  • Portainer (Container-Verwaltung)\n  • den Spielservermanager (Weboberfläche)\n  • optional Lancache (lokaler Download-Cache)\n\nErkannte IP-Adresse: $LAN_IP\nWeboberfläche später: http://$LAN_IP:$GSM_PORT\n\nNavigation: Pfeiltasten, Tab, Enter."
+msg "Willkommen" "Dieser Assistent richtet ein:\n\n  • Docker\n  • Portainer (Container-Verwaltung)\n  • den Spielservermanager (Weboberfläche)\n  • optional Lancache (lokaler Download-Cache)\n\nErkannte IP-Adresse: $LAN_IP\nWeboberfläche später: http://$LAN_IP:$GSM_PORT\n\nTipp: Diese IP sollte sich nicht ändern – im Router eine feste Adresse (DHCP-Reservierung) für diesen Rechner einstellen.\n\nNavigation: Pfeiltasten wählen, Tab wechselt zu den Knöpfen, Enter bestätigt, Esc bricht ab. Alles lässt sich später in der Weboberfläche ändern."
 
-ask GSM_USER "Benutzer" "Benutzername für den Spielservermanager:" "admin"
+ask GSM_USER "Benutzer" "Benutzername für den Spielservermanager\n\nMit diesem Konto meldest du dich an der Weboberfläche an (Administrator mit allen Rechten). Weitere Benutzer, Profile und Steam-Anmeldung richtest du später unter „Benutzer“ ein.\n\nErlaubt: Kleinbuchstaben, Ziffern, Punkt, Minus, Unterstrich." "admin"
 GSM_USER=$(printf '%s' "$GSM_USER" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9._-'); GSM_USER=${GSM_USER:-admin}
-ask_pw GSM_PASSWORD "Benutzer" "Passwort für $GSM_USER" 8
-ask PORTAINER_USER "Portainer" "Benutzername für Portainer:" "admin"
+ask_pw GSM_PASSWORD "Benutzer" "Passwort für „$GSM_USER“ an der Weboberfläche des Spielservermanagers." 8
+ask PORTAINER_USER "Portainer" "Benutzername für Portainer\n\nPortainer ist die Verwaltungsoberfläche für Docker (https://$LAN_IP:9443). Darin läuft der Spielservermanager als „Stack“ – dort siehst du Container, Logs und kannst Updates einspielen. Für den Alltag brauchst du Portainer meist nicht." "admin"
 if [ -z "${PORTAINER_PASSWORD:-}" ] && [ ${#GSM_PASSWORD} -ge 12 ]; then
-  yesno SAME_PW "Portainer" "Für Portainer dasselbe Passwort nehmen?" j
+  yesno SAME_PW "Portainer" "Für Portainer dasselbe Passwort wie für den Spielservermanager nehmen?\n\n(Portainer verlangt mindestens 12 Zeichen – dein Passwort ist lang genug.)" j
   [ "${SAME_PW:-0}" = 1 ] && PORTAINER_PASSWORD=$GSM_PASSWORD
 fi
-ask_pw PORTAINER_PASSWORD "Portainer" "Passwort für Portainer" 12
+ask_pw PORTAINER_PASSWORD "Portainer" "Passwort für Portainer.\n\nPortainer verlangt mindestens 12 Zeichen." 12
 
 # Speicherort wählen: lokal (Benutzerordner / eigener Ordner) oder Netzwerk (NFS, SMB, iSCSI)
 choose_storage() {   # choose_storage PREFIX "Bezeichnung" lokaler_Standardordner Mountpunkt
   local P=$1 L=$2 DEF=$3 MNT=$4 kind
   local KV="${P}_KIND"
-  menu "$KV" "$L" "Wo sollen die Daten für $L liegen?\n\nTipp: Liegen die Daten im Netzwerk, ist iSCSI deutlich schneller als NFS/SMB (Block-Zugriff, z. B. LUN auf einer Synology) – besonders für den Lancache." local \
+  menu "$KV" "$L" "Wo sollen die Daten für $L liegen?\n\nLokal = Platte in diesem Rechner (schnell, einfach). Netzwerk = NAS: iSCSI bindet ein virtuelles Laufwerk (LUN) ein und ist deutlich schneller als die Dateifreigaben NFS/SMB – besonders für den Lancache. Später änderbar." local \
     local "Lokal – im Benutzerordner ($DEF)" \
     custom "Lokal – eigenen Ordner angeben" \
     iscsi "Netzwerk – iSCSI (empfohlen, schnell)" \
@@ -144,26 +165,26 @@ choose_storage() {   # choose_storage PREFIX "Bezeichnung" lokaler_Standardordne
   kind=${!KV}
   case "$kind" in
     local)  local cur; cur=$(eval echo "\${${P}_DIR:-}"); printf -v "${P}_DIR" '%s' "${cur:-$DEF}" ;;
-    custom) ask "${P}_DIR" "$L" "Ordner für $L (absoluter Pfad):" "$DEF" ;;
+    custom) ask "${P}_DIR" "$L" "Ordner für $L (absoluter Pfad, beginnt mit /).\n\nZ. B. eine zweite Platte unter /srv/… oder /mnt/… – der Ordner wird angelegt, falls er fehlt." "$DEF" ;;
     nfs)
-      ask "${P}_NFS" "$L – NFS" "NFS-Freigabe (Server:/Pfad), z. B. 192.168.1.5:/volume1/spielserver" ""
+      ask "${P}_NFS" "$L – NFS" "NFS-Freigabe im Format Server:/Pfad\n\nZ. B. 192.168.1.5:/volume1/spielserver (Synology: Systemsteuerung → Freigegebener Ordner → NFS-Berechtigungen, diesen Rechner $LAN_IP mit Lese-/Schreibzugriff und „Keine Zuordnung“ erlauben).\n\nEingehängt wird unter $MNT." ""
       printf -v "${P}_DIR" '%s' "$MNT" ;;
     smb)
-      ask "${P}_SMB" "$L – SMB" "SMB-Freigabe, z. B. //192.168.1.5/spielserver" ""
-      ask "${P}_SMBUSER" "$L – SMB" "Benutzer für die Freigabe:" ""
-      ask_pw "${P}_SMBPW" "$L – SMB" "Passwort für die Freigabe" 1
+      ask "${P}_SMB" "$L – SMB" "SMB/CIFS-Freigabe (Windows-/NAS-Freigabe) im Format //Server/Freigabe\n\nZ. B. //192.168.1.5/spielserver\n\nHinweis: SMB kennt keine Linux-Dateirechte und ist am langsamsten – für Spielserver geht es, für den Lancache besser iSCSI nehmen.\n\nEingehängt wird unter $MNT." ""
+      ask "${P}_SMBUSER" "$L – SMB" "Benutzername für die Freigabe (Konto auf dem NAS/Windows-Rechner):" ""
+      ask_pw "${P}_SMBPW" "$L – SMB" "Passwort des Freigabe-Benutzers.\n\nWird nur lesbar für root in /etc/gsm-*.cred gespeichert." 1
       printf -v "${P}_DIR" '%s' "$MNT" ;;
     iscsi)
       apt_q open-iscsi || true
-      ask "${P}_PORTAL" "$L – iSCSI" "IP-Adresse des iSCSI-Ziels (NAS):" ""
+      ask "${P}_PORTAL" "$L – iSCSI" "IP-Adresse des NAS mit dem iSCSI-Ziel\n\nVorher am NAS anlegen (Synology: SAN Manager → LUN + iSCSI-Ziel). Die LUN sollte leer sein – sie wird nach Rückfrage mit ext4 formatiert und unter $MNT dauerhaft eingehängt.\n\nEine LUN darf immer nur von EINEM Rechner benutzt werden." ""
       local tg=() t
       if command -v iscsiadm >/dev/null; then
         while read -r t; do [ -n "$t" ] && tg+=("$t" ""); done < <(iscsiadm -m discovery -t sendtargets -p "$(eval echo \${${P}_PORTAL})" 2>/dev/null | awk '{print $2}' | sort -u)
       fi
-      if [ ${#tg[@]} -gt 0 ]; then menu "${P}_IQN" "$L – iSCSI" "Gefundene Ziele:" "${tg[0]}" "${tg[@]}"
-      else ask "${P}_IQN" "$L – iSCSI" "Kein Ziel automatisch gefunden. Ziel (IQN) eingeben:" ""; fi
-      ask "${P}_CHAPUSER" "$L – iSCSI" "CHAP-Benutzer (leer = ohne):" ""
-      if [ -n "$(eval echo \${${P}_CHAPUSER})" ]; then ask_pw "${P}_CHAPPW" "$L – iSCSI" "CHAP-Passwort" 12; fi
+      if [ ${#tg[@]} -gt 0 ]; then menu "${P}_IQN" "$L – iSCSI" "Auf dem NAS gefundene iSCSI-Ziele (IQN). Wähle das Ziel mit der LUN für $L:" "${tg[0]}" "${tg[@]}"
+      else ask "${P}_IQN" "$L – iSCSI" "Kein Ziel automatisch gefunden.\n\nZiel-Namen (IQN) eingeben, z. B. iqn.2000-01.com.synology:nas.Target-1.abc123 – steht am NAS beim iSCSI-Ziel." ""; fi
+      ask "${P}_CHAPUSER" "$L – iSCSI" "CHAP-Benutzer (leer lassen = ohne Anmeldung)\n\nCHAP ist ein Passwortschutz für das iSCSI-Ziel. Nur eintragen, wenn am NAS beim Ziel „CHAP aktivieren“ eingeschaltet ist." ""
+      if [ -n "$(eval echo \${${P}_CHAPUSER})" ]; then ask_pw "${P}_CHAPPW" "$L – iSCSI" "CHAP-Passwort (wie am NAS beim iSCSI-Ziel eingetragen).\n\nCHAP verlangt 12–16 Zeichen." 12; fi
       printf -v "${P}_DIR" '%s' "$MNT" ;;
   esac
   local d; d=$(eval echo \${${P}_DIR})
@@ -172,12 +193,12 @@ choose_storage() {   # choose_storage PREFIX "Bezeichnung" lokaler_Standardordne
 GAMES_KIND=${GAMES_KIND:-}; [ -n "${GAMES_DIR:-}" ] && GAMES_KIND=${GAMES_KIND:-custom}
 choose_storage GAMES "die Spielserver" "$HOME_DIR/spielserver" /mnt/gsm-spiele
 
-yesno WITH_CACHE "Lancache" "Lancache mitinstallieren?\n\nLokaler Download-Cache für Steam, Epic, Battle.net, Riot … – Spiele werden nur einmal aus dem Internet geladen, danach mit LAN-Geschwindigkeit.\n\nDafür werden die Clients auf diesen Rechner als DNS-Server gestellt." n
+yesno WITH_CACHE "Lancache" "Lancache mitinstallieren?\n\nLokaler Download-Cache für Steam, Epic, Battle.net, Riot … – Spiele werden nur einmal aus dem Internet geladen, danach mit LAN-Geschwindigkeit.\n\nWie es funktioniert: Die Spieler-PCs fragen diesen Rechner als DNS-Server. Download-Adressen von Steam & Co. leitet er auf den Cache um, alles andere reicht er normal ins Internet weiter. Dafür im Router/DHCP den DNS-Server auf $LAN_IP stellen.\n\nBraucht viel Speicherplatz (empfohlen 500 GB+) und belegt die Ports 53, 80 und 443." n
 if [ "$WITH_CACHE" = 1 ]; then
   CACHE_KIND=${CACHE_KIND:-}; [ -n "${CACHE_DIR:-}" ] && CACHE_KIND=${CACHE_KIND:-custom}
   choose_storage CACHE "den Lancache" "$HOME_DIR/lancache" /mnt/gsm-lancache
-  ask CACHE_SIZE "Lancache" "Maximale Cache-Größe (z. B. 500g, 2000g):" "1000g"
-  ask UPSTREAM_DNS "Lancache" "Upstream-DNS (Leerzeichen-getrennt):" "1.1.1.1 8.8.8.8"
+  ask CACHE_SIZE "Lancache" "Maximale Größe des Caches\n\nIst er voll, werden die am längsten nicht benutzten Spiele automatisch gelöscht. Etwas kleiner wählen als der freie Platz am Speicherort.\n\nEinheit: g = Gigabyte (z. B. 500g, 2000g = 2 TB)." "1000g"
+  ask UPSTREAM_DNS "Lancache" "Upstream-DNS (mehrere durch Leerzeichen getrennt)\n\nDer Lancache ist der DNS-Server für die Spieler-PCs. Alles, was nicht gecacht wird (Webseiten, Spiele-Logins …), fragt er bei diesen „vorgelagerten“ DNS-Servern nach.\n\n  1.1.1.1 = Cloudflare, 8.8.8.8 = Google, 9.9.9.9 = Quad9\n  oder die IP deines Routers (z. B. 192.168.1.1), wenn lokale Namen (NAS, Drucker) auflösbar bleiben sollen." "1.1.1.1 8.8.8.8"
 fi
 
 storage_text() {   # storage_text PREFIX
@@ -284,15 +305,55 @@ if ! docker ps -a --format '{{.Names}}' | grep -qx portainer; then
   docker run -d --name portainer --restart=always -p 9443:9443 -p 8000:8000 \
     -v /var/run/docker.sock:/var/run/docker.sock -v portainer_data:/data "$PORTAINER_IMAGE" >/dev/null
 fi
+docker start portainer >/dev/null 2>&1 || true
 P="https://127.0.0.1:9443/api"
-for _ in $(seq 1 60); do curl -ksf "$P/system/status" >/dev/null && break; sleep 2; done
-curl -ksf "$P/system/status" >/dev/null || die "Portainer startet nicht (docker logs portainer)"
-INIT=$(curl -ks -o /dev/null -w '%{http_code}' -X POST "$P/users/admin/init" -H 'Content-Type: application/json' \
-  -d "$(jq -n --arg u "$PORTAINER_USER" --arg p "$PORTAINER_PASSWORD" '{Username:$u,Password:$p}')")
-[ "$INIT" = 200 ] && ok "Portainer-Admin $PORTAINER_USER angelegt" || warn "Portainer war schon eingerichtet – melde mich mit den angegebenen Daten an"
-JWT=$(curl -ksf -X POST "$P/auth" -H 'Content-Type: application/json' \
-  -d "$(jq -n --arg u "$PORTAINER_USER" --arg p "$PORTAINER_PASSWORD" '{Username:$u,Password:$p}')" | jq -r .jwt) \
-  || die "Anmeldung bei Portainer fehlgeschlagen (Benutzer/Passwort?)"
+pt_wait() { for _ in $(seq 1 60); do curl -ksf "$P/system/status" >/dev/null && return 0; sleep 2; done; return 1; }
+pt_wait || die "Portainer startet nicht (docker logs portainer)"
+pt_body() { jq -n --arg u "$PORTAINER_USER" --arg p "$PORTAINER_PASSWORD" '{Username:$u,Password:$p}'; }
+pt_auth() { curl -ks -X POST "$P/auth" -H 'Content-Type: application/json' -d "$(pt_body)" | jq -r '.jwt // empty' 2>/dev/null; }
+pt_has_admin() { [ "$(curl -ks -o /dev/null -w '%{http_code}' "$P/users/admin/check")" = 204 ]; }
+pt_init() { curl -ks -o /tmp/pt_init.out -w '%{http_code}' -X POST "$P/users/admin/init" -H 'Content-Type: application/json' -d "$(pt_body)"; }
+
+if ! pt_has_admin; then
+  code=$(pt_init)
+  if [ "$code" != 200 ]; then
+    # Portainer sperrt die Ersteinrichtung 5 Minuten nach dem Start („timed out for security purposes“) – neu starten
+    warn "Portainer-Ersteinrichtung gesperrt ($code: $(head -c 120 /tmp/pt_init.out 2>/dev/null)) – starte Portainer neu"
+    docker restart portainer >/dev/null; sleep 3; pt_wait || die "Portainer startet nicht"
+    code=$(pt_init)
+  fi
+  [ "$code" = 200 ] || die "Portainer-Admin konnte nicht angelegt werden ($code: $(head -c 200 /tmp/pt_init.out 2>/dev/null))"
+  ok "Portainer-Admin $PORTAINER_USER angelegt"
+fi
+JWT=$(pt_auth)
+tries=0
+while [ -z "$JWT" ]; do
+  tries=$((tries+1))
+  [ "$INTERACTIVE" = 1 ] || die "Anmeldung bei Portainer fehlgeschlagen – Portainer war schon eingerichtet. PORTAINER_USER/PORTAINER_PASSWORD des bestehenden Portainer angeben."
+  CH=""
+  menu CH "Portainer" "Anmeldung bei Portainer als „$PORTAINER_USER“ fehlgeschlagen.\n\nPortainer war auf diesem Rechner schon eingerichtet – vermutlich mit einem anderen Passwort (z. B. von einem früheren Versuch)." retry \
+    retry "Zugangsdaten des bestehenden Portainer eingeben" \
+    reset "Portainer zurücksetzen (Portainer-Einstellungen löschen, Container laufen weiter)" \
+    quit "Abbrechen"
+  case "$CH" in
+    retry)
+      PORTAINER_USER=""; PORTAINER_PASSWORD=""
+      ask PORTAINER_USER "Portainer" "Benutzername des bestehenden Portainer:" "admin"
+      ask_pw PORTAINER_PASSWORD "Portainer" "Passwort des bestehenden Portainer" 1 ;;
+    reset)
+      docker rm -f portainer >/dev/null 2>&1 || true; docker volume rm portainer_data >/dev/null 2>&1 || true
+      docker volume create portainer_data >/dev/null
+      docker run -d --name portainer --restart=always -p 9443:9443 -p 8000:8000 \
+        -v /var/run/docker.sock:/var/run/docker.sock -v portainer_data:/data "$PORTAINER_IMAGE" >/dev/null
+      pt_wait || die "Portainer startet nicht"
+      [ ${#PORTAINER_PASSWORD} -ge 12 ] || { PORTAINER_PASSWORD=""; ask_pw PORTAINER_PASSWORD "Portainer" "Neues Passwort für Portainer" 12; }
+      code=$(pt_init); [ "$code" = 200 ] || die "Portainer-Admin konnte nicht angelegt werden ($code)"
+      ok "Portainer zurückgesetzt, Admin $PORTAINER_USER angelegt" ;;
+    *) die "Abgebrochen" ;;
+  esac
+  JWT=$(pt_auth)
+  [ $tries -lt 5 ] || die "Anmeldung bei Portainer fehlgeschlagen"
+done
 AUTH="Authorization: Bearer $JWT"
 EP=$(curl -ksf -H "$AUTH" "$P/endpoints" | jq -r '[.[] | select(.Type==1)][0].Id // empty')
 if [ -z "$EP" ]; then
@@ -393,11 +454,19 @@ ok "Weboberfläche erreichbar"
 
 # ---------------------------------------------------------------- Einrichten: Benutzer + Ordner
 JAR=$(mktemp); trap 'rm -f "$JAR"' EXIT
-curl -sf -c "$JAR" -X POST "$G/api/login" -H 'Content-Type: application/json' \
-  -d "$(jq -n --arg p "$GSM_PASSWORD" '{username:"admin",password:$p}')" >/dev/null || die "Anmeldung am Spielservermanager fehlgeschlagen"
-curl -sf -b "$JAR" -X PUT "$G/api/settings" -H 'Content-Type: application/json' \
-  -d "$(jq -n --arg g "$GAMES_DIR" --arg c "${CACHE_DIR:-}" '{games_base:$g} + (if $c != "" then {cache_dir:$c} else {} end)')" >/dev/null && ok "Spielserver-Ordner: $GAMES_DIR"
-if [ "$GSM_USER" != "admin" ]; then
+gsm_login() { curl -sf -c "$JAR" -X POST "$G/api/login" -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg u "$1" --arg p "$GSM_PASSWORD" '{username:$u,password:$p}')" >/dev/null; }
+if ! gsm_login "$GSM_USER" && ! gsm_login admin; then
+  warn "Anmeldung am Spielservermanager nicht möglich – vermutlich von einer früheren Installation mit anderem Passwort."
+  warn "Stack ist aktualisiert; Benutzer und Ordner bitte in der Weboberfläche prüfen (Notzugang: admin + ADMIN_PASSWORD aus dem Stack)."
+  GSM_SKIP_SETUP=1
+fi
+if [ "${GSM_SKIP_SETUP:-0}" != 1 ]; then
+  curl -sf -b "$JAR" -X PUT "$G/api/settings" -H 'Content-Type: application/json' \
+    -d "$(jq -n --arg g "$GAMES_DIR" --arg c "${CACHE_DIR:-}" '{games_base:$g} + (if $c != "" then {cache_dir:$c} else {} end)')" >/dev/null \
+    && ok "Spielserver-Ordner: $GAMES_DIR" || warn "Spielserver-Ordner konnte nicht gesetzt werden"
+fi
+if [ "$GSM_USER" != "admin" ] && [ "${GSM_SKIP_SETUP:-0}" != 1 ]; then
   curl -sf -b "$JAR" -X POST "$G/api/users" -H 'Content-Type: application/json' \
     -d "$(jq -n --arg u "$GSM_USER" --arg p "$GSM_PASSWORD" '{username:$u,password:$p,role:"admin"}')" >/dev/null \
     && ok "Benutzer $GSM_USER angelegt (Administrator)" || warn "Benutzer $GSM_USER gibt es schon"

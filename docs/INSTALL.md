@@ -19,6 +19,11 @@ oder in einer VM (Proxmox, VMware, VirtualBox) einbinden und davon starten:
 3. Nach dem Neustart startet auf dem Bildschirm automatisch die Einrichtung (gleiche Fragen wie unten:
    Benutzer, Passwörter, Ordner, Lancache) und richtet Docker, Portainer und den Spielservermanager ein.
 
+**VM unter Hyper-V/VirtualBox:** Die VM muss an einem **externen Switch / einer Netzwerkbrücke** hängen. Der Hyper-V-„Default Switch“
+(Adressen 172.16–31.x) und VirtualBox-NAT (10.0.2.x) sind interne NAT-Netze – darüber ist die VM aus dem LAN nicht erreichbar.
+Hyper-V-Manager → *Manager für virtuelle Switches* → *Externes Netzwerk* mit der echten Netzwerkkarte, VM darauf umstellen, neu starten.
+Das Skript erkennt solche Adressen und weist darauf hin.
+
 Sprache Deutsch, Tastatur deutsch, Zeitzone Europe/Berlin, Netzwerk per DHCP, Rechnername `spielserver`, SSH-Server an.
 Internet wird während der Installation gebraucht (Debian-Pakete, Docker-Images).
 
@@ -47,14 +52,14 @@ oder das Installationsskript erneut ausführen.
 
 | Frage | Vorgabe | Wozu |
 |---|---|---|
-| IP-Adresse im LAN | automatisch | Adresse für Spieler, Lancache-DNS |
+| IP-Adresse im LAN | automatisch erkannt, zum Bestätigen | Adresse, unter der Spieler und Browser den Rechner erreichen. Im Router fest vergeben (DHCP-Reservierung) |
 | Port der Weboberfläche | `8090` | `http://<IP>:8090` |
 | Benutzername + Passwort Spielservermanager | `admin` | dein Admin-Konto (mind. 8 Zeichen) |
 | Benutzername + Passwort Portainer | `admin` | mind. 12 Zeichen (Vorgabe von Portainer), gleiches Passwort möglich |
 | Speicherort Spielserver | lokal im Benutzerordner | lokal / eigener Ordner / iSCSI / NFS / SMB |
 | Lancache mitinstallieren? | nein | lokaler Download-Cache für Steam, Epic, Battle.net … |
-| Speicherort + Größe für den Cache | lokal im Benutzerordner, `1000g` | nur mit Lancache |
-| Upstream-DNS | `1.1.1.1 8.8.8.8` | nur mit Lancache |
+| Speicherort + Größe für den Cache | lokal im Benutzerordner, `1000g` | nur mit Lancache. Ist der Cache voll, fliegen die am längsten unbenutzten Spiele raus |
+| Upstream-DNS | `1.1.1.1 8.8.8.8` | nur mit Lancache: Der Lancache ist DNS-Server der Spieler-PCs; alles, was er nicht cacht (Webseiten, Logins …), fragt er bei diesen „vorgelagerten“ Servern nach. Cloudflare `1.1.1.1`, Google `8.8.8.8`, Quad9 `9.9.9.9` – oder die Router-IP, damit lokale Namen (NAS, Drucker) auflösbar bleiben |
 
 Am Ende steht eine Zusammenfassung – erst nach „j“ wird installiert.
 
