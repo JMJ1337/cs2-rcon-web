@@ -367,6 +367,11 @@
             <div class="field"><label>Zusätzliche Netze für den Scan</label><input id="setScanSubnets" placeholder="z. B. 192.168.200.0/24" class="mono"></div>
             <div class="field"><label>Basisordner für neue Spielserver (auf dem Docker-Host)</label><input id="setGamesBase" placeholder="/mnt/grohlan" class="mono"></div>
             <div class="field"><label>Lancache-Container (leer = automatisch)</label><input id="setCacheContainer" placeholder="z. B. lancache-monolithic-1" class="mono"></div>
+            <div class="field" style="grid-column:1/-1"><label>Speicherorte</label>
+              <div class="hint" style="margin-bottom:6px">Lokal (z. B. <span class="mono">/home/&lt;benutzer&gt;/spielserver</span>) oder Netzwerk: NFS/SMB-Freigabe oder <b>iSCSI</b> – für Netzwerkspeicher ist iSCSI deutlich schneller (Block-Zugriff), besonders für den Lancache. Netzwerkspeicher zuerst auf dem Server einhängen: <a href="#" id="lnkStorage">Speicher (iSCSI)</a> erzeugt das Skript dafür, oder das Installationsskript erneut ausführen.</div>
+              <div class="row" style="gap:6px;align-items:center"><span class="hint" style="min-width:150px">Lancache-Ordner</span><input id="setCacheDir" class="mono" placeholder="/mnt/gsm-lancache" style="flex:1"><button id="btnCacheDir" title="Lancache-Container mit diesem Ordner neu erstellen">Übernehmen</button></div>
+              <div class="hint" id="cacheDirInfo" style="margin-top:4px"></div>
+            </div>
             <div class="field"><label>CS2-Servername nach Modus (<span class="mono">{nr}</span> = Servernummer, <span class="mono">{mode}</span> = Modus; leer = aus)</label><input id="setHostnamePattern" placeholder="Groh CS #{nr} {mode}" class="mono" maxlength="60"></div>
             <div class="field"><label>Name der übrigen Spielserver (<span class="mono">{game}</span> = Spiel, <span class="mono">{nr}</span> = Nummer, <span class="mono">{mode}</span> = Modus; leer = aus) – live bei TF2/Satisfactory, Wreckfest beim Speichern der Rotation</label><input id="setNamesPattern" placeholder="Groh {game} #{nr} {mode}" class="mono" maxlength="60"></div>
             <div class="field"><label>Alle Server jetzt nach Schema benennen</label><button id="btnNamesApply" title="Liste/Übersicht sofort; im Spiel live bei CS2/TF2/Satisfactory, Wreckfest nach Neustart sobald leer">Alle umbenennen</button></div>
@@ -1131,6 +1136,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=182"></script>
+<script src="/static/app.js?v=183"></script>
 </body>
 </html>

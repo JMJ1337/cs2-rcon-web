@@ -27,36 +27,6 @@ ok()   { printf '%s\n' "${c_ok}  ✓${c_0} $*"; }
 warn() { printf '%s\n' "${c_warn}  !${c_0} $*"; }
 die()  { printf '%s\n' "${c_err}  ✗ $*${c_0}" >&2; exit 1; }
 
-# Eingaben auch bei "curl | bash" von der Tastatur lesen
-TTY=/dev/tty
-ask() {          # ask VAR "Frage" "Vorgabe"
-  local __var=$1 __q=$2 __def=${3:-} __ans
-  if [ -n "${!__var:-}" ]; then return; fi
-  if [ "${GSM_YES:-}" = "1" ] || [ ! -r $TTY ]; then printf -v "$__var" '%s' "$__def"; return; fi
-  read -r -p "  $__q${__def:+ [$__def]}: " __ans < $TTY || true
-  printf -v "$__var" '%s' "${__ans:-$__def}"
-}
-ask_pw() {       # ask_pw VAR "Frage" Mindestlänge
-  local __var=$1 __q=$2 __min=${3:-8} __a __b
-  if [ -n "${!__var:-}" ]; then return; fi
-  [ -r $TTY ] || die "$__q: bitte als Umgebungsvariable $__var übergeben"
-  while true; do
-    read -r -s -p "  $__q (mind. $__min Zeichen): " __a < $TTY; echo
-    [ ${#__a} -ge "$__min" ] || { warn "zu kurz"; continue; }
-    read -r -s -p "  wiederholen: " __b < $TTY; echo
-    [ "$__a" = "$__b" ] || { warn "stimmt nicht überein"; continue; }
-    printf -v "$__var" '%s' "$__a"; return
-  done
-}
-yesno() {        # yesno VAR "Frage" j|n
-  local __yv=$1 __yq=$2 __yd=${3:-n} __ya=""
-  if [ -n "${!__yv:-}" ]; then return; fi
-  if [ "${GSM_YES:-}" = "1" ] || [ ! -r $TTY ]; then __ya=$__yd
-  else read -r -p "  $__yq (j/n) [$__yd]: " __ya < $TTY || true; __ya=${__ya:-$__yd}; fi
-  case "${__ya,,}" in j|ja|y|yes) printf -v "$__yv" 1 ;; *) printf -v "$__yv" 0 ;; esac
-}
-
-# ---------------------------------------------------------------- Voraussetzungen
 [ "$(id -u)" = 0 ] || die "Bitte als root ausführen (… | sudo bash)"
 . /etc/os-release 2>/dev/null || true
 case "${ID:-}${ID_LIKE:-}" in
@@ -64,62 +34,225 @@ case "${ID:-}${ID_LIKE:-}" in
   *) warn "Getestet für Debian/Ubuntu – ${PRETTY_NAME:-unbekanntes System} wird trotzdem versucht" ;;
 esac
 
-echo
-printf '%s\n' "${c_b}GrohLAN Spielservermanager – Installation${c_0}"
-printf '%s\n' "${c_dim}Docker · Portainer · Spielservermanager · optional Lancache${c_0}"
-echo
-
-# ---------------------------------------------------------------- Fragen
-LAN_IP_DEF=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || true)
-say "Netzwerk"
-ask LAN_IP "IP-Adresse dieses Rechners im LAN" "${LAN_IP_DEF:-}"
-[ -n "$LAN_IP" ] || die "Keine IP angegeben"
-ask GSM_PORT "Port der Weboberfläche" "8090"
-
-say "Benutzer"
-ask GSM_USER "Benutzername für den Spielservermanager" "admin"
-GSM_USER=$(printf '%s' "$GSM_USER" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9._-')
-ask_pw GSM_PASSWORD "Passwort für $GSM_USER" 8
-ask PORTAINER_USER "Benutzername für Portainer" "admin"
-if [ -z "${PORTAINER_PASSWORD:-}" ] && [ ${#GSM_PASSWORD} -ge 12 ]; then
-  yesno SAME_PW "Für Portainer dasselbe Passwort nehmen?" "j"
-  [ "${SAME_PW:-0}" = 1 ] && PORTAINER_PASSWORD=$GSM_PASSWORD
-fi
-ask_pw PORTAINER_PASSWORD "Passwort für Portainer" 12
-
-say "Ordner"
-ask GAMES_DIR "Ordner für die Spielserver (Spieldateien, Spielstände, Bibliothek)" "/srv/gameserver"
-case "$GAMES_DIR" in /*) ;; *) die "Bitte einen absoluten Pfad angeben" ;; esac
-
-say "Lancache (lokaler Download-Cache für Steam, Epic, Battle.net …)"
-yesno WITH_CACHE "Lancache mitinstallieren?" "n"
-if [ "$WITH_CACHE" = 1 ]; then
-  ask CACHE_DIR "Ordner für den Cache (viel Platz einplanen)" "/srv/lancache"
-  case "$CACHE_DIR" in /*) ;; *) die "Bitte einen absoluten Pfad angeben" ;; esac
-  ask CACHE_SIZE "Maximale Cache-Größe (z. B. 500g, 2000g)" "1000g"
-  ask UPSTREAM_DNS "Upstream-DNS (Leerzeichen-getrennt)" "1.1.1.1 8.8.8.8"
-fi
-
-echo
-say "Zusammenfassung"
-printf '  Weboberfläche:  http://%s:%s  (Benutzer %s)\n' "$LAN_IP" "$GSM_PORT" "$GSM_USER"
-printf '  Portainer:      https://%s:9443  (Benutzer %s)\n' "$LAN_IP" "$PORTAINER_USER"
-printf '  Spielserver:    %s\n' "$GAMES_DIR"
-[ "$WITH_CACHE" = 1 ] && printf '  Lancache:       %s (max. %s), DNS auf %s:53\n' "$CACHE_DIR" "$CACHE_SIZE" "$LAN_IP"
-if [ "${GSM_YES:-}" != "1" ] && [ -r $TTY ]; then
-  yesno GO "Jetzt installieren?" "j"; [ "$GO" = 1 ] || die "Abgebrochen"
-fi
-
-# ---------------------------------------------------------------- Pakete + Docker
-say "Pakete"
+# ---------------------------------------------------------------- Geführte Oberfläche (whiptail), sonst Textfragen
+TTY=/dev/tty
+INTERACTIVE=0
+if [ "${GSM_YES:-}" != "1" ] && [ -r $TTY ] && [ -w $TTY ]; then INTERACTIVE=1; fi
+apt_q() { DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@" >/dev/null 2>&1; }
 if command -v apt-get >/dev/null; then
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq
-  apt-get install -y -qq curl ca-certificates jq iproute2 >/dev/null
+  echo "  Vorbereitung …"
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
+  apt_q curl ca-certificates jq iproute2 whiptail || true
 fi
 command -v jq >/dev/null || die "jq fehlt und konnte nicht installiert werden"
-ok "curl, jq"
+WT=0; [ "$INTERACTIVE" = 1 ] && command -v whiptail >/dev/null && WT=1
+BT="GrohLAN Spielservermanager – Einrichtung"
+H=20; W=74
 
+wt() { whiptail --backtitle "$BT" "$@" 3>&1 1>"$TTY" 2>&3 <"$TTY"; }
+msg() {   # msg "Titel" "Text"
+  if [ "$WT" = 1 ]; then wt --title "$1" --msgbox "$2" $H $W || true
+  elif [ "$INTERACTIVE" = 1 ]; then printf '\n%s\n%s\n' "${c_b}$1${c_0}" "$2"; fi
+}
+ask() {   # ask VAR "Titel" "Frage" "Vorgabe"
+  local v=$1 t=$2 q=$3 d=${4:-} a=""
+  [ -n "${!v:-}" ] && return
+  if [ "$INTERACTIVE" != 1 ]; then printf -v "$v" '%s' "$d"; return; fi
+  if [ "$WT" = 1 ]; then a=$(wt --title "$t" --inputbox "$q" 12 $W "$d") || die "Abgebrochen"
+  else read -r -p "  $q${d:+ [$d]}: " a < $TTY || true; a=${a:-$d}; fi
+  printf -v "$v" '%s' "$a"
+}
+ask_pw() {  # ask_pw VAR "Titel" "Frage" Mindestlänge
+  local v=$1 t=$2 q=$3 m=${4:-8} a b
+  [ -n "${!v:-}" ] && return
+  [ "$INTERACTIVE" = 1 ] || die "$q: bitte als Umgebungsvariable $v übergeben"
+  while true; do
+    if [ "$WT" = 1 ]; then
+      a=$(wt --title "$t" --passwordbox "$q\n(mindestens $m Zeichen)" 11 $W) || die "Abgebrochen"
+      b=$(wt --title "$t" --passwordbox "Passwort wiederholen" 9 $W) || die "Abgebrochen"
+    else
+      read -r -s -p "  $q (mind. $m Zeichen): " a < $TTY; echo; read -r -s -p "  wiederholen: " b < $TTY; echo
+    fi
+    if [ ${#a} -lt "$m" ]; then msg "$t" "Das Passwort ist zu kurz (mindestens $m Zeichen)."; continue; fi
+    if [ "$a" != "$b" ]; then msg "$t" "Die Passwörter stimmen nicht überein."; continue; fi
+    printf -v "$v" '%s' "$a"; return
+  done
+}
+yesno() {   # yesno VAR "Titel" "Frage" j|n
+  local v=$1 t=$2 q=$3 d=${4:-n} a=""
+  [ -n "${!v:-}" ] && return
+  if [ "$INTERACTIVE" != 1 ]; then [ "$d" = j ] && printf -v "$v" 1 || printf -v "$v" 0; return; fi
+  if [ "$WT" = 1 ]; then
+    if wt --title "$t" --yes-button "Ja" --no-button "Nein" $([ "$d" = n ] && echo --defaultno) --yesno "$q" 14 $W; then printf -v "$v" 1; else printf -v "$v" 0; fi
+  else
+    read -r -p "  $q (j/n) [$d]: " a < $TTY || true; a=${a:-$d}
+    case "${a,,}" in j|ja|y|yes) printf -v "$v" 1 ;; *) printf -v "$v" 0 ;; esac
+  fi
+}
+menu() {   # menu VAR "Titel" "Text" Vorgabe tag "Beschreibung" tag "Beschreibung" …
+  local v=$1 t=$2 q=$3 d=$4 a=""; shift 4
+  [ -n "${!v:-}" ] && return
+  if [ "$INTERACTIVE" != 1 ]; then printf -v "$v" '%s' "$d"; return; fi
+  if [ "$WT" = 1 ]; then
+    a=$(wt --title "$t" --default-item "$d" --menu "$q" $H $W $(( $# / 2 )) "$@") || die "Abgebrochen"
+  else
+    printf '\n  %s\n' "$q"; local i=1 tags=(); while [ $# -gt 0 ]; do printf '   %d) %s\n' $i "$2"; tags+=("$1"); shift 2; i=$((i+1)); done
+    read -r -p "  Auswahl [$d]: " a < $TTY || true
+    if [[ "$a" =~ ^[0-9]+$ ]] && [ "$a" -ge 1 ] && [ "$a" -le ${#tags[@]} ]; then a=${tags[$((a-1))]}; else a=$d; fi
+  fi
+  printf -v "$v" '%s' "$a"
+}
+
+# ---------------------------------------------------------------- Netzwerk: IP automatisch
+LAN_IP=${LAN_IP:-$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || true)}
+[ -n "$LAN_IP" ] || LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+[ -n "$LAN_IP" ] || ask LAN_IP "Netzwerk" "Die IP-Adresse konnte nicht erkannt werden. IP dieses Rechners im LAN:" ""
+[ -n "$LAN_IP" ] || die "Keine IP-Adresse"
+GSM_PORT=${GSM_PORT:-8090}
+
+# Benutzer, in dessen Ordner „lokal (automatisch)“ landet: sudo-Aufrufer, sonst erster normaler Benutzer (z. B. gsm vom ISO)
+HOME_USER=${SUDO_USER:-}
+if [ -z "$HOME_USER" ] || [ "$HOME_USER" = root ]; then
+  HOME_USER=$(getent passwd | awk -F: '$3>=1000 && $3<60000 {print $1; exit}')
+fi
+HOME_DIR=$( [ -n "$HOME_USER" ] && getent passwd "$HOME_USER" | cut -d: -f6 || true)
+HOME_DIR=${HOME_DIR:-/srv}
+
+# ---------------------------------------------------------------- Fragen
+msg "Willkommen" "Dieser Assistent richtet ein:\n\n  • Docker\n  • Portainer (Container-Verwaltung)\n  • den Spielservermanager (Weboberfläche)\n  • optional Lancache (lokaler Download-Cache)\n\nErkannte IP-Adresse: $LAN_IP\nWeboberfläche später: http://$LAN_IP:$GSM_PORT\n\nNavigation: Pfeiltasten, Tab, Enter."
+
+ask GSM_USER "Benutzer" "Benutzername für den Spielservermanager:" "admin"
+GSM_USER=$(printf '%s' "$GSM_USER" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9._-'); GSM_USER=${GSM_USER:-admin}
+ask_pw GSM_PASSWORD "Benutzer" "Passwort für $GSM_USER" 8
+ask PORTAINER_USER "Portainer" "Benutzername für Portainer:" "admin"
+if [ -z "${PORTAINER_PASSWORD:-}" ] && [ ${#GSM_PASSWORD} -ge 12 ]; then
+  yesno SAME_PW "Portainer" "Für Portainer dasselbe Passwort nehmen?" j
+  [ "${SAME_PW:-0}" = 1 ] && PORTAINER_PASSWORD=$GSM_PASSWORD
+fi
+ask_pw PORTAINER_PASSWORD "Portainer" "Passwort für Portainer" 12
+
+# Speicherort wählen: lokal (Benutzerordner / eigener Ordner) oder Netzwerk (NFS, SMB, iSCSI)
+choose_storage() {   # choose_storage PREFIX "Bezeichnung" lokaler_Standardordner Mountpunkt
+  local P=$1 L=$2 DEF=$3 MNT=$4 kind
+  local KV="${P}_KIND"
+  menu "$KV" "$L" "Wo sollen die Daten für $L liegen?\n\nTipp: Liegen die Daten im Netzwerk, ist iSCSI deutlich schneller als NFS/SMB (Block-Zugriff, z. B. LUN auf einer Synology) – besonders für den Lancache." local \
+    local "Lokal – im Benutzerordner ($DEF)" \
+    custom "Lokal – eigenen Ordner angeben" \
+    iscsi "Netzwerk – iSCSI (empfohlen, schnell)" \
+    nfs "Netzwerk – NFS-Freigabe" \
+    smb "Netzwerk – SMB/CIFS-Freigabe (Windows/NAS)"
+  kind=${!KV}
+  case "$kind" in
+    local)  local cur; cur=$(eval echo "\${${P}_DIR:-}"); printf -v "${P}_DIR" '%s' "${cur:-$DEF}" ;;
+    custom) ask "${P}_DIR" "$L" "Ordner für $L (absoluter Pfad):" "$DEF" ;;
+    nfs)
+      ask "${P}_NFS" "$L – NFS" "NFS-Freigabe (Server:/Pfad), z. B. 192.168.1.5:/volume1/spielserver" ""
+      printf -v "${P}_DIR" '%s' "$MNT" ;;
+    smb)
+      ask "${P}_SMB" "$L – SMB" "SMB-Freigabe, z. B. //192.168.1.5/spielserver" ""
+      ask "${P}_SMBUSER" "$L – SMB" "Benutzer für die Freigabe:" ""
+      ask_pw "${P}_SMBPW" "$L – SMB" "Passwort für die Freigabe" 1
+      printf -v "${P}_DIR" '%s' "$MNT" ;;
+    iscsi)
+      apt_q open-iscsi || true
+      ask "${P}_PORTAL" "$L – iSCSI" "IP-Adresse des iSCSI-Ziels (NAS):" ""
+      local tg=() t
+      if command -v iscsiadm >/dev/null; then
+        while read -r t; do [ -n "$t" ] && tg+=("$t" ""); done < <(iscsiadm -m discovery -t sendtargets -p "$(eval echo \${${P}_PORTAL})" 2>/dev/null | awk '{print $2}' | sort -u)
+      fi
+      if [ ${#tg[@]} -gt 0 ]; then menu "${P}_IQN" "$L – iSCSI" "Gefundene Ziele:" "${tg[0]}" "${tg[@]}"
+      else ask "${P}_IQN" "$L – iSCSI" "Kein Ziel automatisch gefunden. Ziel (IQN) eingeben:" ""; fi
+      ask "${P}_CHAPUSER" "$L – iSCSI" "CHAP-Benutzer (leer = ohne):" ""
+      if [ -n "$(eval echo \${${P}_CHAPUSER})" ]; then ask_pw "${P}_CHAPPW" "$L – iSCSI" "CHAP-Passwort" 12; fi
+      printf -v "${P}_DIR" '%s' "$MNT" ;;
+  esac
+  local d; d=$(eval echo \${${P}_DIR})
+  case "$d" in /*) ;; *) die "$L: bitte einen absoluten Pfad angeben" ;; esac
+}
+GAMES_KIND=${GAMES_KIND:-}; [ -n "${GAMES_DIR:-}" ] && GAMES_KIND=${GAMES_KIND:-custom}
+choose_storage GAMES "die Spielserver" "$HOME_DIR/spielserver" /mnt/gsm-spiele
+
+yesno WITH_CACHE "Lancache" "Lancache mitinstallieren?\n\nLokaler Download-Cache für Steam, Epic, Battle.net, Riot … – Spiele werden nur einmal aus dem Internet geladen, danach mit LAN-Geschwindigkeit.\n\nDafür werden die Clients auf diesen Rechner als DNS-Server gestellt." n
+if [ "$WITH_CACHE" = 1 ]; then
+  CACHE_KIND=${CACHE_KIND:-}; [ -n "${CACHE_DIR:-}" ] && CACHE_KIND=${CACHE_KIND:-custom}
+  choose_storage CACHE "den Lancache" "$HOME_DIR/lancache" /mnt/gsm-lancache
+  ask CACHE_SIZE "Lancache" "Maximale Cache-Größe (z. B. 500g, 2000g):" "1000g"
+  ask UPSTREAM_DNS "Lancache" "Upstream-DNS (Leerzeichen-getrennt):" "1.1.1.1 8.8.8.8"
+fi
+
+storage_text() {   # storage_text PREFIX
+  local k d; k=$(eval echo \${${1}_KIND}); d=$(eval echo \${${1}_DIR})
+  case "$k" in
+    nfs) echo "$d (NFS $(eval echo \${${1}_NFS}))" ;;
+    smb) echo "$d (SMB $(eval echo \${${1}_SMB}))" ;;
+    iscsi) echo "$d (iSCSI $(eval echo \${${1}_PORTAL}))" ;;
+    *) echo "$d" ;;
+  esac
+}
+SUMMARY="Weboberfläche:  http://$LAN_IP:$GSM_PORT  (Benutzer $GSM_USER)
+Portainer:      https://$LAN_IP:9443  (Benutzer $PORTAINER_USER)
+Spielserver:    $(storage_text GAMES)"
+[ "$WITH_CACHE" = 1 ] && SUMMARY="$SUMMARY
+Lancache:       $(storage_text CACHE), max. $CACHE_SIZE
+                DNS auf $LAN_IP:53"
+if [ "$INTERACTIVE" = 1 ]; then
+  yesno GO "Zusammenfassung" "$SUMMARY\n\nJetzt installieren?" j
+  [ "$GO" = 1 ] || die "Abgebrochen"
+fi
+clear 2>/dev/null || true
+echo; printf '%s\n' "${c_b}GrohLAN Spielservermanager – Installation${c_0}"; printf '%s\n\n' "$SUMMARY"
+
+# ---------------------------------------------------------------- Speicher einrichten (Netzwerk einhängen)
+fstab_add() {   # fstab_add "Zeile" Mountpunkt
+  grep -qsE "[[:space:]]$2[[:space:]]" /etc/fstab || echo "$1" >> /etc/fstab
+}
+setup_storage() {   # setup_storage PREFIX "Bezeichnung"
+  local P=$1 L=$2 k d
+  k=$(eval echo \${${P}_KIND}); d=$(eval echo \${${P}_DIR})
+  case "$k" in
+    nfs)
+      say "$L: NFS einhängen"; apt_q nfs-common || die "nfs-common konnte nicht installiert werden"
+      mkdir -p "$d"
+      fstab_add "$(eval echo \${${P}_NFS}) $d nfs defaults,_netdev,nofail,noatime 0 0" "$d"
+      mount "$d" 2>/dev/null || mount -a || die "NFS-Freigabe lässt sich nicht einhängen"
+      ok "$d eingehängt" ;;
+    smb)
+      say "$L: SMB einhängen"; apt_q cifs-utils || die "cifs-utils konnte nicht installiert werden"
+      mkdir -p "$d"; local cred="/etc/gsm-$(basename "$d").cred"
+      printf 'username=%s\npassword=%s\n' "$(eval echo \${${P}_SMBUSER})" "$(eval echo \${${P}_SMBPW})" > "$cred"; chmod 600 "$cred"
+      fstab_add "$(eval echo \${${P}_SMB}) $d cifs credentials=$cred,file_mode=0777,dir_mode=0777,noperm,_netdev,nofail,vers=3.0 0 0" "$d"
+      mount "$d" 2>/dev/null || mount -a || die "SMB-Freigabe lässt sich nicht einhängen"
+      ok "$d eingehängt"; warn "SMB ist für Spielserver/Cache langsamer als iSCSI und kennt keine Linux-Rechte – im Zweifel iSCSI nehmen" ;;
+    iscsi)
+      say "$L: iSCSI verbinden"; apt_q open-iscsi || die "open-iscsi konnte nicht installiert werden"
+      systemctl enable --now iscsid open-iscsi >/dev/null 2>&1 || true
+      local portal iqn cu cp dev
+      portal=$(eval echo \${${P}_PORTAL}); iqn=$(eval echo \${${P}_IQN}); cu=$(eval echo \${${P}_CHAPUSER:-}); cp=$(eval echo \${${P}_CHAPPW:-})
+      iscsiadm -m discovery -t sendtargets -p "$portal" >/dev/null 2>&1 || true
+      if [ -n "$cu" ]; then
+        iscsiadm -m node -T "$iqn" -p "$portal" -o update -n node.session.auth.authmethod -v CHAP
+        iscsiadm -m node -T "$iqn" -p "$portal" -o update -n node.session.auth.username -v "$cu"
+        iscsiadm -m node -T "$iqn" -p "$portal" -o update -n node.session.auth.password -v "$cp"
+      fi
+      iscsiadm -m node -T "$iqn" -p "$portal" -o update -n node.startup -v automatic
+      iscsiadm -m node -T "$iqn" -p "$portal" --login >/dev/null 2>&1 || true
+      for _ in $(seq 1 20); do dev=$(ls /dev/disk/by-path/*"${iqn}"-lun-* 2>/dev/null | grep -v -- -part | head -1); [ -n "$dev" ] && break; sleep 1; done
+      [ -n "$dev" ] || die "iSCSI-Ziel $iqn liefert keine LUN (Initiator am NAS freigegeben? $(cat /etc/iscsi/initiatorname.iscsi 2>/dev/null | cut -d= -f2))"
+      dev=$(readlink -f "$dev")
+      if ! blkid "$dev" >/dev/null 2>&1; then
+        local FMT=""; yesno FMT "iSCSI" "Die LUN $dev ($(lsblk -dno SIZE "$dev")) ist leer.\n\nJetzt mit ext4 formatieren? (Alle Daten darauf gehen verloren.)" j
+        [ "$FMT" = 1 ] || die "Ohne Dateisystem geht es nicht weiter"
+        mkfs.ext4 -F -L "gsm-$(basename "$d" | sed 's/^gsm-//')" "$dev" >/dev/null
+      fi
+      mkdir -p "$d"
+      fstab_add "UUID=$(blkid -s UUID -o value "$dev") $d $(blkid -s TYPE -o value "$dev") defaults,_netdev,nofail,noatime 0 2" "$d"
+      mount "$d" 2>/dev/null || mount -a || die "LUN lässt sich nicht einhängen"
+      ok "$d eingehängt ($dev)" ;;
+    *) mkdir -p "$d"; ok "Ordner $d" ;;
+  esac
+}
+
+# ---------------------------------------------------------------- Docker
 say "Docker"
 if ! command -v docker >/dev/null; then
   curl -fsSL https://get.docker.com | sh >/dev/null
@@ -128,12 +261,12 @@ systemctl enable --now docker >/dev/null 2>&1 || true
 docker info >/dev/null 2>&1 || die "Docker läuft nicht"
 ok "Docker $(docker version -f '{{.Server.Version}}')"
 
-mkdir -p "$GAMES_DIR"
-ok "Ordner $GAMES_DIR"
+setup_storage GAMES "Spielserver"
+GAMES_DIR=$GAMES_DIR
+if [ "$WITH_CACHE" = 1 ]; then setup_storage CACHE "Lancache"; mkdir -p "$CACHE_DIR/data" "$CACHE_DIR/logs"; fi
 
 # ---------------------------------------------------------------- Port 53 für Lancache-DNS frei machen
 if [ "$WITH_CACHE" = 1 ]; then
-  mkdir -p "$CACHE_DIR/data" "$CACHE_DIR/logs"
   if ss -lunp 2>/dev/null | grep -q ':53 .*systemd-resolve'; then
     say "systemd-resolved belegt Port 53 – DNS-Stub abschalten"
     mkdir -p /etc/systemd/resolved.conf.d
@@ -263,7 +396,7 @@ JAR=$(mktemp); trap 'rm -f "$JAR"' EXIT
 curl -sf -c "$JAR" -X POST "$G/api/login" -H 'Content-Type: application/json' \
   -d "$(jq -n --arg p "$GSM_PASSWORD" '{username:"admin",password:$p}')" >/dev/null || die "Anmeldung am Spielservermanager fehlgeschlagen"
 curl -sf -b "$JAR" -X PUT "$G/api/settings" -H 'Content-Type: application/json' \
-  -d "$(jq -n --arg g "$GAMES_DIR" '{games_base:$g}')" >/dev/null && ok "Spielserver-Ordner: $GAMES_DIR"
+  -d "$(jq -n --arg g "$GAMES_DIR" --arg c "${CACHE_DIR:-}" '{games_base:$g} + (if $c != "" then {cache_dir:$c} else {} end)')" >/dev/null && ok "Spielserver-Ordner: $GAMES_DIR"
 if [ "$GSM_USER" != "admin" ]; then
   curl -sf -b "$JAR" -X POST "$G/api/users" -H 'Content-Type: application/json' \
     -d "$(jq -n --arg u "$GSM_USER" --arg p "$GSM_PASSWORD" '{username:$u,password:$p,role:"admin"}')" >/dev/null \

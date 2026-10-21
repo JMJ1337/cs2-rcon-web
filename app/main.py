@@ -3246,6 +3246,7 @@ class SettingsIn(BaseModel):
     scan_subnets: str | None = Field(None, max_length=200)
     games_base: str | None = Field(None, max_length=200)
     cache_container: str | None = Field(None, max_length=100)
+    cache_dir: str | None = Field(None, max_length=300)
     hostname_pattern: str | None = Field(None, max_length=60)
     names_pattern: str | None = Field(None, max_length=60)
     internet_host: str | None = Field(None, max_length=120)
@@ -8317,6 +8318,48 @@ async def rcon_enable(sid: str, data: RconEnableIn):
         raise HTTPException(502, str(e))
     await _set_server_fields(sid, password=pw)
     return {"ok": True}
+
+
+class CacheDirIn(BaseModel):
+    path: str = Field(min_length=2, max_length=300)
+
+
+@app.get("/api/cache/dir", dependencies=auth)
+async def cache_dir_get():
+    """Wo liegt der Lancache-Cache gerade? (Quelle der Einbindung /data/cache im monolithic-Container)"""
+    name = await cache_stats.detect(automation.get_settings().get("cache_container") or "")
+    if not name:
+        return {"container": None}
+    info = await docker_api.inspect(name)
+    src = {m.get("Destination"): m.get("Source") for m in info.get("Mounts") or []}
+    cache = src.get("/data/cache") or ""
+    return {"container": name, "cache": cache, "logs": src.get("/data/logs") or "",
+            "base": cache[:-5] if cache.endswith("/data") else cache}
+
+
+@app.post("/api/cache/dir", dependencies=auth)
+async def cache_dir_set(data: CacheDirIn):
+    """Lancache auf einen anderen Ordner umstellen (Container wird mit neuer Einbindung neu erstellt).
+    Der alte Cache bleibt liegen – der neue füllt sich beim nächsten Download."""
+    path = os.path.normpath(data.path.strip())
+    if not path.startswith("/") or path in ("/", "/proc", "/sys", "/dev", "/etc", "/var/run") or ".." in data.path:
+        raise HTTPException(400, "Bitte einen absoluten Ordner angeben (z. B. /mnt/gsm-lancache)")
+    name = await cache_stats.detect(automation.get_settings().get("cache_container") or "")
+    if not name:
+        raise HTTPException(404, "Kein Lancache-Container gefunden")
+    try:
+        await docker_api.run_helper([f"{path}:/t"], ["sh", "-c", "mkdir -p /t/data /t/logs && echo ok"], timeout=60)
+
+        def mutate(cfg, hc):
+            binds = [b for b in (hc.get("Binds") or []) if b.split(":")[1:2] not in (["/data/cache"], ["/data/logs"])]
+            hc["Binds"] = binds + [f"{path}/data:/data/cache", f"{path}/logs:/data/logs"]
+            hc["Mounts"] = [m for m in (hc.get("Mounts") or []) if m.get("Target") not in ("/data/cache", "/data/logs")]
+        await docker_api.recreate(name, mutate)
+    except docker_api.DockerError as e:
+        raise HTTPException(502, str(e))
+    automation.save_settings({"cache_dir": path})
+    cache_stats.state.update(container=None, offset=0)
+    return {"ok": True, "container": name, "path": path}
 
 
 class CatPortsIn(BaseModel):

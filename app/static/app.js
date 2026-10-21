@@ -2027,6 +2027,11 @@ function renderAuto(){
   $("#setScanSubnets").value = settings.scan_subnets || "";
   $("#setGamesBase").value = settings.games_base || "/mnt/grohlan";
   $("#setCacheContainer").value = settings.cache_container || "";
+  api("/api/cache/dir").then(r => {
+    if (!r.container) { $("#cacheDirInfo").textContent = "Kein Lancache-Container gefunden."; $("#btnCacheDir").disabled = true; return; }
+    $("#setCacheDir").value = r.base || settings.cache_dir || ""; $("#btnCacheDir").disabled = false;
+    $("#cacheDirInfo").textContent = `Container ${r.container} – Cache: ${r.cache || "?"}`;
+  }).catch(() => {});
   $("#setHostnamePattern").value = settings.hostname_pattern ?? "Groh CS #{nr} {mode}";
   $("#setNamesPattern").value = settings.names_pattern ?? "Groh {game} #{nr} {mode}";
   $("#setInternetHost").value = settings.internet_host || "";
@@ -3868,6 +3873,13 @@ $("#btnBkRun").onclick = async () => { try { await api("/api/backup/run", {metho
 $("#btnGsltMaintain").onclick = async () => { try { const r = await api("/api/gslt/maintain", {method: "POST"}); toast(`Erneuert: ${r.renewed.length + r.manual.length}${r.manual.length ? " (von Hand eintragen: " + r.manual.join(", ") + ")" : ""}${r.errors.length ? " · Fehler: " + r.errors.join("; ") : ""}`, !!r.errors.length); loadGslt(); } catch (e){ toast(e.message, true); } };
 $("#btnGsltCleanup").onclick = async () => { if (!confirm("Abgelaufene Tokens, die kein Server benutzt, bei Steam und hier löschen?")) return; try { const r = await api("/api/gslt/cleanup", {method: "POST"}); toast(`Gelöscht: ${r.removed.length ? r.removed.join(", ") : "keine"}`); loadGslt(); } catch (e){ toast(e.message, true); } };
 
+$("#lnkStorage").onclick = e => { e.preventDefault(); showView("storage"); };
+$("#btnCacheDir").onclick = async () => {
+  const path = $("#setCacheDir").value.trim(); if (!path) return;
+  if (!confirm(`Lancache auf ${path} umstellen?\nDer Container wird neu erstellt (kurze Unterbrechung). Der bisherige Cache bleibt am alten Ort liegen, der neue füllt sich beim nächsten Download.`)) return;
+  try { const r = await api("/api/cache/dir", {body: {path}}); toast(`Lancache nutzt jetzt ${r.path}`); $("#cacheDirInfo").textContent = `Container ${r.container} – Cache: ${r.path}/data`; }
+  catch (e) { toast(e.message, true); }
+};
 $("#btnNamesApply").onclick = async () => {
   if (!confirm("Alle Server nach dem Namensschema umbenennen? (vorher „Speichern“, falls du das Schema geändert hast)")) return;
   try { const r = await api("/api/names/apply", {method: "POST"}); toast(`${r.renamed.length} Server umbenannt: ` + r.renamed.map(x => x.name).join(", ")); await loadServers(); }

@@ -22,17 +22,38 @@ oder in einer VM (Proxmox, VMware, VirtualBox) einbinden und davon starten:
 Sprache Deutsch, Tastatur deutsch, Zeitzone Europe/Berlin, Netzwerk per DHCP, Rechnername `spielserver`, SSH-Server an.
 Internet wird während der Installation gebraucht (Debian-Pakete, Docker-Images).
 
+## Geführte Einrichtung
+
+Das Skript läuft als geführte Oberfläche (Menüs, Pfeiltasten/Tab/Enter). Die **IP-Adresse wird automatisch erkannt**.
+
+### Speicherort für Spielserver und Lancache
+
+| Auswahl | Was passiert |
+|---|---|
+| **Lokal – im Benutzerordner** | `/home/<benutzer>/spielserver` bzw. `/home/<benutzer>/lancache` |
+| **Lokal – eigener Ordner** | beliebiger Pfad, z. B. eine zweite Platte |
+| **Netzwerk – iSCSI** (empfohlen) | installiert `open-iscsi`, sucht die Ziele am NAS, meldet sich an (optional CHAP), formatiert eine **leere** LUN nach Rückfrage (ext4) und hängt sie dauerhaft unter `/mnt/gsm-…` ein. Block-Zugriff – deutlich schneller als NFS/SMB, ideal für den Lancache |
+| **Netzwerk – NFS** | installiert `nfs-common`, Eintrag in `/etc/fstab`, eingehängt unter `/mnt/gsm-…` |
+| **Netzwerk – SMB/CIFS** | installiert `cifs-utils`, Zugangsdaten in `/etc/gsm-*.cred`, eingehängt unter `/mnt/gsm-…` (langsamer, ohne Linux-Rechte) |
+
+Für iSCSI am NAS (z. B. Synology: SAN Manager → LUN + Ziel) den **Initiator des Servers** erlauben – den Namen zeigt das Skript bei einem Fehler an
+(`/etc/iscsi/initiatorname.iscsi`).
+
+**Später ändern:** Weboberfläche → *Automatik & Einstellungen* → „Basisordner für neue Spielserver“ und „Lancache-Ordner“
+(stellt den Lancache-Container auf den neuen Ordner um). Netzwerkspeicher dafür vorher einhängen – *Speicher (iSCSI)* erzeugt das Skript,
+oder das Installationsskript erneut ausführen.
+
 ## Was das Skript fragt
 
 | Frage | Vorgabe | Wozu |
 |---|---|---|
-| IP-Adresse im LAN | wird erkannt | Adresse für Spieler, Lancache-DNS |
+| IP-Adresse im LAN | automatisch | Adresse für Spieler, Lancache-DNS |
 | Port der Weboberfläche | `8090` | `http://<IP>:8090` |
 | Benutzername + Passwort Spielservermanager | `admin` | dein Admin-Konto (mind. 8 Zeichen) |
 | Benutzername + Passwort Portainer | `admin` | mind. 12 Zeichen (Vorgabe von Portainer), gleiches Passwort möglich |
-| Ordner für die Spielserver | `/srv/gameserver` | Spieldateien, Spielstände, Bibliothek (Maps/Mods) |
+| Speicherort Spielserver | lokal im Benutzerordner | lokal / eigener Ordner / iSCSI / NFS / SMB |
 | Lancache mitinstallieren? | nein | lokaler Download-Cache für Steam, Epic, Battle.net … |
-| Ordner + Größe für den Cache | `/srv/lancache`, `1000g` | nur mit Lancache |
+| Speicherort + Größe für den Cache | lokal im Benutzerordner, `1000g` | nur mit Lancache |
 | Upstream-DNS | `1.1.1.1 8.8.8.8` | nur mit Lancache |
 
 Am Ende steht eine Zusammenfassung – erst nach „j“ wird installiert.
@@ -55,8 +76,8 @@ Alle Antworten als Umgebungsvariablen übergeben und `GSM_YES=1` setzen:
 ```bash
 curl -fsSL https://github.com/JMJ1337/cs2-rcon-web/releases/latest/download/install.sh | \
   sudo GSM_YES=1 LAN_IP=192.168.1.10 GSM_PORT=8090 GSM_USER=mj GSM_PASSWORD='geheim123' \
-       PORTAINER_USER=admin PORTAINER_PASSWORD='mindestens12zeichen' GAMES_DIR=/srv/gameserver \
-       WITH_CACHE=1 CACHE_DIR=/srv/lancache CACHE_SIZE=2000g UPSTREAM_DNS='1.1.1.1 8.8.8.8' bash
+       PORTAINER_USER=admin PORTAINER_PASSWORD='mindestens12zeichen' GAMES_KIND=custom GAMES_DIR=/srv/gameserver \
+       WITH_CACHE=1 CACHE_KIND=custom CACHE_DIR=/srv/lancache CACHE_SIZE=2000g UPSTREAM_DNS='1.1.1.1 8.8.8.8' bash
 ```
 
 Weitere Variablen: `GSM_VERSION` (z. B. `1.0.0`, Standard `latest`), `GSM_IMAGE`, `PORTAINER_IMAGE`.
