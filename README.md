@@ -3,6 +3,15 @@
 Weboberfläche für die Spielserver auf unserer LAN – als Docker-Container mit Portainer-Stack und Auto-Update.
 (Repository-/Image-Name ist aus historischen Gründen `cs2-rcon-web`.)
 
+## Schnellinstallation (frisches Debian/Ubuntu)
+
+```bash
+curl -fsSL https://github.com/JMJ1337/cs2-rcon-web/releases/latest/download/install.sh | sudo bash
+```
+
+Installiert Docker, Portainer und den Spielservermanager (Portainer-Stack), optional Lancache – fragt Benutzer,
+Passwörter und Ordner ab. Details: [docs/INSTALL.md](docs/INSTALL.md)
+
 | Spiel | Status & Spieler | Konsole / Befehle | Extras |
 |---|---|---|---|
 | **Counter-Strike 2** | RCON | RCON | Maps & Workshop-Suche, MatchZy-Wettkampf (Wingman/Competitive), Auto-Slots, Cvars |

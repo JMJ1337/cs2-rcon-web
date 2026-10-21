@@ -1,0 +1,49 @@
+name: Release
+
+# Neues Release: Tag setzen, z. B.  git tag v1.0.0 && git push origin v1.0.0
+# Das Docker-Image (ghcr.io/…:1.0.0 und :latest) baut parallel der Workflow „Docker-Image bauen“.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Änderungen seit dem letzten Release
+        id: notes
+        run: |
+          prev=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          {
+            echo "## Installation auf einem frischen Linux (Debian/Ubuntu)"
+            echo
+            echo '```bash'
+            echo "curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/install.sh | sudo bash"
+            echo '```'
+            echo
+            echo "Installiert Docker, Portainer und den Spielservermanager (Portainer-Stack), optional Lancache."
+            echo "Fragt Benutzer, Passwörter und Ordner ab. Details: docs/INSTALL.md"
+            echo
+            echo "Docker-Image: \`ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_REF_NAME#v}\`"
+            echo
+            echo "## Änderungen"
+            if [ -n "$prev" ]; then range="$prev..HEAD"; else range="HEAD"; fi
+            git log --no-merges --pretty='- %s' $range | grep -v '\[skip ci\]' | head -200
+          } > notes.md
+
+      - name: Release anlegen
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Spielservermanager ${{ github.ref_name }}
+          body_path: notes.md
+          files: |
+            install.sh
+            portainer-stack.yml
+            docs/INSTALL.md
