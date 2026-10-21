@@ -854,3 +854,8 @@ dialog.dlgwide{width:min(860px,calc(100vw - 32px));max-height:calc(100vh - 40px)
 
 .uav.img{background:none;overflow:hidden}.uav.img img{width:100%;height:100%;object-fit:cover;border-radius:50%}
 .ubadges{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end;max-width:55%}
+
+.act{position:relative}
+.act .actx{position:absolute;top:4px;right:4px;padding:0 6px;font-size:12px;line-height:18px;background:transparent;border:1px solid var(--line);color:var(--muted)}
+.act .actx:hover{color:var(--bad,#e5534b);border-color:var(--bad,#e5534b)}
+.act.err .t{padding-right:24px}

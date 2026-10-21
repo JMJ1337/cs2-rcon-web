@@ -2934,7 +2934,7 @@ async function refreshActivity(){
   (a.jobs || []).forEach(j => {
     parts.push(`<div class="act ${j.error ? "err" : ""}" data-act-job="${esc(j.id)}">
       <div class="t">${gicon(j.game, 14)}<span class="n">${esc(j.title || `Neuer ${GAMES[j.game]?.short || j.game}-Server`)}</span></div>
-      ${j.error ? `<div class="e">${esc(j.error)}</div>` : `<div class="bar indet"><i></i></div><div class="s">${esc(j.step || "…")}</div><button class="small danger mgronly" data-act-cancel="${esc(j.id)}" title="Anlegen abbrechen und aufräumen">✕ Abbrechen</button>`}</div>`);
+      ${j.error ? `<button class="actx" data-act-jdis="${esc(j.id)}" title="Meldung entfernen">✕</button><div class="e">${esc(j.error)}</div>` : `<div class="bar indet"><i></i></div><div class="s">${esc(j.step || "…")}</div><button class="small danger mgronly" data-act-cancel="${esc(j.id)}" title="Anlegen abbrechen und aufräumen">✕ Abbrechen</button>`}</div>`);
   });
   (a.items || []).forEach(it => {
     const p = it.progress;
@@ -2963,7 +2963,12 @@ async function refreshActivity(){
     await api(`/api/activity/dismiss/${encodeURIComponent(b.dataset.actDismiss)}`, {method: "POST"}).catch(() => {});
     refreshActivity();
   });
-  $$("[data-act-job]").forEach(el => el.onclick = () => showView("create"));
+  $$("[data-act-job]").forEach(el => el.onclick = e => { if (!e.target.closest("[data-act-jdis]")) showView("create"); });
+  $$("[data-act-jdis]").forEach(b => b.onclick = async e => {
+    e.stopPropagation();
+    await api(`/api/activity/dismiss-job/${encodeURIComponent(b.dataset.actJdis)}`, {method: "POST"}).catch(() => {});
+    refreshActivity();
+  });
   $$("[data-act-abort]").forEach(b => b.onclick = async e => {
     e.stopPropagation();
     const s = servers.find(x => x.id === b.dataset.actAbort); if (!s) return;

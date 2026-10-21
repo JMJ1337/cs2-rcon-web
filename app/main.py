@@ -2022,13 +2022,23 @@ async def activity():
             pass
     jobs = [{"id": j["id"], "game": j["game"], "step": j["step"], "error": j["error"], "done": j["done"],
              "server_id": j["server_id"], "title": j.get("title"), "progress": j.get("progress")}
-            for j in _jobs.values() if (not j["done"] or j["error"]) and not j.get("cancelled")]
+            for j in _jobs.values() if (not j["done"] or j["error"]) and not j.get("cancelled") and not j.get("dismissed")]
     return {"items": items, "jobs": jobs[-5:]}
 
 
 @app.post("/api/activity/dismiss/{container}", dependencies=auth)
 async def activity_dismiss(container: str):
     install_watch.dismiss(container)
+    return {"ok": True}
+
+
+@app.post("/api/activity/dismiss-job/{jid}", dependencies=auth)
+async def activity_dismiss_job(jid: str):
+    """Fehlgeschlagenen Anlege-Job aus der Seitenleiste entfernen."""
+    j = _jobs.get(jid)
+    if j and (j.get("done") or j.get("error")):
+        j["dismissed"] = True
+        _save_jobs(force=True)
     return {"ok": True}
 
 
