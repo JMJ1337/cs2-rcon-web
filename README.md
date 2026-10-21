@@ -12,6 +12,9 @@ curl -fsSL https://github.com/JMJ1337/cs2-rcon-web/releases/latest/download/inst
 Installiert Docker, Portainer und den Spielservermanager (Portainer-Stack), optional Lancache – fragt Benutzer,
 Passwörter und Ordner ab. Details: [docs/INSTALL.md](docs/INSTALL.md)
 
+Oder **alles in einem**: am [Release](https://github.com/JMJ1337/cs2-rcon-web/releases/latest) hängt ein bootfähiges
+Debian-ISO, das Debian installiert und beim ersten Start den Spielservermanager einrichtet.
+
 | Spiel | Status & Spieler | Konsole / Befehle | Extras |
 |---|---|---|---|
 | **Counter-Strike 2** | RCON | RCON | Maps & Workshop-Suche, MatchZy-Wettkampf (Wingman/Competitive), Auto-Slots, Cvars |

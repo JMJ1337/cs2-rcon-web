@@ -8,6 +8,20 @@ curl -fsSL https://github.com/JMJ1337/cs2-rcon-web/releases/latest/download/inst
 
 Getestet für **Debian 12/13** und **Ubuntu 22.04/24.04** (64 Bit, x86 oder ARM). Der Rechner braucht Internet.
 
+## Alles in einem: Installations-ISO (Debian + Spielservermanager)
+
+Am Release hängt `gsm-debian-<version>-amd64.iso` – auf einen USB-Stick schreiben (z. B. mit balenaEtcher/Rufus im DD-Modus)
+oder in einer VM (Proxmox, VMware, VirtualBox) einbinden und davon starten:
+
+1. Im Startmenü ist **„Spielservermanager – automatische Installation“** vorausgewählt (startet nach 10 s).
+2. Der Debian-Installer fragt nur noch: **Passwort für den Benutzer `gsm`** (hat sudo) und die **Festplatte** –
+   die ausgewählte Platte wird **komplett gelöscht**.
+3. Nach dem Neustart startet auf dem Bildschirm automatisch die Einrichtung (gleiche Fragen wie unten:
+   Benutzer, Passwörter, Ordner, Lancache) und richtet Docker, Portainer und den Spielservermanager ein.
+
+Sprache Deutsch, Tastatur deutsch, Zeitzone Europe/Berlin, Netzwerk per DHCP, Rechnername `spielserver`, SSH-Server an.
+Internet wird während der Installation gebraucht (Debian-Pakete, Docker-Images).
+
 ## Was das Skript fragt
 
 | Frage | Vorgabe | Wozu |

@@ -1,0 +1,26 @@
+#!/bin/bash
+# Erster Start: Spielservermanager-Installer auf tty1 (Docker, Portainer, Spielservermanager, optional Lancache)
+clear
+echo
+echo "  ============================================================"
+echo "   GrohLAN Spielservermanager – Einrichtung"
+echo "  ============================================================"
+echo
+echo "  Warte auf Netzwerk …"
+for _ in $(seq 1 60); do getent hosts github.com >/dev/null 2>&1 && break; sleep 2; done
+while true; do
+  S=/usr/local/share/gsm/install.sh
+  if curl -fsSL -m 30 -o /tmp/install.sh https://github.com/JMJ1337/cs2-rcon-web/releases/latest/download/install.sh; then
+    S=/tmp/install.sh; echo "  Neueste Version des Installers geladen."
+  else
+    echo "  Kein Zugriff auf GitHub – nutze den Installer von der Installations-CD."
+  fi
+  if bash "$S"; then
+    touch /var/lib/gsm-installed
+    echo; read -r -p "  Fertig. Enter für die Anmeldung … " _
+    exit 0
+  fi
+  echo
+  read -r -p "  Installation fehlgeschlagen. Enter = nochmal, s = zur Anmeldung: " a
+  [ "$a" = "s" ] && exit 0
+done
