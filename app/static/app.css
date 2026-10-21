@@ -879,3 +879,7 @@ dialog.dlgwide{width:min(860px,calc(100vw - 32px));max-height:calc(100vh - 40px)
 .pubcard .pubhint{display:none}
 .pubcard .pubmeta{font-size:11px}
 .pubmapline{font-size:15px}
+
+.pubpending{margin:10px 0;padding:10px 14px;border:1px solid #d9a441;border-radius:8px;background:rgba(217,164,65,.1)}
+.steambtn{text-align:center;background:#171a21;border:1px solid #2a475e}
+#btnPubRegister{margin-left:auto}

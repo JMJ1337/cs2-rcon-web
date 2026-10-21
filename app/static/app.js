@@ -181,6 +181,9 @@ function showPublic(loggedIn = false){
   if (!pubLoggedIn) me = null;
   $("#btnPubLogin").textContent = pubLoggedIn ? "← Zur Verwaltung" : pubOnly ? `Abmelden (${pubOnly.username})` : "Anmelden";
   $("#btnPubLogin").title = pubOnly ? "Dein Konto hat noch keine Verwaltungsrechte – ein Admin kann sie unter „Benutzer“ vergeben" : "";
+  $("#btnPubRegister").classList.toggle("hidden", !!(pubLoggedIn || pubOnly));
+  $("#pubPending").classList.toggle("hidden", !(pubOnly && pubOnly.pending));
+  if (pubOnly && pubOnly.pending) $("#pubPending").innerHTML = `⏳ Hallo <b>${esc(pubOnly.steam_name || pubOnly.username)}</b> – dein Konto ist angelegt und wartet auf Freigabe durch einen Admin. Bis dahin siehst du die öffentliche Übersicht.`;
   $("#app").classList.add("hidden"); $("#login").classList.add("hidden"); $("#pub").classList.remove("hidden");
   refreshPublic();
   clearInterval(pubTimer); pubTimer = setInterval(() => { if (!document.hidden) refreshPublic(); }, 10000);
@@ -2609,7 +2612,7 @@ function permChips(perms, max = 6){
 }
 async function loadUsers(){
   try { U = await api("/api/users"); } catch (err) { return toast(err.message, true); }
-  renderProfiles(); renderUserCards();
+  renderProfiles(); renderUserCards(); renderPending();
   $("#uBulkProfile").innerHTML = U.profiles.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
 }
 function renderProfiles(){
@@ -2623,9 +2626,26 @@ function renderProfiles(){
   $$("[data-upedit]").forEach(b => b.onclick = () => openProfile(profOf(b.dataset.upedit)));
   $("#uProfAdd").onclick = () => openProfile(null);
 }
+function renderPending(){
+  const pend = U.users.filter(u => u.pending);
+  $("#uPendingPanel").classList.toggle("hidden", !pend.length);
+  $("#uPendBadge").textContent = pend.length || ""; $("#uPendBadge").classList.toggle("hidden", !pend.length);
+  $("#uPending").innerHTML = pend.map(u => `<div class="ucard" style="--c:#d9a441" data-upend="${esc(u.username)}">
+    <div class="uch">${uAvatar(u)}<div class="ucn"><b>${esc(u.steam_name || u.username)}</b><div class="hint">Benutzer ${esc(u.username)}${u.steamid ? ` · <a href="https://steamcommunity.com/profiles/${esc(u.steamid)}" target="_blank" rel="noopener">Steam-Profil ↗</a>` : ""} · ${u.created ? fmtDate(u.created) : ""}</div></div></div>
+    <div class="lvchips">${U.profiles.filter(p => p.id !== "oeffentlich").map(p => `<label class="lvchip" style="--c:${esc(p.color || "#6b7a8f")};cursor:pointer"><input type="checkbox" data-pp="${esc(p.id)}" style="width:auto;margin-right:4px">${esc(p.name)}</label>`).join("")}</div>
+    <div class="ucf"><span class="hint">ohne Auswahl: nur öffentliche Seite</span><span><button class="small primary" data-uapprove="${esc(u.username)}">Freigeben</button><button class="small danger" data-udel="${esc(u.username)}" title="Ablehnen (Konto löschen)">Ablehnen</button></span></div></div>`).join("");
+  $$("[data-uapprove]").forEach(b => b.onclick = async () => {
+    const card = b.closest("[data-upend]"), profiles = [...card.querySelectorAll("[data-pp]")].filter(c => c.checked).map(c => c.dataset.pp);
+    try { await api(`/api/users/${b.dataset.uapprove}/approve`, {body: {profiles}}); toast(`${b.dataset.uapprove} freigegeben`); loadUsers(); } catch (e) { toast(e.message, true); }
+  });
+  $$("#uPending [data-udel]").forEach(b => b.onclick = async () => {
+    if (!confirm(`Registrierung von ${b.dataset.udel} ablehnen und Konto löschen?`)) return;
+    try { await api(`/api/users/${b.dataset.udel}`, {method: "DELETE"}); loadUsers(); } catch (e) { toast(e.message, true); }
+  });
+}
 function renderUserCards(){
   const f = $("#uFilter").value.trim().toLowerCase();
-  const list = U.users.filter(u => (!f || [u.username, u.note, u.player, ...uProfs(u).map(p => p.name)].filter(Boolean).join(" ").toLowerCase().includes(f))
+  const list = U.users.filter(u => !u.pending && (!f || [u.username, u.note, u.player, ...uProfs(u).map(p => p.name)].filter(Boolean).join(" ").toLowerCase().includes(f))
     && (!uProfFilter || (u.profiles || []).includes(uProfFilter)));
   $("#uCount").textContent = `${U.users.length}${list.length !== U.users.length ? ` · ${list.length} angezeigt` : ""}`;
   for (const n of [...uSel]) if (!U.users.some(u => u.username === n)) uSel.delete(n);
@@ -2699,7 +2719,13 @@ function ufRender(){
   $("#ufAdminHint").style.display = ufKind === "admin" ? "" : "none";
   $("#ufProfiles").innerHTML = U.profiles.map(p =>
     `<button type="button" class="ufpc ${ufProfiles.includes(p.id) ? "on" : ""}" data-ufp="${esc(p.id)}" style="--c:${esc(p.color || "#6b7a8f")}"><b>${ufProfiles.includes(p.id) ? "✓ " : ""}${esc(p.name)}</b><span class="hint">${esc(p.desc || "")}</span></button>`).join("");
-  $$("[data-ufp]").forEach(b => b.onclick = () => { const id = b.dataset.ufp; ufProfiles = ufProfiles.includes(id) ? ufProfiles.filter(x => x !== id) : [...ufProfiles, id]; ufRender(); });
+  $$("[data-ufp]").forEach(b => b.onclick = () => {
+    const id = b.dataset.ufp;
+    if (ufProfiles.includes(id)) ufProfiles = ufProfiles.filter(x => x !== id);
+    else if (id === "oeffentlich") ufProfiles = ["oeffentlich"];               // „Nur öffentliche Seite“ schließt alles andere aus
+    else ufProfiles = [...ufProfiles.filter(x => x !== "oeffentlich"), id];
+    ufRender();
+  });
   const inherit = mergePerms(ufProfiles);
   permEditor($("#ufPerms"), ufVals, inherit, $("#ufAllGames").checked);
   const n = Object.keys(ufVals).length;
@@ -2891,6 +2917,13 @@ async function showVersion(){
 }
 showVersion();
 (async () => {
+  const sq = new URLSearchParams(location.search).get("steam");
+  if (sq){
+    history.replaceState(null, "", location.pathname + location.hash);
+    setTimeout(() => toast(({registriert: "Konto mit Steam angelegt – ein Admin schaltet dich frei", ok: "Mit Steam angemeldet",
+      abgebrochen: "Steam-Anmeldung abgebrochen", ungueltig: "Steam-Anmeldung konnte nicht bestätigt werden", fehler: "Steam-Anmeldung fehlgeschlagen"})[sq] || sq,
+      !["registriert", "ok"].includes(sq)), 600);
+  }
   const me = await api("/api/me").catch(() => ({authenticated:false}));
   me.authenticated ? (me.user && me.user.public_only ? showPublic(me.user) : start()) : showPublic();
 })();

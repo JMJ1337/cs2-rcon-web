@@ -6,7 +6,7 @@
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap">
-<link rel="stylesheet" href="/static/app.css?v=127">
+<link rel="stylesheet" href="/static/app.css?v=128">
 </head>
 <body>
 
@@ -15,8 +15,10 @@
   <header class="pubhead">
     <div class="logo">Spielserver<span>manager</span></div>
     <div class="pubstat" id="pubStat"></div>
+    <a class="btn" id="btnPubRegister" href="/auth/steam/login" title="Mit deinem Steam-Konto registrieren – ein Admin schaltet dich danach frei">Registrieren mit Steam</a>
     <button class="primary" id="btnPubLogin">Anmelden</button>
   </header>
+  <div class="pubpending hidden" id="pubPending"></div>
   <div class="pubintro hint">Alle Spielserver im LAN. „Beitreten“ startet das Spiel und verbindet direkt (wo das Spiel es unterstützt), sonst Adresse kopieren und im Spiel eintragen.</div>
   <div id="pubStream"></div>
   <div id="pubTour"></div>
@@ -35,6 +37,7 @@
     <input id="loginUser" placeholder="Benutzername" autocomplete="username" value="admin">
     <input type="password" id="loginPw" placeholder="Passwort" autocomplete="current-password" autofocus>
     <button class="primary" type="submit">Anmelden</button>
+    <a class="btn steambtn" href="/auth/steam/login">Mit Steam anmelden / registrieren</a>
     <div id="loginErr" style="color:var(--bad)"></div>
     <button type="button" id="btnBackPub">← Zur Serverliste</button>
     <div class="hint ver" id="loginVersion"></div>
@@ -87,7 +90,7 @@
       <button data-view="tour" class="touronly">🏆 Turnier</button>
       <button data-view="bot" class="adminonly">🤖 Steam-Bot</button>
       <button data-view="api" class="adminonly">🔌 API</button>
-      <button data-view="users" class="adminonly">☰ Benutzer</button>
+      <button data-view="users" class="adminonly">☰ Benutzer <span class="pill warn hidden" id="uPendBadge"></span></button>
       <button data-view="auto" class="adminonly">⚙ Automatik &amp; Einstellungen</button>
     </div>
     <div class="sect">Server</div>
@@ -548,6 +551,10 @@
       <div class="topbar"><div><div class="title">Benutzer &amp; Rechte</div><div class="sub">Profile = Rechte-Vorlagen. Benutzer bekommen ein Profil, Abweichungen nur wo nötig.</div></div>
         <div style="margin-left:auto;display:flex;gap:8px"><button id="btnUNewProfile">＋ Profil</button><button class="primary" id="btnUNew">＋ Benutzer</button></div></div>
       <div class="content wide">
+        <div class="panel hidden" id="uPendingPanel">
+          <h2>Neue Registrierungen <span class="hint">per Steam – sehen bis zur Freigabe nur die öffentliche Seite</span></h2>
+          <div class="ugrid" id="uPending"></div>
+        </div>
         <div class="panel">
           <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:10px"><h2 style="margin:0">Profile</h2><span class="hint">Klick auf ein Profil filtert die Benutzer</span></div>
           <div class="upgrid" id="uProfiles"></div>
@@ -1121,6 +1128,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=178"></script>
+<script src="/static/app.js?v=179"></script>
 </body>
 </html>

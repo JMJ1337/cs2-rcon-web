@@ -206,6 +206,77 @@ async def login(data: LoginIn, response: Response):
     return {"ok": True, "user": users.public(u)}
 
 
+# ---------------------------------------------------------------- Steam-Login / Registrierung (OpenID 2.0)
+STEAM_OPENID = "https://steamcommunity.com/openid/login"
+
+
+def _base_url(request: Request) -> str:
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    return f"{proto}://{host}"
+
+
+@app.get("/auth/steam/login")
+async def steam_login(request: Request):
+    base = _base_url(request)
+    q = {"openid.ns": "http://specs.openid.net/auth/2.0", "openid.mode": "checkid_setup",
+         "openid.return_to": f"{base}/auth/steam/return", "openid.realm": base,
+         "openid.identity": "http://specs.openid.net/auth/2.0/identifier_select",
+         "openid.claimed_id": "http://specs.openid.net/auth/2.0/identifier_select"}
+    return RedirectResponse(f"{STEAM_OPENID}?{urllib.parse.urlencode(q)}", status_code=302)
+
+
+@app.get("/auth/steam/return")
+async def steam_return(request: Request):
+    params = dict(request.query_params)
+    base = _base_url(request)
+    if not params.get("openid.return_to", "").startswith(f"{base}/auth/steam/return"):
+        return RedirectResponse("/?steam=fehler", status_code=302)
+    m = re.fullmatch(r"https?://steamcommunity\.com/openid/id/(7656119\d{10})", params.get("openid.claimed_id", ""))
+    if not m or params.get("openid.mode") != "id_res":
+        return RedirectResponse("/?steam=abgebrochen", status_code=302)
+    check = dict(params, **{"openid.mode": "check_authentication"})
+    try:
+        async with httpx.AsyncClient(timeout=15) as cl:
+            r = await cl.post(STEAM_OPENID, data=check)
+        ok = "is_valid:true" in r.text
+    except httpx.HTTPError:
+        ok = False
+    if not ok:
+        return RedirectResponse("/?steam=ungueltig", status_code=302)
+    sid = m.group(1)
+    u = users.find_by_steam(sid)
+    new = False
+    if not u:
+        # auch ein Tool-Konto, das über die Spielerliste mit dieser SteamID verknüpft ist, zählt
+        pl = playerdb.get(sid)
+        if pl and pl.get("user") and users.find(pl["user"]):
+            users.link_steam(pl["user"], sid)
+            u = users.find(pl["user"])
+    if not u:
+        try:
+            prof = await steam.resolve_player(sid)
+        except steam.SteamError:
+            prof = {"steamid": sid, "name": "", "avatar": ""}
+        u = users.register_steam(sid, prof.get("name") or "")
+        new = True
+        try:
+            p = playerdb.add_manual(sid, "", prof.get("avatar") or "")
+            playerdb.update(p["id"], {"user": u["username"]})
+        except ValueError:
+            pass
+        try:
+            await notify.send(f"Neue Registrierung: {u['username']} (Steam {prof.get('name') or sid}) wartet auf Freigabe")
+        except Exception:  # noqa: BLE001
+            pass
+        log.info("Neue Registrierung per Steam: %s (%s)", u["username"], sid)
+    else:
+        users.touch_login(u["username"])
+    resp = RedirectResponse("/?steam=" + ("registriert" if new else "ok"), status_code=302)
+    resp.set_cookie(COOKIE, make_token(u["username"]), httponly=True, samesite="lax", max_age=SESSION_HOURS * 3600)
+    return resp
+
+
 @app.post("/api/logout")
 async def logout(response: Response):
     response.delete_cookie(COOKIE)
@@ -579,6 +650,18 @@ async def list_users():
     return {"users": out, "roles": users.ROLE_LABELS,
             "levels": users.LEVELS, "level_hints": users.LEVEL_HINTS, "rights": users.RIGHTS, "profiles": users.profiles(),
             "games_used": sorted({game_of(x) for x in load_servers()})}
+
+
+class ApproveIn(BaseModel):
+    profiles: list[str] = []
+
+
+@app.post("/api/users/{username}/approve", dependencies=auth)
+async def approve_user(username: str, data: ApproveIn):
+    try:
+        return users.public(users.approve(username, data.profiles))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 class ProfileIn(BaseModel):
