@@ -111,7 +111,9 @@ async def send(text: str, *, event: str = "", key: str = "", force: bool = False
             return ["Limit pro Stunde erreicht"]
         _sent[k] = now
         _hour.append(now)
-    msg = f"🎮 Groh LAN: {text}"
+    from . import automation
+    title = (d.get("title") or "").strip() or automation.brand()
+    msg = f"🎮 {title}: {text}"
     errors = []
     async with httpx.AsyncClient(timeout=20) as cl:
         for line in (d.get("whatsapp") or "").splitlines():
@@ -126,7 +128,7 @@ async def send(text: str, *, event: str = "", key: str = "", force: bool = False
                 await asyncio.sleep(1)       # CallMeBot mag keine Salven
         if d.get("ntfy_url"):
             try:
-                r = await cl.post(d["ntfy_url"], content=msg.encode(), headers={"Title": "Groh LAN"})
+                r = await cl.post(d["ntfy_url"], content=msg.encode(), headers={"Title": title.encode("ascii", "ignore").decode() or "LAN"})
                 if r.status_code >= 400:
                     errors.append(f"ntfy: {r.status_code}")
             except httpx.HTTPError as ex:

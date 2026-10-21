@@ -6,7 +6,7 @@
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap">
-<link rel="stylesheet" href="/static/app.css?v=128">
+<link rel="stylesheet" href="/static/app.css?v=129">
 </head>
 <body>
 
@@ -165,7 +165,7 @@
           <div class="panel">
             <h2>Einstellungen</h2>
             <div class="stogrid">
-              <div><label>NAS / iSCSI-Portal</label><input id="stoPortal" placeholder="192.168.200.13 (Port 3260)"></div>
+              <div><label>NAS / iSCSI-Portal</label><input id="stoPortal" placeholder="192.168.1.5 (Port 3260)"></div>
               <div><label>Ziel (IQN, leer = erstes gefundenes)</label><input id="stoTarget" placeholder="iqn.2000-01.com.synology:…"></div>
               <div><label>CHAP-Benutzer (optional)</label><input id="stoUser" autocomplete="off"></div>
               <div><label>CHAP-Passwort</label><input id="stoPw" type="password" autocomplete="new-password"></div>
@@ -338,7 +338,7 @@
           <div class="settings-grid">
             <div class="field"><label><input type="checkbox" id="ntEnabled" style="width:auto"> Benachrichtigungen an</label></div>
             <div class="field" style="grid-column:1/-1"><label>WhatsApp-Empfänger (Nummer;API-Key je Zeile)</label><textarea id="ntWhatsapp" rows="2" class="mono" placeholder="+491701234567;123456"></textarea></div>
-            <div class="field"><label>ntfy-Adresse (optional, z. B. https://ntfy.sh/groh-lan-geheim)</label><input id="ntNtfy" class="mono"></div>
+            <div class="field"><label>ntfy-Adresse (optional, z. B. https://ntfy.sh/meine-lan-geheim)</label><input id="ntNtfy" class="mono"></div>
             <div class="field"><label>Telegram Bot-Token / Chat-ID (optional)</label><div class="row" style="gap:6px"><input id="ntTgToken" type="password" class="mono" placeholder="Bot-Token"><input id="ntTgChat" class="mono" placeholder="Chat-ID" style="max-width:140px"></div></div>
             <div class="field"><label>Ruhezeit (keine Nachrichten) von / bis</label><div class="row" style="gap:6px"><input id="ntQuietFrom" placeholder="23:00" style="max-width:90px"><input id="ntQuietTo" placeholder="08:00" style="max-width:90px"></div></div>
             <div class="field"><label>Gleiche Meldung frühestens wieder nach (Min.)</label><input id="ntRepeat" inputmode="numeric" style="max-width:100px"></div>
@@ -361,11 +361,12 @@
         <div class="panel">
           <h2>Sonstiges</h2>
           <div class="settings-grid">
-            <div class="field"><label>Adresse dieses Tools für die CS2-Server (MatchZy)</label><input id="setPublicUrl" placeholder="z. B. http://192.168.200.27:8090"></div>
+            <div class="field"><label>Adresse dieses Tools für die CS2-Server (MatchZy)</label><input id="setPublicUrl" placeholder="z. B. http://192.168.1.10:8090"></div>
             <div class="field"><label>Prüfintervall (Sekunden)</label><input id="setInterval" inputmode="numeric"></div>
             <div class="field"><label>Automatischer Netzwerk-Scan (Minuten, 0 = aus)</label><input id="setScanInterval" inputmode="numeric"></div>
-            <div class="field"><label>Zusätzliche Netze für den Scan</label><input id="setScanSubnets" placeholder="z. B. 192.168.200.0/24" class="mono"></div>
-            <div class="field"><label>Basisordner für neue Spielserver (auf dem Docker-Host)</label><input id="setGamesBase" placeholder="/mnt/grohlan" class="mono"></div>
+            <div class="field"><label>Zusätzliche Netze für den Scan</label><input id="setScanSubnets" placeholder="z. B. 192.168.1.0/24" class="mono"></div>
+            <div class="field"><label>Name der Veranstaltung (in Servernamen als <span class="mono">{brand}</span>, Titeln, Benachrichtigungen)</label><input id="setBrand" placeholder="LAN" maxlength="40"></div>
+            <div class="field"><label>Basisordner für neue Spielserver (auf dem Docker-Host)</label><input id="setGamesBase" placeholder="/srv/gameserver" class="mono"></div>
             <div class="field"><label>Standard-Beitrittspasswort für neue Server (leer = ohne)</label><input id="setDefJoinPw" class="mono" autocomplete="off"></div>
             <div class="field"><label>Standard-RCON-/Admin-Passwort für neue Server (leer = zufällig je Server)</label><input id="setDefAdminPw" class="mono" autocomplete="off"></div>
             <div class="field"><label>Lancache-Container (leer = automatisch)</label><input id="setCacheContainer" placeholder="z. B. lancache-monolithic-1" class="mono"></div>
@@ -374,14 +375,14 @@
               <div class="row" style="gap:6px;align-items:center"><span class="hint" style="min-width:150px">Lancache-Ordner</span><input id="setCacheDir" class="mono" placeholder="/mnt/gsm-lancache" style="flex:1"><button id="btnCacheDir" title="Lancache-Container mit diesem Ordner neu erstellen">Übernehmen</button></div>
               <div class="hint" id="cacheDirInfo" style="margin-top:4px"></div>
             </div>
-            <div class="field"><label>CS2-Servername nach Modus (<span class="mono">{nr}</span> = Servernummer, <span class="mono">{mode}</span> = Modus; leer = aus)</label><input id="setHostnamePattern" placeholder="Groh CS #{nr} {mode}" class="mono" maxlength="60"></div>
-            <div class="field"><label>Name der übrigen Spielserver (<span class="mono">{game}</span> = Spiel, <span class="mono">{nr}</span> = Nummer, <span class="mono">{mode}</span> = Modus; leer = aus) – live bei TF2/Satisfactory, Wreckfest beim Speichern der Rotation</label><input id="setNamesPattern" placeholder="Groh {game} #{nr} {mode}" class="mono" maxlength="60"></div>
+            <div class="field"><label>CS2-Servername nach Modus (<span class="mono">{brand}</span> = Veranstaltung, <span class="mono">{nr}</span> = Servernummer, <span class="mono">{mode}</span> = Modus; leer = aus)</label><input id="setHostnamePattern" placeholder="{brand} CS #{nr} {mode}" class="mono" maxlength="60"></div>
+            <div class="field"><label>Name der übrigen Spielserver (<span class="mono">{brand}</span> = Veranstaltung, <span class="mono">{game}</span> = Spiel, <span class="mono">{nr}</span> = Nummer, <span class="mono">{mode}</span> = Modus; leer = aus) – live bei TF2/Satisfactory, Wreckfest beim Speichern der Rotation</label><input id="setNamesPattern" placeholder="{brand} {game} #{nr} {mode}" class="mono" maxlength="60"></div>
             <div class="field"><label>Alle Server jetzt nach Schema benennen</label><button id="btnNamesApply" title="Liste/Übersicht sofort; im Spiel live bei CS2/TF2/Satisfactory, Wreckfest nach Neustart sobald leer">Alle umbenennen</button></div>
             <div class="field"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="setAutoBots" style="width:auto"> CS2: allein auf dem Server → mit Bots auffüllen (nicht in Competitive/Wingman)</label>
               <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="setAutoMz" style="width:auto"> CS2: MatchZy nur in Competitive/Wingman laden (sonst entladen)</label></div>
-            <div class="field"><label>Öffentliche Adresse für Besucher aus dem Internet (IP oder DNS-Name; leer = automatisch ermitteln)</label><input id="setInternetHost" placeholder="z. B. lan.groh-pa.de" class="mono" maxlength="120"></div>
+            <div class="field"><label>Öffentliche Adresse für Besucher aus dem Internet (IP oder DNS-Name; leer = automatisch ermitteln)</label><input id="setInternetHost" placeholder="z. B. lan.example.org" class="mono" maxlength="120"></div>
             <div class="field"><label>Im Router freigegebener Portbereich (neue Server bekommen ihre Internet-Ports von hier)</label><input id="setPortRange" placeholder="27000-27100" class="mono" maxlength="20"></div>
-            <div class="field"><label>DNS für neue Spielserver-Container (leer = Lancache-DNS automatisch erkennen)</label><input id="setContainerDns" placeholder="z. B. 192.168.200.27" class="mono" maxlength="100"></div>
+            <div class="field"><label>DNS für neue Spielserver-Container (leer = Lancache-DNS automatisch erkennen)</label><input id="setContainerDns" placeholder="z. B. 192.168.1.10" class="mono" maxlength="100"></div>
           </div>
           <div class="hint" style="margin-top:6px">Leer = Adresse aus dem Browser. Die CS2-Server laden Match-Configs von dieser Adresse – also die LAN-IP verwenden, nicht „localhost“.</div>
         </div>
@@ -467,13 +468,13 @@
         <div class="panel" style="margin-top:16px" id="streamPanel"><h2>📺 Live-Stream im Browser <span class="hint" id="stStatus"></span></h2>
           <div class="pfopts">
             <label><input type="checkbox" id="stOn"> Stream-Server an (zeigt den Stream auf der öffentlichen Seite, sobald OBS sendet)</label>
-            <label>Titel <input id="stTitle" maxlength="80" style="width:260px" placeholder="GrohLAN Turnier – live"></label>
+            <label>Titel <input id="stTitle" maxlength="80" style="width:260px" placeholder="Turnier – live"></label>
             <label>Zeigt <select id="stServer"><option value="">automatisch: laufendes Turnierspiel</option></select></label>
           </div>
           <div id="stInfo" class="hint" style="margin-top:8px"></div>
           <details style="margin-top:8px"><summary>So wird der Stream-PC eingerichtet</summary><ol class="hint" style="line-height:1.7">
             <li>PC mit Grafikkarte, Steam angemeldet mit einem Konto, das CS2 hat.</li>
-            <li><b>GrohLAN-Stream.exe</b> herunterladen und auf dem Stream-PC starten (Windows-Warnung: „Weitere Informationen → Trotzdem ausführen“). Sie
+            <li><b>Stream-Helfer.exe</b> herunterladen und auf dem Stream-PC starten (Windows-Warnung: „Weitere Informationen → Trotzdem ausführen“). Sie
               installiert OBS falls nötig, richtet Profil, Szene (CS2-Spielaufnahme) und Stream-Ziel ein, startet CS2 mit Fernsteuerung und den Stream –
               und verbindet CS2 danach immer per CSTV mit dem laufenden Spiel, Auto-Kamera an. Fenster offen lassen.</li>
             <li>Neuer Streamschlüssel? Dann die exe neu herunterladen (die Einstellungen stecken in der Datei).</li>
@@ -489,7 +490,7 @@
     </section>
 
     <section id="view-bot" class="hidden">
-      <div class="topbar"><div><div class="title">Steam-Bot „<span id="botTitle">GrohLan</span>“</div><div class="sub">Neue Spieler automatisch als Freund hinzufügen und allen auf der LAN Nachrichten schicken</div></div></div>
+      <div class="topbar"><div><div class="title">Steam-Bot „<span id="botTitle">LAN-Bot</span>“</div><div class="sub">Neue Spieler automatisch als Freund hinzufügen und allen auf der LAN Nachrichten schicken</div></div></div>
       <div class="content" style="max-width:1100px">
         <div class="grid2">
           <div class="panel">
@@ -506,7 +507,7 @@
           </div>
           <div class="panel">
             <h2>Nachricht senden</h2>
-            <textarea id="botText" rows="5" maxlength="2000" placeholder="z. B. Turnier startet in 10 Minuten auf Groh CS #4!" style="width:100%"></textarea>
+            <textarea id="botText" rows="5" maxlength="2000" placeholder="z. B. Turnier startet in 10 Minuten auf CS #4!" style="width:100%"></textarea>
             <div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">
               <button class="primary" id="botSendAll">An alle auf der LAN</button>
               <button id="botSendSel">An ausgewählte (<span id="botSelN">0</span>)</button>
@@ -524,7 +525,7 @@
     </section>
 
     <section id="view-api" class="hidden">
-      <div class="topbar"><div><div class="title">🔌 Homepage-API</div><div class="sub">Zugriff für die GrohLAN-Homepage: Turnier (Status, Anmeldung, Teams), Zuschauen/Stream, Steam-Bot. Beschreibung: <code>docs/HOMEPAGE-API.md</code> im Git.</div></div></div>
+      <div class="topbar"><div><div class="title">🔌 Homepage-API</div><div class="sub">Zugriff für eure Homepage: Turnier (Status, Anmeldung, Teams), Zuschauen/Stream, Steam-Bot. Beschreibung: <code>docs/HOMEPAGE-API.md</code> im Git.</div></div></div>
       <div class="content" style="max-width:1100px">
         <div class="panel">
           <h2>API-Schlüssel</h2>
@@ -1010,13 +1011,13 @@
       <label style="display:flex;gap:8px;align-items:center;margin-top:4px"><input type="checkbox" name="name_from_game" checked style="width:auto"> Namen automatisch vom Server im Spiel übernehmen</label>
       <label id="dlgModeNameRow" style="display:flex;gap:8px;align-items:center;margin-top:4px"><input type="checkbox" name="mode_name" checked style="width:auto"> CS2: Servernamen im Spiel nach aktuellem Modus setzen (z. B. „CS#2 Wingman“)</label></div>
     <div class="row">
-      <div style="flex:3"><label>IP / Hostname</label><input name="host" required placeholder="192.168.200.27"></div>
+      <div style="flex:3"><label>IP / Hostname</label><input name="host" required placeholder="192.168.1.10"></div>
       <div style="flex:1"><label id="dlgPortLabel">Port</label><input name="port" type="number" min="1" max="65535" value="27015" required></div>
     </div>
     <div><label><span id="dlgPwLabel">RCON-Passwort</span> <span id="pwHint"></span></label><input name="password" type="password" autocomplete="new-password"></div>
     <div><label>Docker-Container (optional, für Start/Stop/Logs)</label><select name="container" id="dlgContainer"><option value="">– keiner –</option></select></div>
     <div><label>Port zum Beitreten (optional, falls abweichend)</label><input name="game_port" type="number" min="1" max="65535" placeholder="leer = automatisch"></div>
-    <div><label>Weboberfläche / Webkonsole (optional)</label><input name="web_url" maxlength="255" placeholder="z. B. http://192.168.200.27:9028"></div>
+    <div><label>Weboberfläche / Webkonsole (optional)</label><input name="web_url" maxlength="255" placeholder="z. B. http://192.168.1.10:9028"></div>
     <div><label>Notiz</label><input name="notes" maxlength="200"></div>
     <label style="display:flex;gap:8px;align-items:center;color:var(--text)" id="dlgAutoRow"><input type="checkbox" name="auto_slots" checked style="width:auto"> Spieleranzahl automatisch nach Modus/Map setzen</label>
     <div class="row" style="justify-content:space-between;margin-top:6px">
@@ -1138,6 +1139,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=184"></script>
+<script src="/static/app.js?v=185"></script>
 </body>
 </html>

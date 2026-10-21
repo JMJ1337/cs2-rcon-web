@@ -36,9 +36,12 @@ Außerdem:
 - **Lancache-Metriken** in der Übersicht: aus dem Cache vs. aus dem Internet (24 h), Trefferquote, aktueller Durchsatz,
   Cache-Speicher, Aufteilung nach Dienst (Steam, Epic …). Liest das `access.log` des `lancachenet/monolithic`-Containers
   per Docker (wird automatisch erkannt, sonst Namen unter „Automatik & Einstellungen“ eintragen).
-- **Spiele-Basisordner:** Neue Server landen unter `/mnt/grohlan/<spiel>/<name>` (einstellbar). Das NAS dafür auf dem
-  Docker-Host dauerhaft mounten, z. B. per `/etc/fstab`:
-  `192.168.200.13:/volume1/Grohlan  /mnt/grohlan  nfs  defaults,_netdev,nofail  0  0`
+- **Spiele-Basisordner:** Neue Server landen unter `/srv/gameserver/<spiel>/<name>` (einstellbar, der Installer fragt danach).
+  Ein NAS dafür auf dem Docker-Host dauerhaft mounten, z. B. per `/etc/fstab`:
+  `192.168.1.5:/volume1/spielserver  /srv/gameserver  nfs  defaults,_netdev,nofail  0  0`
+- **Name der Veranstaltung** (*Automatik & Einstellungen*): erscheint in Servernamen (`{brand}`), Titeln und Benachrichtigungen.
+- **Standard-Passwörter:** Bei einer Neuinstallation bekommen neue Spielserver das Beitritts- und RCON-Passwort `123456789` –
+  unter *Automatik & Einstellungen* ändern.
 - **Beitreten:** Knopf „▶ Beitreten“ startet das Spiel über Steam und verbindet direkt (CS2/Wreckfest per `steam://connect`,
   Factorio/Valheim per Steam-Startparameter). Satisfactory hat keinen Link – dort Adresse kopieren.
 - **Namen wie im Spiel:** Die Server heißen in der Liste automatisch so wie im Spiel (abschaltbar je Server).
@@ -75,7 +78,7 @@ Login per Admin-Passwort. Läuft komplett offline (keine CDNs), also auch in LAN
 
 Für Workshop-Suche und SteamID-Auflösung braucht der Docker-Host Internet. Die CS2-Server laden Match-Configs
 per `matchzy_loadmatch_url` direkt von diesem Tool – unter „Automatik & Modi“ die LAN-Adresse eintragen
-(z. B. `http://192.168.200.27:8090`).
+(z. B. `http://192.168.1.10:8090`).
 
 ## Repository-Aufbau
 

@@ -42,7 +42,7 @@ def save_settings(data: dict) -> dict:
 
 
 def config_dir() -> str:
-    base = (automation.get_settings().get("games_base") or "/mnt/grohlan").rstrip("/")
+    base = (automation.get_settings().get("games_base") or "/srv/gameserver").rstrip("/")
     return f"{base}/steamprefill/Config"
 
 

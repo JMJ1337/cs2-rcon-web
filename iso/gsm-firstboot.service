@@ -1,5 +1,5 @@
 [Unit]
-Description=GrohLAN Spielservermanager – Einrichtung beim ersten Start
+Description=Spielservermanager – Einrichtung beim ersten Start
 After=network-online.target systemd-user-sessions.service
 Wants=network-online.target
 Before=getty@tty1.service

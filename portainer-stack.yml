@@ -26,8 +26,8 @@ services:
       # Nur lesend: echte Netzwerkkarten des Hosts für den Netzwerkdurchsatz (sonst Summe der Container)
       - /proc:/host/proc:ro
     labels:
-      com.groh-pa.description: "Spielservermanager"
-      com.groh-pa.build: "129ea37"   # wird nach jedem Image-Build automatisch aktualisiert (Auto-Update)
+      org.spielservermanager.description: "Spielservermanager"
+      org.spielservermanager.build: "129ea37"   # wird nach jedem Image-Build automatisch aktualisiert (Auto-Update)
 
 volumes:
   rcon-data:

@@ -54,6 +54,7 @@ oder das Installationsskript erneut ausführen.
 |---|---|---|
 | IP-Adresse im LAN | automatisch erkannt, zum Bestätigen | Adresse, unter der Spieler und Browser den Rechner erreichen. Im Router fest vergeben (DHCP-Reservierung) |
 | Port der Weboberfläche | `8090` | `http://<IP>:8090` |
+| Name der Veranstaltung | `LAN` | erscheint in Servernamen („LAN CS #1 Wingman“), Titeln, Benachrichtigungen |
 | Benutzername + Passwort Spielservermanager | `admin` | dein Admin-Konto (mind. 8 Zeichen) |
 | Benutzername + Passwort Portainer | `admin` | mind. 12 Zeichen (Vorgabe von Portainer), gleiches Passwort möglich |
 | Speicherort Spielserver | lokal im Benutzerordner | lokal / eigener Ordner / iSCSI / NFS / SMB |
@@ -62,6 +63,9 @@ oder das Installationsskript erneut ausführen.
 | Upstream-DNS | `1.1.1.1 8.8.8.8` | nur mit Lancache: Der Lancache ist DNS-Server der Spieler-PCs; alles, was er nicht cacht (Webseiten, Logins …), fragt er bei diesen „vorgelagerten“ Servern nach. Cloudflare `1.1.1.1`, Google `8.8.8.8`, Quad9 `9.9.9.9` – oder die Router-IP, damit lokale Namen (NAS, Drucker) auflösbar bleiben |
 
 Am Ende steht eine Zusammenfassung – erst nach „j“ wird installiert.
+
+**Standard-Passwörter:** Neue Spielserver bekommen bei einer Neuinstallation das Beitritts- und RCON-Passwort `123456789`.
+Bitte unter *Automatik & Einstellungen* ändern, wenn die Server aus dem Internet erreichbar sind.
 
 ## Was danach läuft
 
@@ -85,7 +89,7 @@ curl -fsSL https://github.com/JMJ1337/cs2-rcon-web/releases/latest/download/inst
        WITH_CACHE=1 CACHE_KIND=custom CACHE_DIR=/srv/lancache CACHE_SIZE=2000g UPSTREAM_DNS='1.1.1.1 8.8.8.8' bash
 ```
 
-Weitere Variablen: `GSM_VERSION` (z. B. `1.0.0`, Standard `latest`), `GSM_IMAGE`, `PORTAINER_IMAGE`.
+Weitere Variablen: `BRAND` (Name der Veranstaltung), `GSM_VERSION` (z. B. `1.0.0`, Standard `latest`), `GSM_IMAGE`, `PORTAINER_IMAGE`.
 
 ## Update
 

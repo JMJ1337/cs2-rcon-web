@@ -1,4 +1,4 @@
-// GrohLAN Stream-PC: richtet OBS ein (Profil + Szene mit CS2-Spielaufnahme, Stream-Ziel), startet CS2 mit
+// Stream-PC: richtet OBS ein (Profil + Szene mit CS2-Spielaufnahme, Stream-Ziel), startet CS2 mit
 // Fernsteuerung (-netconport) und OBS mit „Stream starten“, und verbindet CS2 danach automatisch per CSTV mit dem
 // jeweils laufenden Turnierspiel (Auto-Kamera an).
 //
@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-const marker = "\n#GROHLAN-STREAM-CONFIG#"
+const marker = "\n#GSM-STREAM-CONFIG#"
 
 type Config struct {
 	API     string `json:"api"`
@@ -61,7 +61,7 @@ func loadConfig() (Config, error) {
 		c.Netcon = 2121
 	}
 	if c.Profile == "" {
-		c.Profile = "GrohLAN"
+		c.Profile = "LAN"
 	}
 	return c, err
 }
@@ -178,9 +178,9 @@ func configureOBS(c Config) error {
 			"settings": map[string]any{"id_counter": len(items), "custom_size": false, "items": items}}
 	}
 	gc, au := uuid(), uuid()
-	ovID, ov := browser("GrohLAN Overlay (Spielstand / Gleich Live)", "/overlay/game")
-	stID, stS := browser("GrohLAN Gleich Live", "/overlay/start")
-	brID, brS := browser("GrohLAN Turnierbaum", "/overlay/bracket")
+	ovID, ov := browser(c.Profile+" Overlay (Spielstand / Gleich Live)", "/overlay/game")
+	stID, stS := browser(c.Profile+" Gleich Live", "/overlay/start")
+	brID, brS := browser(c.Profile+" Turnierbaum", "/overlay/bracket")
 	scene := map[string]any{
 		"name": c.Profile, "current_scene": "CS2", "current_program_scene": "CS2",
 		"scene_order": []any{map[string]any{"name": "CS2"}, map[string]any{"name": "Gleich Live"}, map[string]any{"name": "Turnierbaum"}},
@@ -198,9 +198,9 @@ func configureOBS(c Config) error {
 			},
 			ov, stS, brS,
 			// CS2: Spielbild, darüber das Overlay (zeigt selbst „Gleich Live“, solange kein Spiel läuft)
-			sceneSrc("CS2", item(1, "CS2 Spiel", gc), item(2, "CS2 Ton", au), item(3, "GrohLAN Overlay (Spielstand / Gleich Live)", ovID)),
-			sceneSrc("Gleich Live", item(1, "GrohLAN Gleich Live", stID)),
-			sceneSrc("Turnierbaum", item(1, "GrohLAN Turnierbaum", brID)),
+			sceneSrc("CS2", item(1, "CS2 Spiel", gc), item(2, "CS2 Ton", au), item(3, c.Profile+" Overlay (Spielstand / Gleich Live)", ovID)),
+			sceneSrc("Gleich Live", item(1, c.Profile+" Gleich Live", stID)),
+			sceneSrc("Turnierbaum", item(1, c.Profile+" Turnierbaum", brID)),
 		},
 		"groups": []any{}, "quick_transitions": []any{}, "transitions": []any{},
 		"current_transition": "Fade", "transition_duration": 300,
@@ -279,7 +279,7 @@ func cs2Running() bool {
 }
 
 // CS2 nimmt -netconport unter Windows nur mit den Workshop-Tools (-tools) an. Darum steuert die exe CS2 über eine
-// Config-Datei: grohlan_tv.cfg wird geschrieben und per Tastendruck (Pause-Taste, Bind aus grohlan_stream.cfg) ausgeführt.
+// Config-Datei: gsm_tv.cfg wird geschrieben und per Tastendruck (Pause-Taste, Bind aus gsm_stream.cfg) ausgeführt.
 func findCS2Cfg(steam string) string {
 	if steam == "" {
 		return ""
@@ -308,12 +308,12 @@ func writeStreamCfg(cfgDir string) {
 	if cfgDir == "" {
 		return
 	}
-	os.WriteFile(filepath.Join(cfgDir, "grohlan_stream.cfg"), []byte(strings.Join([]string{
-		"// GrohLAN Stream-PC (von GrohLAN-Stream.exe geschrieben)",
-		`bind "PAUSE" "exec grohlan_tv"`,
+	os.WriteFile(filepath.Join(cfgDir, "gsm_stream.cfg"), []byte(strings.Join([]string{
+		"// Stream-PC (vom Stream-Helfer geschrieben)",
+		`bind "PAUSE" "exec gsm_tv"`,
 		"spec_autodirector 1", "spec_autodirector_cameraman 0", "cl_draw_only_deathnotices 0",
-		"echo GrohLAN Stream-Steuerung aktiv", ""}, "\n")), 0o644)
-	os.WriteFile(filepath.Join(cfgDir, "grohlan_tv.cfg"), []byte("echo GrohLAN\n"), 0o644)
+		"echo GSM Stream-Steuerung aktiv", ""}, "\n")), 0o644)
+	os.WriteFile(filepath.Join(cfgDir, "gsm_tv.cfg"), []byte("echo GSM Stream-Steuerung\n"), 0o644)
 }
 
 // Befehle an CS2: erst Fernsteuerung (netcon), sonst Config + Tastendruck
@@ -327,7 +327,7 @@ func send(c Config, cfgDir string, cmds ...string) error {
 	if !cs2Running() {
 		return fmt.Errorf("CS2 läuft nicht")
 	}
-	if err := os.WriteFile(filepath.Join(cfgDir, "grohlan_tv.cfg"), []byte(strings.Join(cmds, "\n")+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(cfgDir, "gsm_tv.cfg"), []byte(strings.Join(cmds, "\n")+"\n"), 0o644); err != nil {
 		return err
 	}
 	if !pressBind() {
@@ -338,7 +338,7 @@ func send(c Config, cfgDir string, cmds ...string) error {
 
 // -allow_third_party_software: sonst blockiert CS2 die OBS-Spielaufnahme. tv = CSTV-Adresse, mit der CS2 direkt verbindet.
 func startCS2(steam string, c Config, tv ...string) {
-	game := []string{"-netconport", fmt.Sprint(c.Netcon), "-sw", "-noborder", "-w", "1920", "-h", "1080", "-novid", "-condebug", "+exec", "grohlan_stream"}
+	game := []string{"-netconport", fmt.Sprint(c.Netcon), "-sw", "-noborder", "-w", "1920", "-h", "1080", "-novid", "-condebug", "+exec", "gsm_stream"}
 	if len(tv) > 0 && tv[0] != "" {
 		game = append(game, "+connect", tv[0])
 	}
@@ -401,7 +401,7 @@ func watchConsole(steam string) {
 	logf := filepath.Join(cfg, "..", "console.log")
 	var off int64 = -1
 	keys := []string{"connect", "Connect", "disconnect", "Disconnect", "GOTV", "SourceTV", "CSTV", "spec_", "rejected", "Rejected",
-		"timed out", "Timed out", "error", "Error", "failed", "Failed", "GrohLAN"}
+		"timed out", "Timed out", "error", "Error", "failed", "Failed", "GSM Stream"}
 	for {
 		time.Sleep(2 * time.Second)
 		f, err := os.Open(logf)
@@ -478,7 +478,7 @@ func fetchState(api string) (State, error) {
 
 func main() {
 	fmt.Println("==============================================")
-	fmt.Println("  GrohLAN Stream-PC – OBS + CS2 automatisch")
+	fmt.Println("  Stream-Helfer – OBS + CS2 automatisch")
 	fmt.Println("  Fenster offen lassen. Beenden: Fenster schließen.")
 	fmt.Println("==============================================")
 	c, err := loadConfig()
@@ -510,7 +510,7 @@ func main() {
 
 	steam := findSteam()
 	if cfgDir := findCS2Cfg(steam); cfgDir != "" {
-		writeStreamCfg(cfgDir) // Auto-Kamera usw. beim CS2-Start (+exec grohlan_stream)
+		writeStreamCfg(cfgDir) // Auto-Kamera usw. beim CS2-Start (+exec gsm_stream)
 	}
 	go watchConsole(steam)
 	started, first := time.Time{}, ""

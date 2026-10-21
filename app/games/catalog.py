@@ -58,7 +58,7 @@ CATALOG = {
         "label": "Project Zomboid", "short": "Zomboid", "color": "#7b8b2c", "appid": 108600, "image": _ich("projectzomboid"), "uid": 99, "gid": 100,
         "env": ICH_ENV + ["GAME_ID=380870", "ADMIN_PWD={admin_pw}", "SRV_NAME={server_name}"], "binds": ICH_BINDS, "params": "",
         "ports": [["port", "Spielport (UDP)", 16261, "udp", 16261], ["port2", "Direktverbindung (UDP)", 16262, "udp", 16262]], "web": True,
-        "fields": [["server_name", "Servername", "text", "Groh Zomboid #{n}", ""], ["admin_pw", "Admin-Passwort", "password", "", ""]],
+        "fields": [["server_name", "Servername", "text", "{brand} Zomboid #{n}", ""], ["admin_pw", "Admin-Passwort", "password", "", ""]],
         "status": ("a2s", "port"), "join": ("addr", "port"),
     },
     "palworld": {
@@ -71,7 +71,7 @@ CATALOG = {
         "label": "V Rising", "short": "V Rising", "color": "#8c1f2f", "appid": 1604030, "image": _ich("vrising"), "uid": 99, "gid": 100,
         "env": ICH_ENV + ["GAME_ID=1829350", "SERVER_NAME={server_name}", "WORLD_NAME=world1"], "binds": ICH_BINDS, "params": "",
         "ports": [["port", "Spielport (UDP)", 9876, "udp", 9876], ["query_port", "Query-Port (UDP)", 9877, "udp", 9877]], "web": True,
-        "fields": [["server_name", "Servername", "text", "Groh V Rising #{n}", ""]],
+        "fields": [["server_name", "Servername", "text", "{brand} V Rising #{n}", ""]],
         "status": ("a2s", "query_port"), "join": ("addr", "port"),
     },
     "abioticfactor": {
@@ -94,7 +94,7 @@ CATALOG = {
                                             "SERVER_SLOTS=16"],
         "binds": ["{data}:/home/steam/enshrouded/savegame"], "params": "",
         "ports": [["port", "Spielport (UDP)", 15637, "udp", 15637], ["query_port", "Steam-Abfrageport (UDP)", 15638, "udp", 15638]], "web": False,
-        "fields": [["server_name", "Servername", "text", "Groh Enshrouded #{n}", ""], ["password", "Passwort", "text", "", ""]],
+        "fields": [["server_name", "Servername", "text", "{brand} Enshrouded #{n}", ""], ["password", "Passwort", "text", "", ""]],
         "status": ("a2s", "query_port"), "join": ("addr", "port"),
     },
     "assettocorsa": {

@@ -2026,7 +2026,7 @@ function renderAuto(){
   $("#setInterval").value = settings.watch_interval || 10;
   $("#setScanInterval").value = settings.scan_interval ?? 15;
   $("#setScanSubnets").value = settings.scan_subnets || "";
-  $("#setGamesBase").value = settings.games_base || "/mnt/grohlan";
+  $("#setGamesBase").value = settings.games_base || "/srv/gameserver"; $("#setBrand").value = settings.brand || "";
   $("#setCacheContainer").value = settings.cache_container || "";
   $("#setDefJoinPw").value = settings.default_join_pw || ""; $("#setDefAdminPw").value = settings.default_admin_pw || "";
   api("/api/cache/dir").then(r => {
@@ -2034,8 +2034,8 @@ function renderAuto(){
     $("#setCacheDir").value = r.base || settings.cache_dir || ""; $("#btnCacheDir").disabled = false;
     $("#cacheDirInfo").textContent = `Container ${r.container} – Cache: ${r.cache || "?"}`;
   }).catch(() => {});
-  $("#setHostnamePattern").value = settings.hostname_pattern ?? "Groh CS #{nr} {mode}";
-  $("#setNamesPattern").value = settings.names_pattern ?? "Groh {game} #{nr} {mode}";
+  $("#setHostnamePattern").value = settings.hostname_pattern ?? "{brand} CS #{nr} {mode}";
+  $("#setNamesPattern").value = settings.names_pattern ?? "{brand} {game} #{nr} {mode}";
   $("#setInternetHost").value = settings.internet_host || "";
   $("#setAutoBots").checked = settings.auto_bots !== false; $("#setAutoMz").checked = settings.auto_matchzy !== false;
   $("#setContainerDns").value = settings.container_dns || "";
@@ -2056,7 +2056,7 @@ $("#btnAutoSave").onclick = async () => {
     settings = await api("/api/settings", {method:"PUT", body:{modes: settings.modes, map_rules: settings.map_rules,
       public_url: $("#setPublicUrl").value.trim(), watch_interval: parseInt($("#setInterval").value, 10) || 10,
       scan_interval: Math.max(0, parseInt($("#setScanInterval").value, 10) || 0), scan_subnets: $("#setScanSubnets").value.trim(),
-      games_base: $("#setGamesBase").value.trim(), cache_container: $("#setCacheContainer").value.trim(),
+      games_base: $("#setGamesBase").value.trim(), brand: $("#setBrand").value.trim() || "LAN", cache_container: $("#setCacheContainer").value.trim(),
       default_join_pw: $("#setDefJoinPw").value.trim(), default_admin_pw: $("#setDefAdminPw").value.trim(),
       hostname_pattern: $("#setHostnamePattern").value.trim(), names_pattern: $("#setNamesPattern").value.trim(), internet_host: $("#setInternetHost").value.trim(), auto_bots: $("#setAutoBots").checked, auto_matchzy: $("#setAutoMz").checked, container_dns: $("#setContainerDns").value.trim(), port_range: $("#setPortRange").value.trim()}});
     renderAuto(); refreshModeSelects(); toast("Gespeichert – wird beim nächsten Prüfen angewendet");
@@ -2562,7 +2562,7 @@ async function initCreate(){
   if (same.length || hasTpl) $("#createFields").insertAdjacentHTML("beforeend", `<div class="field"><label>Spieldateien kopieren von (spart den Download)</label>
     <select data-cf="_copy_from"><option value="">– nicht kopieren, neu herunterladen –</option>${hasTpl ? `<option value="_local" selected>Lokale Vorlage auf der internen Platte (${esc(fmtBytes(tplInfo.bytes || 0))}, Stand ${new Date(tplInfo.last * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"})}) – am schnellsten</option>` : ""}${same.map(s => `<option value="${esc(s.id)}" ${!hasTpl && s === same[0] ? "selected" : ""}>${esc(s.name)} (${esc(s.container)})</option>`).join("")}</select>
     <div class="hint">Kopiert die Installation eines vorhandenen Servers ins neue Datenverzeichnis, bevor er startet. SteamCMD prüft danach nur noch Unterschiede. Quelle sollte fertig installiert sein.</div></div>`);
-  const upd = () => { const name = ($('[data-cf="name"]') || {}).value || ""; $("#createDataDir").value = t.data_default.replace("{base}", tpl.games_base || settings.games_base || "/mnt/grohlan").replace("{n}", n).replace("{name}", name); };
+  const upd = () => { const name = ($('[data-cf="name"]') || {}).value || ""; $("#createDataDir").value = t.data_default.replace("{base}", tpl.games_base || settings.games_base || "/srv/gameserver").replace("{n}", n).replace("{name}", name); };
   upd(); $('[data-cf="name"]').addEventListener("input", upd);
   // Adresse der Spielserver: LAN-IP – auch wenn die Seite gerade über die Internet-Adresse geöffnet ist
   const isPriv = h => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.)/.test(h);
@@ -4008,7 +4008,7 @@ async function loadSysDisk(refresh){
 }
 document.addEventListener("click", e => { if (e.target && e.target.id === "btnSysScan"){ loadSysDisk(true); setTimeout(() => loadSysDisk(), 3000); } });
 
-/* ================= Steam-Bot „GrohLan“ ================= */
+/* ================= Steam-Bot ================= */
 let botData = null, botLoaded = false;
 const botSel = new Set();
 async function loadBot(){
@@ -4016,10 +4016,10 @@ async function loadBot(){
   const d = botData, s = d.settings, st = d.status || {}, b = st.bot || {};
   if (!botLoaded || !$("#view-bot").contains(document.activeElement)){
     $("#botEnabled").checked = !!s.enabled; $("#botAuto").checked = s.auto_add !== false;
-    $("#botName").value = s.bot_name || "GrohLan"; $("#botRecent").value = s.recent_hours || 24; $("#botMaxAge").value = s.max_age_days || 7;
+    $("#botName").value = s.bot_name || "LAN-Bot"; $("#botRecent").value = s.recent_hours || 24; $("#botMaxAge").value = s.max_age_days || 7;
     botLoaded = true;
   }
-  $("#botTitle").textContent = s.bot_name || "GrohLan";
+  $("#botTitle").textContent = s.bot_name || "LAN-Bot";
   const c = st.container;
   let h = "";
   if (!s.enabled) h = `<div class="hint">Bot ist aus. Einschalten und speichern – dann startet ein kleiner Container für den Bot.</div>`;
@@ -4059,7 +4059,7 @@ async function loadBot(){
 }
 $("#botSave").onclick = async () => {
   try {
-    await api("/api/steambot", {method: "PUT", body: {enabled: $("#botEnabled").checked, auto_add: $("#botAuto").checked, bot_name: $("#botName").value.trim() || "GrohLan",
+    await api("/api/steambot", {method: "PUT", body: {enabled: $("#botEnabled").checked, auto_add: $("#botAuto").checked, bot_name: $("#botName").value.trim() || "LAN-Bot",
       recent_hours: +$("#botRecent").value || 24, max_age_days: +$("#botMaxAge").value || 7}});
     toast("Gespeichert"); botLoaded = false; setTimeout(loadBot, 1500);
   } catch (e) { toast(e.message, true); }
@@ -4147,7 +4147,7 @@ function tmCard(m, admin, big){
       ${m.status === "ready" ? `<button class="small" data-tload="${m.id}" title="Jetzt auf dem Server laden">▶</button>` : ""}
       ${m.status !== "ready" ? `<button class="small" data-trst="${m.id}" title="Ergebnis zurücksetzen">↺</button>` : ""}</div>` : ""}</div>`;
 }
-// --- Übersicht im GrohLAN-Look: gespiegelter Turnierbaum, Pokal in der Mitte, Gruppen darunter
+// --- Turnier-Übersicht: gespiegelter Turnierbaum, Pokal in der Mitte, Gruppen darunter
 const GL_TROPHY = `<svg viewBox="0 0 120 110" class="gltrophy" aria-hidden="true"><defs><linearGradient id="glg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f3cf47"/><stop offset="1" stop-color="#e39a2f"/></linearGradient></defs>
   <path d="M38 8h44v26c0 16-10 28-22 28S38 50 38 34z" fill="url(#glg)"/><path d="M38 14H22c0 16 8 26 20 28M82 14h16c0 16-8 26-20 28" fill="none" stroke="url(#glg)" stroke-width="5" stroke-linecap="round"/>
   <rect x="54" y="60" width="12" height="16" fill="url(#glg)"/><path d="M42 76h36l4 12H38z" fill="url(#glg)"/><rect x="34" y="88" width="52" height="8" rx="2" fill="url(#glg)"/>
@@ -4361,7 +4361,7 @@ $("#tlDel").onclick = async () => {
   loadTourLib();
 };
 $("#tlNew").onclick = async () => {
-  const name = prompt("Name des neuen Turniers:", "Groh LAN Wingman-Turnier"); if (name === null) return;
+  const name = prompt("Name des neuen Turniers:", `${(settings && settings.brand) || "LAN"} Wingman-Turnier`); if (name === null) return;
   await tourCall("/api/tournament/new", {body: {template: $("#tlTpl").value || null, name: name || null}}, "Neues Turnier angelegt – das vorige ist gespeichert");
   tourLoaded = false; loadTourLib();
 };
@@ -4576,7 +4576,7 @@ async function loadStream(){
   $("#stInfo").innerHTML = `${st.enabled ? "" : `<div style="margin-bottom:6px">Stream-Server ist aus – Haken oben setzen, damit er Bilder annimmt. Die exe kannst du schon vorher auf dem Stream-PC einrichten.</div>`}<div class="row" style="gap:6px;flex-wrap:wrap;align-items:center">OBS-Server <code>${esc(r.obs.server)}</code> <button class="small" data-copy="${esc(r.obs.server)}">kopieren</button>
       · Streamschlüssel <code>${esc(r.obs.key.replace(/pass=.*/, "pass=••••"))}</code> <button class="small" data-copy="${esc(r.obs.key)}">kopieren</button>
       <button class="small" id="stNewKey" title="Neuen Schlüssel erzeugen (OBS muss angepasst werden)">neuer Schlüssel</button>
-      <a class="btn small primary" href="/api/stream/helper.exe" title="Auf dem Stream-PC ausführen: richtet OBS ein, startet CS2 und den Stream, Kamera folgt dem laufenden Spiel">⬇ GrohLAN-Stream.exe</a> <a class="hint" href="/api/stream/helper.cmd">(nur Kamera-Helfer .cmd)</a></div>
+      <a class="btn small primary" href="/api/stream/helper.exe" title="Auf dem Stream-PC ausführen: richtet OBS ein, startet CS2 und den Stream, Kamera folgt dem laufenden Spiel">⬇ Stream-Helfer.exe</a> <a class="hint" href="/api/stream/helper.cmd">(nur Kamera-Helfer .cmd)</a></div>
       <div style="margin-top:6px">OBS-Overlays (Browserquelle 1920×1080, richtet die exe automatisch ein): <a href="/overlay/game" target="_blank">Spielstand + „Gleich Live“</a> ·
         <a href="/overlay/start" target="_blank">Gleich Live</a> · <a href="/overlay/bracket" target="_blank">Turnierbaum</a></div>
       <div style="margin-top:6px">Kamera geht gerade zu: ${t.tv ? `<b>${esc(t.match || "")}</b> <code>${esc(t.tv)}</code>` : "– kein laufendes Spiel (oder CSTV aus)"}</div>`;
@@ -4633,9 +4633,9 @@ async function loadApi(){
     await api(`/api/apikeys/${b.dataset.apidel}`, {method: "DELETE"}); loadApi(); });
   $("#apiPublic").checked = !!r.public_read;
   if (document.activeElement !== $("#apiOrigins")) $("#apiOrigins").value = (r.origins || []).join("\n");
-  $("#apiEmbed").innerHTML = `Turnierbaum (GrohLAN-Look, aktualisiert sich selbst): <code>&lt;iframe src="${esc(r.base)}/embed/tournament" style="width:100%;height:900px;border:0"&gt;&lt;/iframe&gt;</code><br>
+  $("#apiEmbed").innerHTML = `Turnierbaum (aktualisiert sich selbst): <code>&lt;iframe src="${esc(r.base)}/embed/tournament" style="width:100%;height:900px;border:0"&gt;&lt;/iframe&gt;</code><br>
     Live-Stream: <code>&lt;iframe src="${esc(r.base)}/embed/stream" style="width:100%;aspect-ratio:16/9;border:0" allowfullscreen&gt;&lt;/iframe&gt;</code><br>
-    Hinweis: Eine https-Homepage kann nur https-Seiten einbetten – dafür das Tool über einen https-Proxy (z. B. <code>live.groh-lan.de</code>) erreichbar machen.`;
+    Hinweis: Eine https-Homepage kann nur https-Seiten einbetten – dafür das Tool über einen https-Proxy (z. B. <code>live.example.org</code>) erreichbar machen.`;
 }
 $("#apiCreate").onclick = async () => {
   const name = $("#apiName").value.trim() || "Homepage", scopes = $$(".apiScope").filter(x => x.checked).map(x => x.value);

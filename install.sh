@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================================
-#  GrohLAN Spielservermanager – Installer für ein frisches Linux (Debian / Ubuntu)
+#  Spielservermanager – Installer für ein frisches Linux (Debian / Ubuntu)
 #
 #  Installiert Docker, Portainer und den Spielservermanager (als Portainer-Stack),
 #  auf Wunsch auch Lancache (Download-Cache + DNS). Fragt Benutzer, Passwörter und Ordner ab.
@@ -46,7 +46,7 @@ if command -v apt-get >/dev/null; then
 fi
 command -v jq >/dev/null || die "jq fehlt und konnte nicht installiert werden"
 WT=0; [ "$INTERACTIVE" = 1 ] && command -v whiptail >/dev/null && WT=1
-BT="GrohLAN Spielservermanager – Einrichtung"
+BT="Spielservermanager – Einrichtung"
 ROWS=$(stty size <"$TTY" 2>/dev/null | awk '{print $1}' || true); COLS=$(stty size <"$TTY" 2>/dev/null | awk '{print $2}' || true)
 ROWS=${ROWS:-24}; COLS=${COLS:-80}; [ "$ROWS" -ge 12 ] 2>/dev/null || ROWS=24; [ "$COLS" -ge 40 ] 2>/dev/null || COLS=80
 W=$(( COLS - 4 )); [ $W -gt 78 ] && W=78
@@ -144,6 +144,8 @@ msg "Willkommen" "Dieser Assistent richtet ein:\n\n  • Docker\n  • Portainer
 
 ask GSM_USER "Benutzer" "Benutzername für den Spielservermanager\n\nMit diesem Konto meldest du dich an der Weboberfläche an (Administrator mit allen Rechten). Weitere Benutzer, Profile und Steam-Anmeldung richtest du später unter „Benutzer“ ein.\n\nErlaubt: Kleinbuchstaben, Ziffern, Punkt, Minus, Unterstrich." "admin"
 GSM_USER=$(printf '%s' "$GSM_USER" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9._-'); GSM_USER=${GSM_USER:-admin}
+ask BRAND "Veranstaltung" "Name eurer LAN / Veranstaltung\n\nErscheint in den Servernamen (z. B. „LAN CS #1 Wingman“), in Titeln und Benachrichtigungen. Kurz halten – später änderbar unter „Automatik & Einstellungen“." "LAN"
+BRAND=$(printf '%s' "$BRAND" | tr -d '"\\;{}'); BRAND=${BRAND:-LAN}
 ask_pw GSM_PASSWORD "Benutzer" "Passwort für „$GSM_USER“ an der Weboberfläche des Spielservermanagers." 8
 ask PORTAINER_USER "Portainer" "Benutzername für Portainer\n\nPortainer ist die Verwaltungsoberfläche für Docker (https://$LAN_IP:9443). Darin läuft der Spielservermanager als „Stack“ – dort siehst du Container, Logs und kannst Updates einspielen. Für den Alltag brauchst du Portainer meist nicht." "admin"
 if [ -z "${PORTAINER_PASSWORD:-}" ] && [ ${#GSM_PASSWORD} -ge 12 ]; then
@@ -212,7 +214,10 @@ storage_text() {   # storage_text PREFIX
 }
 SUMMARY="Weboberfläche:  http://$LAN_IP:$GSM_PORT  (Benutzer $GSM_USER)
 Portainer:      https://$LAN_IP:9443  (Benutzer $PORTAINER_USER)
-Spielserver:    $(storage_text GAMES)"
+Spielserver:    $(storage_text GAMES)
+Veranstaltung:  $BRAND
+Neue Spielserver bekommen Beitritts- und RCON-Passwort 123456789
+                (ändern unter Automatik & Einstellungen)"
 [ "$WITH_CACHE" = 1 ] && SUMMARY="$SUMMARY
 Lancache:       $(storage_text CACHE), max. $CACHE_SIZE
                 DNS auf $LAN_IP:53"
@@ -221,7 +226,7 @@ if [ "$INTERACTIVE" = 1 ]; then
   [ "$GO" = 1 ] || die "Abgebrochen"
 fi
 clear 2>/dev/null || true
-echo; printf '%s\n' "${c_b}GrohLAN Spielservermanager – Installation${c_0}"; printf '%s\n\n' "$SUMMARY"
+echo; printf '%s\n' "${c_b}Spielservermanager – Installation${c_0}"; printf '%s\n\n' "$SUMMARY"
 
 # ---------------------------------------------------------------- Speicher einrichten (Netzwerk einhängen)
 fstab_add() {   # fstab_add "Zeile" Mountpunkt
@@ -478,7 +483,7 @@ if ! gsm_login "$GSM_USER" && ! gsm_login admin; then
 fi
 if [ "${GSM_SKIP_SETUP:-0}" != 1 ]; then
   curl -sf -b "$JAR" -X PUT "$G/api/settings" -H 'Content-Type: application/json' \
-    -d "$(jq -n --arg g "$GAMES_DIR" --arg c "${CACHE_DIR:-}" '{games_base:$g} + (if $c != "" then {cache_dir:$c} else {} end)')" >/dev/null \
+    -d "$(jq -n --arg g "$GAMES_DIR" --arg b "$BRAND" --arg c "${CACHE_DIR:-}" '{games_base:$g, brand:$b} + (if $c != "" then {cache_dir:$c} else {} end)')" >/dev/null \
     && ok "Spielserver-Ordner: $GAMES_DIR" || warn "Spielserver-Ordner konnte nicht gesetzt werden"
 fi
 if [ "$GSM_USER" != "admin" ] && [ "${GSM_SKIP_SETUP:-0}" != 1 ]; then
@@ -498,7 +503,7 @@ fi
 if [ -d /etc/issue.d ] || mkdir -p /etc/issue.d 2>/dev/null; then
   cat > /etc/issue.d/gsm.issue <<ISSUE || true
 
-  GrohLAN Spielservermanager:  http://\\4:$GSM_PORT   (Bedienung im Browser)
+  Spielservermanager:  http://\\4:$GSM_PORT   (Bedienung im Browser)
   Portainer:                   https://\\4:9443
   Diese Konsolen-Anmeldung ist nur für Linux-Wartung (Benutzer mit sudo, z. B. gsm).
 

@@ -1,4 +1,4 @@
-"""Steam-Bot „GrohLan“: eigener Container (node + steam-user), vom Tool gesteuert.
+"""Steam-Bot: eigener Container (node + steam-user), vom Tool gesteuert.
 
 - an/aus: Container starten/stoppen
 - automatisch neue LAN-Spieler (SteamID aus der Spielerliste) als Freund anfragen
@@ -24,7 +24,7 @@ FILE = "steambot.json"
 SRC = Path(__file__).parent / "steambot"
 ADD_PER_HOUR = 10          # Steam mag keine Anfrage-Salven
 
-DEFAULTS = {"enabled": False, "auto_add": True, "bot_name": "GrohLan", "key": "", "requested": {}, "since": None,
+DEFAULTS = {"enabled": False, "auto_add": True, "bot_name": "LAN-Bot", "key": "", "requested": {}, "since": None,
             "recent_hours": 24, "max_age_days": 7, "adds": []}
 
 
@@ -86,7 +86,7 @@ async def start() -> None:
     net = await _own_network()
     spec = {"Image": IMAGE, "User": "1000:1000", "WorkingDir": "/srv/app",
             "Cmd": ["sh", "-c", "(test -d node_modules/steam-user || npm install --omit=dev --no-audit --no-fund) && exec node bot.js"],
-            "Env": [f"BOT_KEY={d['key']}", f"BOT_NAME={d.get('bot_name') or 'GrohLan'}", "HOME=/srv/data", "npm_config_cache=/srv/data/.npm",
+            "Env": [f"BOT_KEY={d['key']}", f"BOT_NAME={d.get('bot_name') or 'LAN-Bot'}", "HOME=/srv/data", "npm_config_cache=/srv/data/.npm",
                     "BOT_DATA=/srv/data"],
             "Labels": {"gsm.helper": "steambot"},
             "HostConfig": {"Binds": [f"{VOLUME}:/srv"], "RestartPolicy": {"Name": "unless-stopped"},

@@ -18,7 +18,7 @@ var (
 
 const vkPause = 0x13
 
-// CS2-Fenster nach vorne holen und die Pause-Taste drücken (dort liegt per Bind „exec grohlan_tv“)
+// CS2-Fenster nach vorne holen und die Pause-Taste drücken (dort liegt per Bind „exec gsm_tv“)
 func pressBind() bool {
 	title, _ := syscall.UTF16PtrFromString("Counter-Strike 2")
 	h, _, _ := procFindWindow.Call(0, uintptr(unsafe.Pointer(title)))

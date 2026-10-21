@@ -1338,7 +1338,7 @@ def _server_nr(s: dict, hostname: str | None) -> int:
     for txt in (hostname or "", s.get("name") or ""):
         if m := re.search(r"#\s*(\d+)", txt):
             return int(m.group(1))
-        if m := re.match(r"^Groh\s+.+?\s(\d+)(?=\s|$)", txt, re.I):  # „Groh CS 1 Wingman“, alt „Groh Wettkampf 2“
+        if m := re.match(r"^\S+\s+\D+?\s(\d+)(?=\s|$)", txt):  # sehr alte Namen ohne „#“, z. B. „LAN CS 1 Wingman“
             return int(m.group(1))
     if m := re.search(r"(\d+)\s*$", s.get("container") or ""):
         return int(m.group(1))
@@ -1357,7 +1357,7 @@ def _auto_name(s: dict, hostname: str | None, mode_label: str = "") -> str | Non
     short = (GAMES.get(g) or {}).get("short") or g
     # ohne {game} im Muster und ohne Modus steht dort der Spielname
     mode = mode_label or ((GAMES.get(g) or {}).get("short") if "{game}" not in pattern else "") or ""
-    name = pattern.replace("{game}", short).replace("{nr}", str(_server_nr(s, hostname))).replace("{mode}", mode)
+    name = pattern.replace("{brand}", automation.brand()).replace("{game}", short).replace("{nr}", str(_server_nr(s, hostname))).replace("{mode}", mode)
     name = re.sub(r'["\\;]', "", re.sub(r"\s+", " ", name)).strip(" -·|")[:63]
     return name or None
 
@@ -1415,7 +1415,7 @@ def _mode_hostname(s: dict, hostname: str | None, mode_label: str, settings: dic
     pattern = (settings.get("hostname_pattern") or "").strip()
     if not pattern:
         return None
-    name = pattern.replace("{nr}", str(_server_nr(s, hostname))).replace("{mode}", mode_label)
+    name = pattern.replace("{brand}", automation.brand()).replace("{nr}", str(_server_nr(s, hostname))).replace("{mode}", mode_label)
     return re.sub(r'["\\;]', "", name).strip()[:63] or None
 
 
@@ -1988,7 +1988,7 @@ async def load_loop():
 def _path_check(path: str, other_sources: list[str]) -> str | None:
     """None = darf gelöscht werden, sonst Grund."""
     p = os.path.normpath(path or "")
-    base = os.path.normpath(automation.get_settings().get("games_base") or "/mnt/grohlan")
+    base = os.path.normpath(automation.get_settings().get("games_base") or "/srv/gameserver")
     if not p.startswith("/mnt/"):
         return "nur Ordner unter /mnt werden gelöscht"
     if len(p.strip("/").split("/")) < 3:
@@ -3245,6 +3245,7 @@ class SettingsIn(BaseModel):
     scan_interval: int | None = Field(None, ge=0, le=1440)
     scan_subnets: str | None = Field(None, max_length=200)
     games_base: str | None = Field(None, max_length=200)
+    brand: str | None = Field(None, max_length=40)
     cache_container: str | None = Field(None, max_length=100)
     cache_dir: str | None = Field(None, max_length=300)
     default_join_pw: str | None = Field(None, max_length=64)
@@ -3292,8 +3293,10 @@ async def put_settings(data: SettingsIn):
     if "games_base" in payload:
         gb = payload["games_base"].strip().rstrip("/")
         if gb and not gb.startswith("/"):
-            raise HTTPException(400, "Basisordner muss ein absoluter Pfad sein (z. B. /mnt/grohlan)")
-        payload["games_base"] = gb or "/mnt/grohlan"
+            raise HTTPException(400, "Basisordner muss ein absoluter Pfad sein (z. B. /srv/gameserver)")
+        payload["games_base"] = gb or "/srv/gameserver"
+    if "brand" in payload:
+        payload["brand"] = re.sub(r'["\\;{}]', "", payload["brand"]).strip() or "LAN"
     if "cache_container" in payload:
         payload["cache_container"] = payload["cache_container"].strip()
         cache_stats.state.update(container=None, offset=0, buckets={}, updated=None)
@@ -3977,11 +3980,13 @@ async def _tour_create_servers(n: int) -> str | None:
     nr = max([_server_nr(s, (_state.get(s["id"]) or {}).get("hostname")) for s in cs] + [1]) + 1
     used = set(await _used_ports())
     vals = {k: (dv.replace("{n}", str(nr)) if isinstance(dv, str) else dv) for k, _l, _t, dv, _h in templates.TEMPLATES["cs2"]["fields"]}
+    vals = {k: _brandify(v) for k, v in vals.items()}
+    vals["server_name"] = f"{automation.brand()} CS #{nr} Turnier"
     vals = {k: (templates.default_admin_pw() if v == "{default_admin_pw}" else templates.default_join_pw() if v == "{default_join_pw}" else v)
             for k, v in vals.items()}
     vals.update({k: str(v) for k, v in templates.suggest_ports("cs2", used, templates.parse_range(automation.get_settings().get("port_range"))).items()})
-    vals.update(server_name=f"Groh CS #{nr} Turnier", mode="wingman", token="", _copy_from="_local" if _tpl.get("last") else cs[0]["id"])
-    base = (automation.get_settings().get("games_base") or "/mnt/grohlan").rstrip("/")
+    vals.update(server_name=f"{automation.brand()} CS #{nr} Turnier", mode="wingman", token="", _copy_from="_local" if _tpl.get("last") else cs[0]["id"])
+    base = (automation.get_settings().get("games_base") or "/srv/gameserver").rstrip("/")
     data = BatchIn.model_construct(game="cs2", values=vals, data_dir=f"{base}/cs/server{nr}", host=cs[0]["host"], count=n, n=nr)
     r = await _start_batch(data, cs[0]["host"])
     return r.get("id")
@@ -4319,7 +4324,7 @@ code{{background:#1a241b;padding:3px 8px;border-radius:6px}}</style>
 <a class="b" href="{_h.escape(url)}">▶ Jetzt beitreten</a>
 <p>Startet das Spiel nicht? In der Konsole: <code>connect {_h.escape(addr)}</code></p></div>
 <script>{"location.href=" + json.dumps(url) + ";" if url else ""}</script>"""
-    return _Resp(content=page, media_type="text/html")
+    return _Resp(content=page.replace("%BRAND%", _html_brand()), media_type="text/html")
 
 
 async def _tour_load(d: dict, m: dict, bots: bool = False) -> None:
@@ -4762,7 +4767,7 @@ async def tour_loop():
         await asyncio.sleep(20)
 
 
-# ---------------------------------------------------------------- Steam-Bot „GrohLan“
+# ---------------------------------------------------------------- Steam-Bot
 class BotSettings(BaseModel):
     enabled: bool | None = None
     auto_add: bool | None = None
@@ -4877,16 +4882,16 @@ async def stream_helper_exe(request: Request):
     """Alles-in-einem für den Stream-PC: richtet OBS ein, startet CS2 + Stream und folgt dem laufenden Spiel.
     Die Einstellungen werden ans Ende der exe gehängt (Windows ignoriert angehängte Daten)."""
     _need_right(request, "tournament")
-    exe = Path(__file__).parent / "bin" / "grohlan-stream.exe"
+    exe = Path(__file__).parent / "bin" / "gsm-stream.exe"
     if not exe.exists():
         raise HTTPException(404, "Stream-Helfer ist in diesem Build nicht enthalten")
     st = stream_ctl.settings()
     host = _stream_lan_host()                                 # der Stream-PC steht im LAN
     cfg = {"api": f"http://{host}:{TOOL_PORT}/api/public/stream/state", "server": f"rtmp://{host}:{stream_ctl.RTMP_PORT}",
-           "key": f"{stream_ctl.PATH}?user=obs&pass={st['key']}", "netcon": int(st.get("netcon_port") or 2121), "profile": "GrohLAN"}
-    data = exe.read_bytes() + b"\n#GROHLAN-STREAM-CONFIG#" + json.dumps(cfg).encode()
+           "key": f"{stream_ctl.PATH}?user=obs&pass={st['key']}", "netcon": int(st.get("netcon_port") or 2121), "profile": automation.brand()}
+    data = exe.read_bytes() + b"\n#GSM-STREAM-CONFIG#" + json.dumps(cfg).encode()
     return _Resp(content=data, media_type="application/octet-stream",
-                 headers={"Content-Disposition": 'attachment; filename="GrohLAN-Stream.exe"'})
+                 headers={"Content-Disposition": 'attachment; filename="Stream-Helfer.exe"'})
 
 
 @app.get("/api/stream/helper.cmd", dependencies=auth)
@@ -4896,9 +4901,9 @@ async def stream_helper_cmd(request: Request):
     import base64 as _b64
     base = str(request.base_url).rstrip("/")
     enc = _b64.b64encode(stream_ctl.helper_script(f"{base}/api/public/stream/state").encode("utf-16-le")).decode()
-    cmd = f"@echo off\r\ntitle GrohLAN Stream-Helfer\r\npowershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {enc}\r\npause\r\n"
+    cmd = f"@echo off\r\ntitle Stream-Helfer\r\npowershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {enc}\r\npause\r\n"
     return _Resp(content=cmd.encode(), media_type="application/octet-stream",
-                 headers={"Content-Disposition": 'attachment; filename="grohlan-stream-helfer.cmd"'})
+                 headers={"Content-Disposition": 'attachment; filename="stream-helfer.cmd"'})
 
 
 @app.get("/api/stream/helper.ps1", dependencies=auth)
@@ -4906,7 +4911,7 @@ async def stream_helper(request: Request):
     _need_right(request, "tournament")
     base = str(request.base_url).rstrip("/")
     return _Resp(content=stream_ctl.helper_script(f"{base}/api/public/stream/state").encode("utf-8-sig"), media_type="text/plain",
-                 headers={"Content-Disposition": 'attachment; filename="grohlan-stream-helfer.ps1"'})
+                 headers={"Content-Disposition": 'attachment; filename="stream-helfer.ps1"'})
 
 
 class BotMsg(BaseModel):
@@ -5159,7 +5164,7 @@ _backup = {"running": False, "last": store.load("backup_state.json", {})}
 def _backup_settings() -> dict:
     d = {**BACKUP_DEFAULTS, **store.load("backup.json", {})}
     if not d.get("dir"):
-        d["dir"] = os.path.normpath(automation.get_settings().get("games_base") or "/mnt/grohlan") + "/_backups"
+        d["dir"] = os.path.normpath(automation.get_settings().get("games_base") or "/srv/gameserver") + "/_backups"
     return d
 
 
@@ -5280,7 +5285,7 @@ async def backup_run(sid: str | None = None):
 # ---------------------------------------------------------------- Alle Server nach Namensschema benennen
 @app.post("/api/names/apply", dependencies=auth)
 async def names_apply():
-    """Namen nach Schema „Groh <Spiel> <Nr> <Modus>“: in der Liste/Übersicht sofort, im Spiel wo möglich
+    """Namen nach Schema „<Veranstaltung> <Spiel> <Nr> <Modus>“: in der Liste/Übersicht sofort, im Spiel wo möglich
     (CS2/TF2/Satisfactory live, Wreckfest per Konfiguration + Neustart sobald leer)."""
     settings = automation.get_settings()
     out = []
@@ -6709,13 +6714,19 @@ def _resume_jobs() -> None:
             _job_tasks[j["id"]] = asyncio.create_task(_create_job(j, CreateIn(**{k: r[k] for k in ("game", "values", "data_dir", "host")}), r["host"]))
 
 
+def _brandify(x):
+    if not isinstance(x, str):
+        return x
+    return x.replace("{brand}", automation.brand()).replace("{default_dns}", automation.get_settings().get("tpl_dns_default") or "")
+
+
 @app.get("/api/templates", dependencies=auth)
 async def list_templates():
-    base = (automation.get_settings().get("games_base") or "/mnt/grohlan").rstrip("/")
+    base = (automation.get_settings().get("games_base") or "/srv/gameserver").rstrip("/")
     st = automation.get_settings()
     sub = {"{default_admin_pw}": st.get("default_admin_pw") or "", "{default_join_pw}": st.get("default_join_pw") or ""}
     tpl = {k: {**v, "data_default": v["data_default"].replace("{base}", base),
-               "fields": [[f[0], f[1], f[2], sub.get(f[3], f[3]), *f[4:]] for f in v["fields"]]}
+               "fields": [[f[0], f[1], f[2], _brandify(sub.get(f[3], f[3])), *f[4:]] for f in v["fields"]]}
            for k, v in templates.TEMPLATES.items()}
     return {"templates": tpl, "docker": docker_api.available(), "games_base": base}
 
@@ -6816,7 +6827,7 @@ async def gslt_create(data: GsltNewIn):
         if data.token:
             gslt.add_manual(data.token, gslt.APPS[data.game], data.memo)
             return {"ok": True}
-        t = await gslt.create(gslt.APPS[data.game], data.memo or f"GROH LAN {data.game.upper()}")
+        t = await gslt.create(gslt.APPS[data.game], data.memo or f"{automation.brand().upper()} {data.game.upper()}")
         return {"ok": True, "memo": t["memo"]}
     except gslt.GsltError as e:
         raise HTTPException(400, str(e))
@@ -8062,7 +8073,7 @@ def _lib() -> dict:
 
 
 def _lib_root(game: str) -> str:
-    base = os.path.normpath(automation.get_settings().get("games_base") or "/mnt/grohlan")
+    base = os.path.normpath(automation.get_settings().get("games_base") or "/srv/gameserver")
     return f"{base}/_bibliothek/{game}"
 
 
@@ -8504,7 +8515,7 @@ async def _scan_folders():
     if _folders["busy"]:
         return
     _folders["busy"] = True
-    base = os.path.normpath(automation.get_settings().get("games_base") or "/mnt/grohlan")
+    base = os.path.normpath(automation.get_settings().get("games_base") or "/srv/gameserver")
     try:
         out = await docker_api.run_helper([f"{base}:/base:ro"], ["sh", "-c", LIST_SH], timeout=120)
         old = {f["rel"]: f.get("bytes") for f in _folders["items"]} if _folders.get("base") == base else {}
@@ -8568,7 +8579,7 @@ class FolderDel(BaseModel):
 async def storage_folder_delete(data: FolderDel):
     """Ungenutzten Ordner im Spieleverzeichnis samt Inhalt löschen (im Hintergrund)."""
     _need_docker()
-    base = os.path.normpath(automation.get_settings().get("games_base") or "/mnt/grohlan")
+    base = os.path.normpath(automation.get_settings().get("games_base") or "/srv/gameserver")
     p = os.path.normpath(data.path)
     if not p.startswith(base + "/") or ".." in data.path:
         raise HTTPException(400, "Nur Ordner im Spieleverzeichnis")
@@ -9083,7 +9094,7 @@ _gfree: dict = {"t": 0.0, "v": None}
 async def games_free(force: bool = False) -> dict | None:
     if not force and _gfree["v"] and time.time() - _gfree["t"] < 120:
         return _gfree["v"]
-    base = os.path.normpath(automation.get_settings().get("games_base") or "/mnt/grohlan")
+    base = os.path.normpath(automation.get_settings().get("games_base") or "/srv/gameserver")
     try:
         out = await docker_api.run_helper([f"{base}:/g:ro"], ["sh", "-c", "df -P -B1 /g | tail -1"], timeout=60)
         f = out.split()
@@ -9299,7 +9310,7 @@ _job_tasks: dict[str, asyncio.Task] = {}
 
 async def _dir_is_new(path: str) -> bool:
     """True, wenn der Ordner (unter dem Spieleverzeichnis) noch nicht existiert."""
-    base = os.path.normpath(automation.get_settings().get("games_base") or "/mnt/grohlan")
+    base = os.path.normpath(automation.get_settings().get("games_base") or "/srv/gameserver")
     p = os.path.normpath(path or "")
     if not p.startswith(base + "/"):
         return False
@@ -9453,7 +9464,7 @@ async def scan_state():
 async def scan_now():
     nets = _scan_nets()
     if not nets:
-        raise HTTPException(400, "Kein Netz bekannt – unter „Automatik & Modi“ ein Subnetz eintragen (z. B. 192.168.200.0/24)")
+        raise HTTPException(400, "Kein Netz bekannt – unter „Automatik & Modi“ ein Subnetz eintragen (z. B. 192.168.1.0/24)")
     if not scanner.state["running"]:
         asyncio.create_task(scanner.scan(nets))
     await asyncio.sleep(0.1)
@@ -9522,11 +9533,16 @@ def _embed_script() -> str:
     return _embed_js["v"]
 
 
+def _html_brand() -> str:
+    import html as _h
+    return _h.escape(automation.brand()).replace("'", "&#39;")
+
+
 @app.get("/embed/tournament")
 async def embed_tournament():
-    """Turnierbaum im GrohLAN-Look zum Einbetten (iframe) auf der Homepage – aktualisiert sich selbst."""
+    """Turnierbaum im Turnier-Look zum Einbetten (iframe) auf der Homepage – aktualisiert sich selbst."""
     page = """<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>GrohLAN Turnier</title><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap">
+<title>%BRAND% Turnier</title><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap">
 <link rel="stylesheet" href="/static/app.css"><style>html,body{background:transparent!important;margin:0;padding:0}#o{padding:8px}</style></head>
 <body><div id="o"><div class="hint" style="padding:20px">Lade Turnier …</div></div><script src="/static/hls.min.js"></script><script>""" + _embed_script() + """
 async function r(){try{const v=await (await fetch('/api/public/tournament/state',{cache:'no-store'})).json();
@@ -9534,11 +9550,11 @@ async function r(){try{const v=await (await fetch('/api/public/tournament/state'
  document.getElementById('o').innerHTML=v&&v.active&&v.matches&&v.matches.length?glShow(v):'<div class="gl"><div class="glsec"><h3>Turnier</h3><div style="color:#aaa">Noch kein Spielplan.</div></div></div>';
  glStreamAttach(v.stream);}catch(e){}}
 r();setInterval(r,15000);</script></body></html>"""
-    return _Resp(content=page, media_type="text/html")
+    return _Resp(content=page.replace("%BRAND%", _html_brand()), media_type="text/html")
 
 
 # --- OBS-Overlays (Browserquellen 1920×1080): „Gleich Live“-Vorhang mit Turnierbaum, Spielstand-Leiste, Turnierbaum
-_OVERLAY_HEAD = """<!doctype html><html lang="de"><head><meta charset="utf-8"><title>GrohLAN Overlay</title>
+_OVERLAY_HEAD = """<!doctype html><html lang="de"><head><meta charset="utf-8"><title>%BRAND% Overlay</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap"><link rel="stylesheet" href="/static/app.css">
 <style>
 html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:transparent!important;font-family:Inter,system-ui,sans-serif;color:#f2f2ed}
@@ -9596,7 +9612,7 @@ function render(v,s,now){
     document.getElementById('bug').style.display='none';document.getElementById('next').style.display='none';document.getElementById('top').style.display='none';
     const up=cur?cur:nx;
     c.querySelector('.t1').textContent=MODE==='bracket'?(v.name||'Turnier'):'GLEICH LIVE';
-    c.querySelector('.t2').innerHTML=MODE==='bracket'?esc(v.mode_label||''):esc(v.name||'GrohLAN')+'<span class="dots"></span>';
+    c.querySelector('.t2').innerHTML=MODE==='bracket'?esc(v.mode_label||''):esc(v.name||'%BRAND%')+'<span class="dots"></span>';
     c.querySelector('.nx').innerHTML=up?(cur?'Jetzt: ':'Als Nächstes: ')+'<b>'+nm(up,1)+'</b> vs <b>'+nm(up,2)+'</b> · '+esc((up.label||'').split(' · ').pop())+(up.map?' · '+esc(up.map):'')+(!cur&&up.planned?' · '+tTime(up.planned)+' Uhr':''):'';
     const t=document.getElementById('tree'), h=treeHtml(v); if(t.dataset.h!==h){t.dataset.h=h;t.innerHTML=h;
       t.querySelectorAll('.glnext').forEach(x=>x.closest('.glsec').remove());   // nur Baum/Gruppen, ohne „Live & als Nächstes“
@@ -9620,7 +9636,7 @@ poll();setInterval(poll,3000);window.addEventListener('resize',fit);
 def _overlay_page(mode: str) -> str:
     return (_OVERLAY_HEAD.replace("<body>", f'<body data-mode="{mode}">') +
             '<div id="curtain"><div class="t1 bb">GLEICH LIVE</div><div class="t2 bb"></div><div class="nx bb"></div><div id="tree"></div></div>'
-            '<div id="bug"></div><div id="next"></div><div id="top"></div><script>' + _embed_script() + _OVERLAY_JS + "</script></body></html>")
+            '<div id="bug"></div><div id="next"></div><div id="top"></div><script>' + _embed_script() + _OVERLAY_JS + "</script></body></html>").replace("%BRAND%", _html_brand())
 
 
 @app.get("/overlay/game")
@@ -9646,7 +9662,7 @@ async def overlay_bracket():
 async def embed_stream():
     """Live-Stream-Player zum Einbetten (iframe)."""
     page = """<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>GrohLAN Live</title><style>html,body{margin:0;background:#000;height:100%;font-family:Inter,system-ui,sans-serif;color:#eee}
+<title>%BRAND% Live</title><style>html,body{margin:0;background:#000;height:100%;font-family:Inter,system-ui,sans-serif;color:#eee}
 video{width:100%;height:100%;object-fit:contain;background:#000}#off{position:absolute;inset:0;display:grid;place-items:center;text-align:center;color:#9a9}
 #cap{position:absolute;left:10px;top:8px;font-size:13px;text-shadow:0 1px 3px #000}#cap b{color:#ff5a5a}</style></head>
 <body><video id="v" controls autoplay muted playsinline></video><div id="cap"></div><div id="off">Gerade kein Live-Stream.</div>
@@ -9659,7 +9675,7 @@ async function r(){let s;try{s=await (await fetch('/api/public/stream/state',{ca
   h.on(Hls.Events.ERROR,(e,d)=>{if(d.fatal){h.destroy();h=null;on=false}})}else if(v.canPlayType('application/vnd.apple.mpegurl')){v.src=s.hls}}
  if(!live&&on){on=false;if(h){h.destroy();h=null}v.removeAttribute('src');v.load()}}
 r();setInterval(r,10000);</script></body></html>"""
-    return _Resp(content=page, media_type="text/html")
+    return _Resp(content=page.replace("%BRAND%", _html_brand()), media_type="text/html")
 
 
 # Schlüssel-Verwaltung (Verwaltung → 🔌 API)

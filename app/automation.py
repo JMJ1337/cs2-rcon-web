@@ -33,11 +33,12 @@ DEFAULT_SETTINGS = {
     "internet_host": "",       # öffentliche IP/DNS-Name für Besucher aus dem Internet (leer = automatisch ermitteln)
     "watch_interval": 10,
     "scan_interval": 15,        # Minuten, 0 = aus
-    "scan_subnets": "",         # zusätzliche Netze, z. B. "192.168.200.0/24"
-    "games_base": "/mnt/grohlan",   # Basisordner für neue Spielserver (NAS-Mount auf dem Docker-Host)
+    "scan_subnets": "",         # zusätzliche Netze, z. B. "192.168.1.0/24"
+    "brand": "LAN",             # Name der Veranstaltung – erscheint in Servernamen, Titeln, Benachrichtigungen ({brand})
+    "games_base": "/srv/gameserver",   # Basisordner für neue Spielserver (z. B. NAS-Mount auf dem Docker-Host)
     "cache_container": "",      # Lancache-Container (leer = automatisch erkennen)
-    "hostname_pattern": "Groh CS #{nr} {mode}",       # CS2-Servername nach Modus (leer = aus)
-    "names_pattern": "Groh {game} #{nr} {mode}",      # alle anderen Spiele, z. B. „TF2 #1 Payload“, „Valheim #1“ (leer = aus)
+    "hostname_pattern": "{brand} CS #{nr} {mode}",       # CS2-Servername nach Modus (leer = aus)
+    "names_pattern": "{brand} {game} #{nr} {mode}",      # alle anderen Spiele, z. B. „LAN TF2 #1 Payload“ (leer = aus)
     "container_dns": "",        # DNS für neue Spielserver-Container (leer = Lancache-DNS automatisch)
     "auto_bots": True,          # CS2: allein auf dem Server -> Bots (nicht in Competitive/Wingman)
     "auto_matchzy": True,       # CS2: MatchZy nur in Competitive/Wingman geladen
@@ -45,14 +46,52 @@ DEFAULT_SETTINGS = {
 }
 
 
+# Bestehende Installationen aus der Zeit vor der einstellbaren Veranstaltung: deren bisherige Standardwerte
+# werden beim ersten Start einmalig fest gespeichert, damit sich dort nichts ändert.
+_LEGACY = {"brand": "GrohLAN", "games_base": "/mnt/grohlan", "tpl_dns_default": "192.168.200.27",
+           "hostname_pattern": "Groh CS #{nr} {mode}", "names_pattern": "Groh {game} #{nr} {mode}"}
+_LEGACY_OLD_CS = ("CS#{nr} {mode}", "Groh {mode} {nr}", "CS #{nr} {mode}", "Groh CS {nr} {mode}")
+_LEGACY_OLD_NAMES = ("{game}#{nr} {mode}", "Groh {mode} {nr}", "{game} #{nr} {mode}", "Groh {game} {nr} {mode}")
+_LEGACY_STORES = {"steambot.json": {"bot_name": "GrohLan"},
+                  "apikeys.json": {"origins": ["https://www.groh-lan.de", "https://groh-lan.de"]},
+                  "tournament.json": {"name": "Groh LAN Wingman-Turnier"},
+                  "notify.json": {"title": "Groh LAN"}}
+
+# Neuinstallation: Standard-Beitritts- und RCON-Passwort für neue Spielserver (in den Einstellungen änderbar)
+FRESH_DEFAULTS = {"default_join_pw": "123456789", "default_admin_pw": "123456789"}
+
+
+def _migrate_brand(s: dict) -> dict:
+    if "brand" in s:
+        return s
+    if s or (store.DATA_DIR / SETTINGS_FILE).exists():   # bestehende Installation (auch wenn die Datei gerade nicht lesbar ist)
+        if not s:
+            return s                                      # nichts überschreiben – beim nächsten Lesen erneut versuchen
+        for k in ("brand", "games_base", "tpl_dns_default"):
+            s.setdefault(k, _LEGACY[k])
+        hp = s.get("hostname_pattern", _LEGACY["hostname_pattern"])
+        s["hostname_pattern"] = _LEGACY["hostname_pattern"] if hp in _LEGACY_OLD_CS else hp
+        np_ = s.get("names_pattern", _LEGACY["names_pattern"])
+        s["names_pattern"] = _LEGACY["names_pattern"] if np_ in _LEGACY_OLD_NAMES else np_
+        for fn, vals in _LEGACY_STORES.items():
+            d = store.load(fn, {})
+            if isinstance(d, dict):
+                missing = {k: v for k, v in vals.items() if k not in d}
+                if missing:
+                    store.save(fn, {**d, **missing})
+    else:   # Neuinstallation
+        s.update(brand=DEFAULT_SETTINGS["brand"], **FRESH_DEFAULTS)
+    store.save(SETTINGS_FILE, s)
+    return s
+
+
+def brand() -> str:
+    return (get_settings().get("brand") or "").strip() or "LAN"
+
+
 def get_settings() -> dict:
-    s = store.load(SETTINGS_FILE, {})
+    s = _migrate_brand(store.load(SETTINGS_FILE, {}))
     out = {**DEFAULT_SETTINGS, **s}
-    # alte Standard-Muster auf das einheitliche Schema „CS #1 Modus“ umstellen
-    if out.get("hostname_pattern") in ("CS#{nr} {mode}", "Groh {mode} {nr}", "CS #{nr} {mode}", "Groh CS {nr} {mode}"):
-        out["hostname_pattern"] = DEFAULT_SETTINGS["hostname_pattern"]
-    if out.get("names_pattern") in ("{game}#{nr} {mode}", "Groh {mode} {nr}", "{game} #{nr} {mode}", "Groh {game} {nr} {mode}"):
-        out["names_pattern"] = DEFAULT_SETTINGS["names_pattern"]
     if not out.get("modes"):
         out["modes"] = DEFAULT_MODES
     if not s.get("_wingman5"):                 # einmalig: Wingman braucht 5 Plätze (der CSTV-Zuschauer belegt einen)
@@ -72,7 +111,7 @@ def get_settings() -> dict:
 def save_settings(data: dict) -> dict:
     cur = get_settings()
     for k in ("modes", "map_rules", "public_url", "internet_host", "watch_interval", "scan_interval", "scan_subnets",
-              "games_base", "cache_container", "cache_dir", "default_join_pw", "default_admin_pw", "cs2_template_src", "hostname_pattern", "names_pattern", "container_dns", "auto_bots", "auto_matchzy", "port_range"):
+              "games_base", "brand", "cache_container", "cache_dir", "default_join_pw", "default_admin_pw", "cs2_template_src", "hostname_pattern", "names_pattern", "container_dns", "auto_bots", "auto_matchzy", "port_range"):
         if k in data:
             cur[k] = data[k]
     store.save(SETTINGS_FILE, cur)

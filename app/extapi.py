@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/v1", tags=["Homepage-API"])
 
 # ---------------------------------------------------------------- Schlüssel
 def _all() -> dict:
-    return {"keys": [], "public_read": True, "origins": ["https://www.groh-lan.de", "https://groh-lan.de"], **store.load(FILE, {})}
+    return {"keys": [], "public_read": True, "origins": [], **store.load(FILE, {})}
 
 
 def _h(k: str) -> str:

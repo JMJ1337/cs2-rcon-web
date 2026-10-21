@@ -3,7 +3,7 @@
 clear
 echo
 echo "  ============================================================"
-echo "   GrohLAN Spielservermanager – Einrichtung"
+echo "   Spielservermanager – Einrichtung"
 echo "  ============================================================"
 echo
 echo "  Warte auf Netzwerk …"

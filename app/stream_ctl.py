@@ -133,7 +133,7 @@ async def on_air() -> bool:
         return False
 
 
-HELPER_PS1 = r'''# GrohLAN Stream-PC: verbindet CS2 automatisch mit dem laufenden Turnierspiel (CSTV) und schaltet die Auto-Kamera ein.
+HELPER_PS1 = r'''# Stream-PC: verbindet CS2 automatisch mit dem laufenden Turnierspiel (CSTV) und schaltet die Auto-Kamera ein.
 # CS2 mit Startoption  -netconport {port}  starten (Steam > CS2 > Eigenschaften > Startoptionen), OBS sendet an den Stream-Server.
 $api = "{api}"
 $last = ""

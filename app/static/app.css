@@ -643,7 +643,7 @@ aside .head .logo{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space
 .tourpub .panel{padding:12px 16px}
 .tnext{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px;margin-bottom:12px}
 
-/* ---- Turnier-Übersicht im GrohLAN-Look (groh-lan.de: Dschungelgrün, Lime, Gold, Bebas Neue) ---- */
+/* ---- Turnier-Übersicht (Dschungelgrün, Lime, Gold, Bebas Neue) ---- */
 .gl{--gbg:hsl(130 40% 4%);--gcard:hsl(120 18% 9%);--gmid:hsl(125 25% 12%);--gline:hsl(120 15% 22%);--gfg:hsl(60 15% 94%);--gmut:hsl(90 10% 65%);
   --glime:hsl(72 72% 48%);--ggold:hsl(48 85% 58%);--ggold2:hsl(38 80% 55%);--gap:30px;
   background:radial-gradient(ellipse at 50% 0%,hsl(88 45% 14% / .55),transparent 60%),linear-gradient(180deg,hsl(125 25% 6%),var(--gbg));
@@ -752,7 +752,7 @@ main .topbar{top:34px}
 #tvHelp{position:fixed;right:16px;bottom:16px;z-index:60;max-width:380px}
 .tvhelp{background:var(--panel);border:1px solid var(--accent);border-radius:10px;padding:12px 14px;font-size:13px;box-shadow:0 10px 30px #000a;display:flex;flex-direction:column;gap:4px}
 
-/* Bestenliste (GrohLAN-Look) */
+/* Bestenliste */
 .glleaders{width:100%;max-width:900px;margin:0 auto;border-collapse:separate;border-spacing:0 4px;font-size:14px}
 .glleaders th{font-family:"Bebas Neue",Impact,sans-serif;font-weight:400;letter-spacing:.06em;color:var(--gmut);text-align:center;font-size:15px;padding:0 8px}
 .glleaders th:nth-child(2){text-align:left}

@@ -2,7 +2,7 @@
 FROM golang:1.23-alpine AS streamhelper
 WORKDIR /src
 COPY tools/streamhelper/ .
-RUN CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o /out/grohlan-stream.exe .
+RUN CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o /out/gsm-stream.exe .
 
 FROM python:3.12-slim
 
@@ -15,7 +15,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
-COPY --from=streamhelper /out/grohlan-stream.exe ./app/bin/grohlan-stream.exe
+COPY --from=streamhelper /out/gsm-stream.exe ./app/bin/gsm-stream.exe
 
 # Version/Build-Datum (setzt die GitHub Action beim Bauen)
 ARG APP_VERSION=dev

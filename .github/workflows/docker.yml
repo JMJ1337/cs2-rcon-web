@@ -73,7 +73,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          sed -i -E "s/(com\.groh-pa\.build: \").*(\")/\1${GITHUB_SHA::7}\2/" portainer-stack.yml
+          sed -i -E "s/(org\.spielservermanager\.build: \").*(\")/\1${GITHUB_SHA::7}\2/" portainer-stack.yml
           if git diff --quiet; then echo "nichts zu tun"; exit 0; fi
           git commit -am "Portainer: neues Image ${GITHUB_SHA::7} [skip ci]"
           git push origin HEAD:main

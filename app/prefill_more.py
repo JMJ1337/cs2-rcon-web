@@ -55,7 +55,7 @@ def save_settings(svc: str, data: dict) -> dict:
 
 
 def config_dir(svc: str) -> str:
-    base = (automation.get_settings().get("games_base") or "/mnt/grohlan").rstrip("/")
+    base = (automation.get_settings().get("games_base") or "/srv/gameserver").rstrip("/")
     return f"{base}/{SERVICES[svc]['dir']}/Config"
 
 

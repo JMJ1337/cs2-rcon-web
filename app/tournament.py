@@ -20,7 +20,7 @@ BYE = "BYE"
 WINGMAN_MAPS = ["de_inferno", "de_nuke", "de_overpass", "de_vertigo"]
 MODES = {"ko": "K.-o.-System", "double": "Doppel-K.-o.", "groups": "Gruppen + K.-o.", "rr": "Jeder gegen jeden"}
 
-DEFAULTS = {"active": False, "name": "Groh LAN Wingman-Turnier", "mode": "groups", "start": None, "match_min": 35,
+DEFAULTS = {"active": False, "name": "Wingman-Turnier", "mode": "groups", "start": None, "match_min": 35,
             "pause_min": 10, "maps": WINGMAN_MAPS, "status": "setup", "registration": True, "auto_servers": True,
             "invite": True, "par_qf": True, "par_sf": False, "players": [], "teams": [], "matches": [], "groups": {}, "servers": [], "created": None}
 
