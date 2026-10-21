@@ -35,11 +35,22 @@ DEFAULT_PROFILES = [
 ]
 
 
+PUBLIC_PROFILE = {"id": "oeffentlich", "name": "Nur öffentliche Seite", "color": "#6b7a8f",
+                  "desc": "kein Zugriff auf die Verwaltung – sieht nach dem Login nur die öffentliche Übersicht",
+                  "perms": {"*": 0}, "rights": []}
+
+
 def profiles() -> list[dict]:
     p = store.load(PROFILES_FILE, None)
     if p is None:
-        p = DEFAULT_PROFILES
+        p = [PUBLIC_PROFILE] + DEFAULT_PROFILES
         store.save(PROFILES_FILE, p)
+        store.save("user_profiles_meta.json", {"public_added": True})
+    elif not store.load("user_profiles_meta.json", {}).get("public_added"):     # einmalig nachrüsten
+        if not any(x["id"] == PUBLIC_PROFILE["id"] for x in p):
+            p = [PUBLIC_PROFILE] + p
+            store.save(PROFILES_FILE, p)
+        store.save("user_profiles_meta.json", {"public_added": True})
     return p
 
 

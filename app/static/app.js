@@ -2134,7 +2134,7 @@ function renderGeneric(st){
   $("#gActHint").textContent = g === "valheim" ? "Valheim hat keine Remote-Konsole – Neustart und Logs über den Container-Tab." :
     g === "wreckfest" ? "Wreckfest hat keine Remote-Konsole. Die Server-Konsole erreichst du über „Webkonsole ↗“ oben rechts (beim ich777-Image), Neustart und Logs über den Container-Tab." :
     g === "satisfactory" && st.privilege === "Client" ? "Ohne Admin-Passwort nur Lesezugriff – Passwort unter „Bearbeiten“ eintragen." : "";
-  if (g === "wreckfest"){ loadWfConfig(); loadWfRotation(); wfLiveInit(); } else { $("#wfPanel").classList.add("hidden"); $("#wfRotPanel").classList.add("hidden"); $("#wfLivePanel").classList.add("hidden"); }
+  if (g === "wreckfest"){ loadWfConfig(); loadWfRotation(); /* wfLiveInit(): Serverfenster nimmt unter Wine keine Eingaben an */ } else { $("#wfPanel").classList.add("hidden"); $("#wfRotPanel").classList.add("hidden"); $("#wfLivePanel").classList.add("hidden"); }
   const list = st.players || [];
   $("#playerRows").innerHTML = list.length ? list.map(p => `<tr><td></td><td class="name">${esc(p.name)}</td><td colspan="2"></td><td class="mono">${esc(p.time || "")}</td><td colspan="3"></td></tr>`).join("")
     : `<tr><td colspan="8" class="muted">${st.humans ? `${st.humans} Spieler online (Namen liefert dieses Spiel nicht)` : "Keine Spieler verbunden."}</td></tr>`;
@@ -2682,7 +2682,7 @@ const legend = () => Object.entries(U.level_hints).map(([k, h]) => `<b>${LV_SHOR
 let ufEdit = null, ufVals = {}, ufKind = "user", ufProfiles = [];
 function openUser(u){
   ufEdit = u ? u.username : null; ufVals = {...(u?.own_perms || {})}; ufKind = u?.role === "admin" ? "admin" : "user";
-  ufProfiles = u ? [...(u.profiles || [])] : [];      // neue Benutzer: erst mal nur öffentliche Seite
+  ufProfiles = u ? [...(u.profiles || [])] : (profOf("oeffentlich") ? ["oeffentlich"] : []);      // neue Benutzer: erst mal nur öffentliche Seite
   $("#uFormTitle").textContent = u ? `Benutzer ${u.username}` : "Neuer Benutzer";
   $("#ufName").value = u?.username || ""; $("#ufName").disabled = !!u;
   $("#ufPw").value = ""; $("#ufPwLabel").textContent = u ? "Neues Passwort (leer = unverändert)" : "Passwort (min. 6 Zeichen)";
@@ -2704,7 +2704,7 @@ function ufRender(){
   permEditor($("#ufPerms"), ufVals, inherit, $("#ufAllGames").checked);
   const n = Object.keys(ufVals).length;
   $("#ufOwnInfo").textContent = n ? `(${n})` : "(keine – es gilt nur das Profil)";
-  $("#ufPubOnly").style.display = !ufProfiles.length && !Object.values(ufVals).some(v => +v > 0) ? "" : "none";
+  $("#ufPubOnly").style.display = !Object.values(mergePerms(ufProfiles)).some(v => +v > 0) && !Object.values(ufVals).some(v => +v > 0) ? "" : "none";
 }
 $("#ufPerms").addEventListener("permchange", () => { const n = Object.keys(ufVals).length; $("#ufOwnInfo").textContent = n ? `(${n})` : "(keine – es gilt nur das Profil)"; });
 $$("#ufKind [data-kind]").forEach(b => b.onclick = () => { ufKind = b.dataset.kind; ufRender(); });
