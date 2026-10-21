@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import mapimages, gslt, matchlog, steamlist, playerdb, notify, prefill_more
-from . import cache_model, cache_inventory, timings, steambot_ctl, stream_ctl, extapi, dmstats, hof
+from . import cache_model, cache_inventory, timings, steambot_ctl, stream_ctl, extapi, dmstats, hof, gma
 from . import tournament as tour
 from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
@@ -7904,6 +7904,134 @@ async def _install_maps(s: dict, filename: str, data: bytes) -> dict:
         except (HTTPException, docker_api.DockerError) as e:
             note = f"Download-Adresse für Spieler nicht gesetzt: {getattr(e, 'detail', e)}"
     return {"ok": True, "maps": maps, "files": len(written), "fastdl": url, "note": note}
+
+
+# Workshop-Maps für Spiele ohne eigenen Workshop (z. B. HL2DM): Garry's-Mod-Workshop-Einträge/Kollektionen per SteamCMD
+# im Spielserver-Container laden, .gma auspacken und nur Map-Inhalte (maps/, materials/, models/, sound/ …) übernehmen.
+_ws_imports: dict[str, dict] = {}
+WSDL = "/serverdata/serverfiles/_wsdl"
+
+
+async def _ws_expand(ids: list[str]) -> list[str]:
+    """Kollektionen in ihre Einträge auflösen."""
+    data = {"collectioncount": str(len(ids))}
+    for n, i in enumerate(ids):
+        data[f"publishedfileids[{n}]"] = i
+    try:
+        async with httpx.AsyncClient(timeout=20) as cl:
+            r = await cl.post("https://api.steampowered.com/ISteamRemoteStorage/GetCollectionDetails/v1/", data=data)
+        det = r.json().get("response", {}).get("collectiondetails", [])
+    except (httpx.HTTPError, ValueError):
+        det = []
+    out = []
+    for i in ids:
+        d = next((x for x in det if str(x.get("publishedfileid")) == i), {})
+        kids = [str(c["publishedfileid"]) for c in d.get("children") or [] if c.get("filetype", 0) == 0]
+        out += kids or [i]
+    return list(dict.fromkeys(out))
+
+
+def _map_content(files: dict[str, bytes]) -> dict[str, bytes]:
+    out = {}
+    for k, v in files.items():
+        k = k.replace("\\", "/").lstrip("/")
+        if k.split("/")[0].lower() in MAP_DIRS:
+            out[k] = v
+    return out
+
+
+async def _ws_import(s: dict, ids: list[str]) -> None:
+    job = _ws_imports[s["id"]]
+    try:
+        job["step"] = "Kollektion auflösen …"
+        items = await _ws_expand(ids)
+        try:
+            det = {d["id"]: d for d in await steam.workshop_details(items)}
+        except steam.SteamError:
+            det = {}
+        job.update(total=len(items), done=0)
+        base = await _game_dir(s)
+        c = s["container"]
+        for k in range(0, len(items), 8):
+            batch = items[k:k + 8]
+            job["step"] = f"Lade {k + 1}–{k + len(batch)} von {len(items)} über SteamCMD …"
+            args = []
+            for i in batch:
+                args += ["+workshop_download_item", str((det.get(i) or {}).get("app") or 4000), i]
+            try:
+                await docker_api.exec_cmd(c, ["/serverdata/steamcmd/steamcmd.sh", "+force_install_dir", WSDL, "+login", "anonymous",
+                                              *args, "+quit"], timeout=1800, user="steam")
+            except docker_api.DockerError as e:
+                job["errors"].append(f"SteamCMD: {e}")
+            for i in batch:
+                title = (det.get(i) or {}).get("title") or i
+                job["current"] = title
+                try:
+                    lst = await docker_api.exec_cmd(c, ["sh", "-c", f"find {WSDL}/steamapps/workshop/content/*/{i} -type f 2>/dev/null"], timeout=30)
+                    files: dict[str, bytes] = {}
+                    for path in [x.strip() for x in lst.splitlines() if x.strip()]:
+                        _n, raw, _mt = await filebrowser.download(c, path)
+                        low = path.lower()
+                        if low.endswith((".gma", ".bin")):
+                            files.update(_map_content(gma.unpack(raw)))
+                        elif low.endswith((".bsp", ".bz2", ".zip")):
+                            files.update(_map_files(path, raw))
+                    if not any(f.lower().endswith(".bsp") for f in files):
+                        job["errors"].append(f"{title}: keine Map gefunden" if lst.strip() else f"{title}: nicht geladen")
+                    else:
+                        await filebrowser.upload_tree(c, base, files)
+                        job["maps"] += [posixpath_basename(f)[:-4] for f in files if f.lower().endswith(".bsp")]
+                except (gma.GmaError, filebrowser.FileError, docker_api.DockerError, HTTPException) as e:
+                    job["errors"].append(f"{title}: {getattr(e, 'detail', e)}")
+                job["done"] += 1
+            try:
+                await docker_api.exec_cmd(c, ["sh", "-c", f"rm -rf {WSDL}/steamapps/workshop/content"], timeout=120)
+            except docker_api.DockerError:
+                pass
+        if job["maps"] and s.get("password"):
+            url = f"{_tool_url(s)}/fastdl/{s['id']}/"
+            try:
+                await run(s, f'sv_allowdownload 1; sv_downloadurl "{url}"; net_maxfilesize 64')
+                for kk, v in (("sv_allowdownload", "1"), ("sv_downloadurl", url), ("net_maxfilesize", "64")):
+                    await docker_api.exec_cmd(c, ["sh", "-c", CVARCFG_SH, "sh", kk, v], timeout=15)
+            except (HTTPException, docker_api.DockerError):
+                pass
+        job["step"] = f"Fertig: {len(job['maps'])} Map(s)"
+    except Exception as e:  # noqa: BLE001
+        log.exception("Workshop-Import")
+        job["errors"].append(str(e))
+        job["step"] = "Abgebrochen"
+    finally:
+        job["running"] = False
+        try:
+            await docker_api.exec_cmd(s["container"], ["sh", "-c", f"rm -rf {WSDL}"], timeout=120)
+        except docker_api.DockerError:
+            pass
+
+
+class WsImportIn(BaseModel):
+    ids: str = Field(min_length=3, max_length=4000)
+
+
+@app.post("/api/servers/{sid}/maps/workshop", dependencies=auth)
+async def maps_workshop(sid: str, data: WsImportIn):
+    """Workshop-Einträge oder Kollektionen (IDs/Links) als Maps übernehmen – läuft im Hintergrund, ohne Neustart."""
+    s = get_server(sid)
+    if not (catmod.CATALOG.get(game_of(s)) or {}).get("rcon") or not s.get("container"):
+        raise HTTPException(400, "Nur für Source-/GoldSrc-Server mit Container")
+    if (_ws_imports.get(sid) or {}).get("running"):
+        raise HTTPException(409, "Läuft schon")
+    ids = list(dict.fromkeys(re.findall(r"(?:id=)?(\d{6,12})", data.ids)))
+    if not ids:
+        raise HTTPException(400, "Keine Workshop-ID gefunden")
+    _ws_imports[sid] = {"running": True, "step": "startet …", "total": 0, "done": 0, "current": "", "maps": [], "errors": []}
+    asyncio.create_task(_ws_import(s, ids))
+    return _ws_imports[sid]
+
+
+@app.get("/api/servers/{sid}/maps/workshop", dependencies=auth)
+async def maps_workshop_state(sid: str):
+    return _ws_imports.get(sid) or {"running": False}
 
 
 class MapUrlIn(BaseModel):

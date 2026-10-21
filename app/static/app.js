@@ -1542,6 +1542,7 @@ function renderGq(){
   $("#gqJoinPw").value = current.join_pw ?? (lastStatus && lastStatus.join_password) ?? "";
   $("#gqMapPanel").classList.toggle("hidden", !!d.noMaps);
   $("#gqMapAdd").classList.toggle("hidden", !GAMES[g]?.rcon || !current.container);
+  if (GAMES[g]?.rcon && current.container && window.gqWsPoll) window.gqWsPoll();
   $("#gqMapHint").textContent = d.hint || "";
   if (gqMapsFor !== current.id){
     gqMapsLive = []; gqMapsFor = current.id; if (!d.noMaps) gqLoadMaps(true);
@@ -1566,6 +1567,21 @@ function renderGq(){
     try { mapDone(await api(`/api/servers/${current.id}/maps/add`, {body: {url}})); $("#gqMapUrl").value = ""; }
     catch (e) { toast(e.message, true); } finally { $("#btnGqMapUrl").disabled = false; }
   };
+  let wsTimer = null;
+  const wsPoll = async () => {
+    clearTimeout(wsTimer);
+    if (!current) return;
+    let j; try { j = await api(`/api/servers/${current.id}/maps/workshop`); } catch { return; }
+    if (!j.step) { $("#gqWsState").textContent = ""; return; }
+    $("#gqWsState").innerHTML = `${esc(j.step)}${j.total ? ` · ${j.done}/${j.total}` : ""}${j.current && j.running ? ` · ${esc(j.current)}` : ""}${j.maps && j.maps.length ? ` · ✓ ${j.maps.length} Map(s)` : ""}${j.errors && j.errors.length ? ` · <span title="${esc(j.errors.join("\n"))}" style="color:var(--bad)">${j.errors.length} Problem(e)</span>` : ""}`;
+    if (j.running) wsTimer = setTimeout(wsPoll, 3000); else if (j.maps && j.maps.length) gqLoadMaps(true);
+  };
+  $("#btnGqWs").onclick = async () => {
+    const ids = $("#gqWsIds").value.trim(); if (!ids) return toast("Workshop-Link, ID oder Kollektion einfügen", true);
+    try { await api(`/api/servers/${current.id}/maps/workshop`, {body: {ids}}); $("#gqWsIds").value = ""; toast("Workshop-Import läuft im Hintergrund"); wsPoll(); }
+    catch (e) { toast(e.message, true); }
+  };
+  window.gqWsPoll = wsPoll;
   $("#gqMapFile").onchange = async () => {
     const f = $("#gqMapFile").files[0]; if (!f) return;
     toast(`${f.name} wird hochgeladen …`);
