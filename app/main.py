@@ -1292,6 +1292,17 @@ async def _apply_auto_name(s: dict, g: str, st: dict) -> None:
             if want and want != st.get("hostname"):
                 await sf_client(s).call("RenameServer", {"ServerName": want})
                 st["hostname"] = want
+        elif g == "wreckfest" and s.get("container") and st.get("hostname"):
+            # Wreckfest liest den Namen nur beim Start: in server_config.cfg schreiben, Neustart sobald niemand drauf ist
+            want = _auto_name(s, st.get("hostname"), (st.get("mode") or {}).get("label") or "")
+            base = _auto_name(s, st.get("hostname"), "") or ""
+            t_ = _wf_pending_restart.get(s["id"])
+            # nur wenn der Name gar nicht zum Schema passt (Modus wechselt mit der Rotation – dafür kein Neustart)
+            if want and base and not st["hostname"].startswith(base) and not (t_ and not t_.done()) and time.time() - _rename_try.get(s["id"], 0) > 300:
+                _rename_try[s["id"]] = time.time()
+                await _wf_write(s["container"], {"server_name": want})
+                _wf_pending_restart[s["id"]] = asyncio.create_task(_wf_restart_when_empty(s["id"], s["container"]))
+                log.info("Wreckfest %s: Name „%s“ eingetragen – Neustart sobald leer", s["container"], want)
         elif (catmod.CATALOG.get(g) or {}).get("rcon") and s.get("password"):
             want = _auto_name(s, st.get("hostname"), "")
             if want and want != st.get("hostname") and time.time() - _rename_try.get(s["id"], 0) > 120:
