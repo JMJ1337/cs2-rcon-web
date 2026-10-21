@@ -152,6 +152,8 @@ def require_auth(request: Request):
     path, method = request.url.path, request.method
     if path.startswith("/api/me"):
         return u
+    if users.public_only(u):
+        raise HTTPException(403, "Dein Konto hat noch keine Rechte – nur die öffentliche Übersicht")
     if path.startswith(("/api/tournament", "/api/stream")) and users.has_right(u, "tournament"):
         return u                                  # Sonderrecht Turnier (Prüfung im Endpunkt)
     if path.startswith(ADMIN_PATHS) and not (path in ("/api/settings", "/api/scan") and method == "GET"):

@@ -106,6 +106,14 @@ def effective_rights(u: dict) -> list[str]:
     return [r for r in RIGHTS if r in (u.get("rights") or []) or any(r in p.get("rights", []) for p in prs)]
 
 
+def public_only(u: dict | None) -> bool:
+    """Kein Spiel-Recht und kein Sonderrecht: sieht nur die öffentliche Seite (wie ohne Login)."""
+    if not u or u.get("role") == "admin":
+        return False
+    perms = effective_perms(u)
+    return max([int(v) for v in perms.values()] or [0]) <= 0 and not effective_rights(u)
+
+
 def has_right(u: dict | None, right: str) -> bool:
     return bool(u) and right in effective_rights(u)
 
@@ -160,7 +168,7 @@ def public(u: dict) -> dict:
     return {k: u.get(k) for k in ("username", "role", "created", "last_login", "note")} | {"profiles": user_profiles(u),
         "rights": effective_rights(u), "own_rights": [r for r in (u.get("rights") or []) if r in RIGHTS],
         "role_label": ROLE_LABELS.get(u.get("role"), ""),
-        "own_perms": u.get("perms") or {},
+        "own_perms": u.get("perms") or {}, "public_only": public_only(u),
         "perms": {"*": 4} if u.get("role") == "admin" else effective_perms(u)}
 
 
@@ -194,6 +202,8 @@ def upsert(username: str, password: str | None, role: str | None, perms: dict | 
         if not password:
             raise ValueError("Passwort fehlt")
         u = {"username": username, "role": role or "user", "created": int(time.time()), "last_login": None}
+        if (role or "user") != "admin" and not profile_ids and not perms:
+            u["perms"] = {"*": 0}          # neue Benutzer: nur öffentliche Seite, bis ein Profil/Recht vergeben ist
         users.append(u)
     if password:
         if len(password) < 6:

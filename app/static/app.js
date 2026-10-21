@@ -173,12 +173,14 @@ function showLogin(){ stopPoll(); clearInterval(dashTimer); clearInterval(pubTim
 
 /* ================= Öffentliche Serverliste (ohne Login) ================= */
 let pubTimer = null, pubData = null, pubIconsLoaded = false;
-let pubLoggedIn = false;
+let pubLoggedIn = false, pubOnly = null;
 function showPublic(loggedIn = false){
   stopPoll(); clearInterval(dashTimer);
   pubLoggedIn = loggedIn === true;
+  pubOnly = loggedIn && loggedIn.public_only ? loggedIn : null;     // Konto ohne Rechte: nur öffentliche Seite
   if (!pubLoggedIn) me = null;
-  $("#btnPubLogin").textContent = pubLoggedIn ? "← Zur Verwaltung" : "Anmelden";
+  $("#btnPubLogin").textContent = pubLoggedIn ? "← Zur Verwaltung" : pubOnly ? `Abmelden (${pubOnly.username})` : "Anmelden";
+  $("#btnPubLogin").title = pubOnly ? "Dein Konto hat noch keine Verwaltungsrechte – ein Admin kann sie unter „Benutzer“ vergeben" : "";
   $("#app").classList.add("hidden"); $("#login").classList.add("hidden"); $("#pub").classList.remove("hidden");
   refreshPublic();
   clearInterval(pubTimer); pubTimer = setInterval(() => { if (!document.hidden) refreshPublic(); }, 10000);
@@ -227,7 +229,18 @@ function renderPublic(){
                           : `<span class="pill ok" title="Du bist im LAN – Adressen zeigen die LAN-IP">LAN</span>`) + pubNetHtml(r.internet) + pubCacheHtml(r.cache);
   $("#pubCache").innerHTML = cacheGamesHtml(r.cached_games);
   if (!r.servers.length){ $("#pubGrid").innerHTML = `<div class="hint">Noch keine Server eingerichtet.</div>`; return; }
-  $("#pubGrid").innerHTML = r.servers.map((x, i) => {
+  // nach Spielen gruppieren: Spiele mit laufenden Servern zuerst, innerhalb der Gruppe die gewohnte Reihenfolge
+  const groups = {};
+  r.servers.forEach(x => (groups[x.game] = groups[x.game] || []).push(x));
+  const glabel = k => (GAMES[k] || r.games[k] || {label: k}).label;
+  const order = Object.keys(groups).sort((a, b) => (groups[b].some(x => x.online) - groups[a].some(x => x.online)) || glabel(a).localeCompare(glabel(b)));
+  $("#pubGrid").innerHTML = order.map(k => {
+    const list = groups[k], g0 = GAMES[k] || r.games[k] || {label: k, color: "#888"};
+    const on = list.filter(x => x.online), pls = on.reduce((a, x) => a + (x.players || 0), 0);
+    return `<div class="pubgroup" style="--gc:${g0.color}">${gameTile(k, 22)}<b>${esc(g0.label)}</b>
+      <span class="hint">${on.length}/${list.length} online${pls ? ` · ${pls} Spieler` : ""}</span></div>` + list.map(pubCard).join("");
+  }).join("");
+  function pubCard(x){
     const g = GAMES[x.game] || r.games[x.game] || {label: x.game, color: "#888"};
     const j = x.join || {};
     const meta = [x.mode ? esc(x.mode) : "", x.version ? "v" + esc(x.version) : ""].filter(Boolean).join(" · ");
@@ -248,7 +261,7 @@ function renderPublic(){
       </div>
       ${j.hint ? `<div class="hint pubhint">${esc(j.hint)}</div>` : ""}
     </div>`;
-  }).join("");
+  }
   $("#pubMatches").innerHTML = (r.matches || []).length ? `<h3 class="pdsec" style="margin-top:22px">Letzte Matches</h3><div class="mlist">${r.matches.map(matchHtml).join("")}</div>` : "";
   $$("#pubGrid [data-pcopy]").forEach(b => b.onclick = e => { e.stopPropagation(); copyText(b.dataset.pcopy); });
   $$("#pubGrid a.btn").forEach(a => a.onclick = e => e.stopPropagation());
@@ -311,12 +324,21 @@ async function renderPubDetail(){
       <ol class="pdrot${rot.some(r => r.layout || r.image) ? " withimg" : ""}">${rot.map(r => `<li class="${r.name === cur ? "cur" : ""}">${r.layout || r.image ? wfThumb(r.image, r.layout, r.name) : ""}<span><b>${esc(r.name)}</b>${r.sub ? ` <span class="hint">${esc(r.sub)}</span>` : ""}</span></li>`).join("")}</ol>` : ""}`;
   $$("#pubDetail [data-pdcopy]").forEach(b => b.onclick = () => copyText(b.dataset.pdcopy));
 }
-$("#btnPubLogin").onclick = () => pubLoggedIn ? start() : showLogin();
+$("#btnPubLogin").onclick = async () => {
+  if (pubOnly){ await api("/api/logout", {method: "POST"}).catch(() => {}); return showPublic(); }
+  pubLoggedIn ? start() : showLogin();
+};
+async function afterLogin(){
+  const m = await api("/api/me").catch(() => ({authenticated: false}));
+  if (!m.authenticated) return showPublic();
+  if (m.user && m.user.public_only){ showPublic(m.user); toast("Angemeldet – dein Konto sieht (noch) nur die öffentliche Übersicht"); return; }
+  start();
+}
 $("#btnPubView").onclick = () => showPublic(true);
 $("#btnBackPub").onclick = () => showPublic();
 $("#loginForm").addEventListener("submit", async e => {
   e.preventDefault(); $("#loginErr").textContent = "";
-  try { await api("/api/login", {body:{username: $("#loginUser").value.trim() || "admin", password: $("#loginPw").value}}); $("#loginPw").value = ""; start(); }
+  try { await api("/api/login", {body:{username: $("#loginUser").value.trim() || "admin", password: $("#loginPw").value}}); $("#loginPw").value = ""; afterLogin(); }
   catch(err){ $("#loginErr").textContent = err.message; }
 });
 function toMobile(){ try { localStorage.setItem("gsmView", "mobile"); } catch {} clearInterval(dashTimer); $("#app").classList.add("hidden"); startMobile(); }
@@ -2596,7 +2618,7 @@ function renderUserCards(){
         ${uAvatar(u, adm)}
         <div class="ucn"><b>${esc(u.username)}</b>${me && u.username === me.username ? ' <span class="pill">du</span>' : ""}
           <div class="hint">${esc(u.note || "")}${u.player ? `${u.note ? " · " : ""}🎮 ${esc(u.player)}` : ""}</div></div>
-        <span class="ubadges">${adm ? `<span class="ubadge" style="--c:#e5534b">Administrator</span>` : prs.length ? prs.map(p => `<span class="ubadge" style="--c:${esc(p.color || "#6b7a8f")}">${esc(p.name)}</span>`).join("") : `<span class="ubadge">${u.role === "viewer" ? "Nur ansehen" : "ohne Profil"}</span>`}</span></div>
+        <span class="ubadges">${adm ? `<span class="ubadge" style="--c:#e5534b">Administrator</span>` : prs.length ? prs.map(p => `<span class="ubadge" style="--c:${esc(p.color || "#6b7a8f")}">${esc(p.name)}</span>`).join("") : `<span class="ubadge">${u.public_only ? "🌐 nur öffentliche Seite" : u.role === "viewer" ? "Nur ansehen" : "ohne Profil"}</span>`}</span></div>
       <div class="lvchips">${adm ? `<span class="lvchip" style="--c:#e5534b">alles</span>` : permChips(u.perms) + ((u.rights || []).includes("tournament") ? `<span class="lvchip" style="--c:#d9a441">🏆 Turnier</span>` : "")}
         ${own && !adm ? `<span class="hint" title="eigene Abweichungen vom Profil">✱ ${own} Abweichung${own > 1 ? "en" : ""}</span>` : ""}</div>
       <div class="ucf"><span class="hint">Login: ${u.last_login ? fmtDate(u.last_login) : "nie"}</span>
@@ -2642,7 +2664,7 @@ const legend = () => Object.entries(U.level_hints).map(([k, h]) => `<b>${LV_SHOR
 let ufEdit = null, ufVals = {}, ufKind = "user", ufProfiles = [];
 function openUser(u){
   ufEdit = u ? u.username : null; ufVals = {...(u?.own_perms || {})}; ufKind = u?.role === "admin" ? "admin" : "user";
-  ufProfiles = u ? [...(u.profiles || [])] : [U.profiles[1]?.id || U.profiles[0]?.id].filter(Boolean);
+  ufProfiles = u ? [...(u.profiles || [])] : [];      // neue Benutzer: erst mal nur öffentliche Seite
   $("#uFormTitle").textContent = u ? `Benutzer ${u.username}` : "Neuer Benutzer";
   $("#ufName").value = u?.username || ""; $("#ufName").disabled = !!u;
   $("#ufPw").value = ""; $("#ufPwLabel").textContent = u ? "Neues Passwort (leer = unverändert)" : "Passwort (min. 6 Zeichen)";
@@ -2664,6 +2686,7 @@ function ufRender(){
   permEditor($("#ufPerms"), ufVals, inherit, $("#ufAllGames").checked);
   const n = Object.keys(ufVals).length;
   $("#ufOwnInfo").textContent = n ? `(${n})` : "(keine – es gilt nur das Profil)";
+  $("#ufPubOnly").style.display = !ufProfiles.length && !Object.values(ufVals).some(v => +v > 0) ? "" : "none";
 }
 $("#ufPerms").addEventListener("permchange", () => { const n = Object.keys(ufVals).length; $("#ufOwnInfo").textContent = n ? `(${n})` : "(keine – es gilt nur das Profil)"; });
 $$("#ufKind [data-kind]").forEach(b => b.onclick = () => { ufKind = b.dataset.kind; ufRender(); });
@@ -2851,7 +2874,7 @@ async function showVersion(){
 showVersion();
 (async () => {
   const me = await api("/api/me").catch(() => ({authenticated:false}));
-  me.authenticated ? start() : showPublic();
+  me.authenticated ? (me.user && me.user.public_only ? showPublic(me.user) : start()) : showPublic();
 })();
 
 $("#btnWeb").onclick = () => { if (current && current.web_url) window.open(current.web_url, "_blank", "noopener"); };

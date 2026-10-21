@@ -862,3 +862,7 @@ dialog.dlgwide{width:min(860px,calc(100vw - 32px));max-height:calc(100vh - 40px)
 
 .wflive{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr));gap:10px}
 .wflive>div{display:grid;gap:4px}.wflive label{font-size:12px;color:var(--muted)}
+
+.pubgroup{grid-column:1/-1;display:flex;align-items:center;gap:10px;margin:14px 0 -2px;padding-bottom:6px;border-bottom:2px solid var(--gc);font-size:17px}
+.pubgroup:first-child{margin-top:0}
+.pubgroup .hint{margin-left:auto;font-size:13px}

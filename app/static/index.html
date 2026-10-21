@@ -6,7 +6,7 @@
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap">
-<link rel="stylesheet" href="/static/app.css?v=125">
+<link rel="stylesheet" href="/static/app.css?v=126">
 </head>
 <body>
 
@@ -1066,6 +1066,7 @@
     <div id="ufProfileBox">
       <h3 class="pdsec">Profile <span class="hint">mehrere möglich – je Spiel gilt die höchste Stufe</span></h3>
       <div class="ufprof" id="ufProfiles"></div>
+      <div class="hint" id="ufPubOnly" style="margin-top:6px">🌐 Ohne Profil und ohne eigene Rechte sieht der Benutzer nach dem Login nur die öffentliche Übersicht.</div>
       <details id="ufOwn" class="ufown"><summary>Eigene Abweichungen vom Profil <span class="hint" id="ufOwnInfo"></span></summary>
         <div class="row" style="gap:8px;margin:8px 0;align-items:center"><label class="hint"><input type="checkbox" id="ufAllGames" style="width:auto"> alle Spiele zeigen (sonst nur Spiele mit Servern)</label><button type="button" class="small" id="ufOwnReset">Abweichungen entfernen</button></div>
         <div class="permed" id="ufPerms"></div>
@@ -1115,6 +1116,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=175"></script>
+<script src="/static/app.js?v=176"></script>
 </body>
 </html>
