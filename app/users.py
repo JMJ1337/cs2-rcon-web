@@ -73,21 +73,37 @@ def delete_profile(pid: str) -> None:
     for u in users:
         if u.get("profile") == pid:
             u.pop("profile", None)
+        if pid in (u.get("profiles") or []):
+            u["profiles"] = [x for x in u["profiles"] if x != pid]
     store.save(FILE, users)
 
 
+def user_profiles(u: dict) -> list[str]:
+    """Profile des Benutzers (mehrere möglich; altes Feld „profile“ wird mitgelesen)."""
+    ids = list(u.get("profiles") or [])
+    if u.get("profile") and u["profile"] not in ids:
+        ids.insert(0, u["profile"])
+    return [i for i in ids if profile(i)]
+
+
 def effective_perms(u: dict) -> dict:
-    """Profil-Rechte + eigene Abweichungen des Benutzers."""
-    pr = profile(u.get("profile"))
-    base = dict(pr["perms"]) if pr else {"*": ROLE_DEFAULT.get(u.get("role"), 0)}
+    """Mehrere Profile: je Spiel gilt die höchste Stufe; danach eigene Abweichungen des Benutzers."""
+    prs = [profile(i) for i in user_profiles(u)]
+    if not prs:
+        base = {"*": ROLE_DEFAULT.get(u.get("role"), 0)}
+    else:
+        star = max(int(p["perms"].get("*", 0)) for p in prs)
+        keys = {k for p in prs for k in p["perms"] if k != "*"}
+        base = {"*": star} | {k: max(int(p["perms"].get(k, p["perms"].get("*", 0))) for p in prs) for k in keys}
+        base = {k: v for k, v in base.items() if k == "*" or v != star}
     return base | (u.get("perms") or {})
 
 
 def effective_rights(u: dict) -> list[str]:
     if u.get("role") == "admin":
         return list(RIGHTS)
-    pr = profile(u.get("profile"))
-    return [r for r in RIGHTS if r in (u.get("rights") or []) or (pr and r in pr.get("rights", []))]
+    prs = [profile(i) for i in user_profiles(u)]
+    return [r for r in RIGHTS if r in (u.get("rights") or []) or any(r in p.get("rights", []) for p in prs)]
 
 
 def has_right(u: dict | None, right: str) -> bool:
@@ -141,7 +157,7 @@ def load() -> list[dict]:
 
 
 def public(u: dict) -> dict:
-    return {k: u.get(k) for k in ("username", "role", "created", "last_login", "profile", "note")} | {
+    return {k: u.get(k) for k in ("username", "role", "created", "last_login", "note")} | {"profiles": user_profiles(u),
         "rights": effective_rights(u), "own_rights": [r for r in (u.get("rights") or []) if r in RIGHTS],
         "role_label": ROLE_LABELS.get(u.get("role"), ""),
         "own_perms": u.get("perms") or {},
@@ -166,7 +182,7 @@ def verify(username: str, password: str) -> dict | None:
 
 
 def upsert(username: str, password: str | None, role: str | None, perms: dict | None = None, rights: list | None = None,
-           profile_id: str | None = None, note: str | None = None) -> dict:
+           profile_ids: list | None = None, note: str | None = None) -> dict:
     username = (username or "").strip().lower()
     if not username or len(username) > 32 or not username.replace("_", "").replace("-", "").replace(".", "").isalnum():
         raise ValueError("Benutzername: 1–32 Zeichen, Buchstaben/Ziffern/._-")
@@ -192,13 +208,12 @@ def upsert(username: str, password: str | None, role: str | None, perms: dict | 
         u["perms"] = clean_perms(perms)
     if rights is not None:
         u["rights"] = [r for r in rights if r in RIGHTS]
-    if profile_id is not None:
-        if profile_id and not profile(profile_id):
-            raise ValueError("Unbekanntes Profil")
-        if profile_id:
-            u["profile"] = profile_id
-        else:
-            u.pop("profile", None)
+    if profile_ids is not None:
+        bad = [i for i in profile_ids if not profile(i)]
+        if bad:
+            raise ValueError("Unbekanntes Profil: " + ", ".join(bad))
+        u["profiles"] = list(dict.fromkeys(profile_ids))
+        u.pop("profile", None)
     if note is not None:
         u["note"] = note.strip()[:80]
     store.save(FILE, users)

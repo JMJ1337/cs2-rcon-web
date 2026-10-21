@@ -2516,6 +2516,20 @@ let U = {users: [], profiles: [], levels: {}, level_hints: {}, rights: {}, games
 const LV_SHORT = {0: "–", 1: "Sehen", 2: "Bedienen", 3: "Verwalten", 4: "Anlegen"};
 const LV_COL = {0: "#555c69", 1: "#6b7a8f", 2: "#3e8f5a", 3: "#3e6fa8", 4: "#b5562b"};
 const profOf = id => U.profiles.find(p => p.id === id);
+const uProfs = u => (u.profiles || []).map(profOf).filter(Boolean);
+function mergePerms(ids){       // wie im Backend: je Spiel die höchste Stufe aller Profile
+  const prs = ids.map(profOf).filter(Boolean);
+  if (!prs.length) return {"*": 0};
+  const star = Math.max(...prs.map(p => +(p.perms["*"] ?? 0))), out = {"*": star};
+  new Set(prs.flatMap(p => Object.keys(p.perms))).forEach(k => { if (k === "*") return;
+    const v = Math.max(...prs.map(p => +(k in p.perms ? p.perms[k] : (p.perms["*"] ?? 0)))); if (v !== star) out[k] = v; });
+  return out;
+}
+function uAvatar(u, adm){
+  const ini = esc(u.username.slice(0, 1).toUpperCase());
+  return u.avatar ? `<span class="uav img" title="${esc(u.player || "")}${u.steamid ? " · " + esc(u.steamid) : ""}"><img src="${esc(u.avatar)}" alt="" referrerpolicy="no-referrer" onerror="this.parentNode.classList.remove('img');this.parentNode.textContent='${ini}'"></span>`
+    : `<span class="uav" title="${u.steamid ? "" : "kein Steam-Konto verknüpft (unter Spieler → ✎ → Tool-Konto)"}">${ini}</span>`;
+}
 function permChips(perms, max = 6){
   const p = perms || {}, def = +(p["*"] ?? 0);
   const ex = Object.entries(p).filter(([k, v]) => k !== "*" && +v !== def);
@@ -2526,10 +2540,10 @@ function permChips(perms, max = 6){
 async function loadUsers(){
   try { U = await api("/api/users"); } catch (err) { return toast(err.message, true); }
   renderProfiles(); renderUserCards();
-  $("#uBulkProfile").innerHTML = `<option value="">– kein Profil –</option>` + U.profiles.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
+  $("#uBulkProfile").innerHTML = U.profiles.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
 }
 function renderProfiles(){
-  const cnt = id => U.users.filter(u => u.profile === id && u.role !== "admin").length;
+  const cnt = id => U.users.filter(u => (u.profiles || []).includes(id) && u.role !== "admin").length;
   $("#uProfiles").innerHTML = U.profiles.map(p => `<div class="upcard ${uProfFilter === p.id ? "on" : ""}" data-upf="${esc(p.id)}" style="--c:${esc(p.color || "#6b7a8f")}">
       <div class="uph"><b>${esc(p.name)}</b><span class="hint">${cnt(p.id)} Benutzer</span><button type="button" class="small" data-upedit="${esc(p.id)}" title="Profil bearbeiten">✎</button></div>
       <div class="hint">${esc(p.desc || "")}</div>
@@ -2541,18 +2555,18 @@ function renderProfiles(){
 }
 function renderUserCards(){
   const f = $("#uFilter").value.trim().toLowerCase();
-  const list = U.users.filter(u => (!f || [u.username, u.note, u.player, profOf(u.profile)?.name].filter(Boolean).join(" ").toLowerCase().includes(f))
-    && (!uProfFilter || u.profile === uProfFilter));
+  const list = U.users.filter(u => (!f || [u.username, u.note, u.player, ...uProfs(u).map(p => p.name)].filter(Boolean).join(" ").toLowerCase().includes(f))
+    && (!uProfFilter || (u.profiles || []).includes(uProfFilter)));
   $("#uCount").textContent = `${U.users.length}${list.length !== U.users.length ? ` · ${list.length} angezeigt` : ""}`;
   for (const n of [...uSel]) if (!U.users.some(u => u.username === n)) uSel.delete(n);
   $("#uCards").innerHTML = list.map(u => {
-    const pr = profOf(u.profile), adm = u.role === "admin", own = Object.keys(u.own_perms || {}).length + (u.own_rights || []).length;
+    const prs = uProfs(u), pr = prs[0], adm = u.role === "admin", own = Object.keys(u.own_perms || {}).length + (u.own_rights || []).length;
     return `<div class="ucard ${uSel.has(u.username) ? "sel" : ""}" style="--c:${adm ? "#e5534b" : esc(pr?.color || "#555c69")}">
       <div class="uch">${adm ? "" : `<input type="checkbox" data-usel="${esc(u.username)}" ${uSel.has(u.username) ? "checked" : ""} style="width:auto">`}
-        <span class="uav">${esc(u.username.slice(0, 1).toUpperCase())}</span>
+        ${uAvatar(u, adm)}
         <div class="ucn"><b>${esc(u.username)}</b>${me && u.username === me.username ? ' <span class="pill">du</span>' : ""}
           <div class="hint">${esc(u.note || "")}${u.player ? `${u.note ? " · " : ""}🎮 ${esc(u.player)}` : ""}</div></div>
-        <span class="ubadge">${adm ? "Administrator" : pr ? esc(pr.name) : u.role === "viewer" ? "Nur ansehen" : "ohne Profil"}</span></div>
+        <span class="ubadges">${adm ? `<span class="ubadge" style="--c:#e5534b">Administrator</span>` : prs.length ? prs.map(p => `<span class="ubadge" style="--c:${esc(p.color || "#6b7a8f")}">${esc(p.name)}</span>`).join("") : `<span class="ubadge">${u.role === "viewer" ? "Nur ansehen" : "ohne Profil"}</span>`}</span></div>
       <div class="lvchips">${adm ? `<span class="lvchip" style="--c:#e5534b">alles</span>` : permChips(u.perms) + ((u.rights || []).includes("tournament") ? `<span class="lvchip" style="--c:#d9a441">🏆 Turnier</span>` : "")}
         ${own && !adm ? `<span class="hint" title="eigene Abweichungen vom Profil">✱ ${own} Abweichung${own > 1 ? "en" : ""}</span>` : ""}</div>
       <div class="ucf"><span class="hint">Login: ${u.last_login ? fmtDate(u.last_login) : "nie"}</span>
@@ -2571,7 +2585,7 @@ $("#uFilter").addEventListener("input", renderUserCards);
 $("#btnUBulk").onclick = async () => {
   if (!uSel.size) return toast("Erst Benutzer auswählen", true);
   try {
-    const r = await api("/api/users-bulk", {body: {usernames: [...uSel], profile: $("#uBulkProfile").value, clear_own: $("#uBulkClear").checked}});
+    const r = await api("/api/users-bulk", {body: {usernames: [...uSel], profile: $("#uBulkProfile").value, mode: $("#uBulkMode").value, clear_own: $("#uBulkClear").checked}});
     toast(`${r.changed} Benutzer geändert`); uSel.clear(); loadUsers();
   } catch (e) { toast(e.message, true); }
 };
@@ -2595,10 +2609,10 @@ function permEditor(root, values, inherit, allGames){
   });
 }
 const legend = () => Object.entries(U.level_hints).map(([k, h]) => `<b>${LV_SHORT[k]}</b>: ${esc(h)}`).join(" · ");
-let ufEdit = null, ufVals = {}, ufKind = "user", ufProfile = "";
+let ufEdit = null, ufVals = {}, ufKind = "user", ufProfiles = [];
 function openUser(u){
   ufEdit = u ? u.username : null; ufVals = {...(u?.own_perms || {})}; ufKind = u?.role === "admin" ? "admin" : "user";
-  ufProfile = u ? (u.profile || "") : (U.profiles[1]?.id || U.profiles[0]?.id || "");
+  ufProfiles = u ? [...(u.profiles || [])] : [U.profiles[1]?.id || U.profiles[0]?.id].filter(Boolean);
   $("#uFormTitle").textContent = u ? `Benutzer ${u.username}` : "Neuer Benutzer";
   $("#ufName").value = u?.username || ""; $("#ufName").disabled = !!u;
   $("#ufPw").value = ""; $("#ufPwLabel").textContent = u ? "Neues Passwort (leer = unverändert)" : "Passwort (min. 6 Zeichen)";
@@ -2613,10 +2627,10 @@ function ufRender(){
   $$("#ufKind [data-kind]").forEach(b => b.classList.toggle("active", b.dataset.kind === ufKind));
   $("#ufProfileBox").style.display = ufKind === "admin" ? "none" : "";
   $("#ufAdminHint").style.display = ufKind === "admin" ? "" : "none";
-  $("#ufProfiles").innerHTML = [{id: "", name: "Ohne Profil", desc: "nur eigene Rechte", color: "#555c69", perms: {"*": 0}}, ...U.profiles].map(p =>
-    `<button type="button" class="ufpc ${ufProfile === p.id ? "on" : ""}" data-ufp="${esc(p.id)}" style="--c:${esc(p.color || "#6b7a8f")}"><b>${esc(p.name)}</b><span class="hint">${esc(p.desc || "")}</span></button>`).join("");
-  $$("[data-ufp]").forEach(b => b.onclick = () => { ufProfile = b.dataset.ufp; ufRender(); });
-  const inherit = profOf(ufProfile)?.perms || {"*": 0};
+  $("#ufProfiles").innerHTML = U.profiles.map(p =>
+    `<button type="button" class="ufpc ${ufProfiles.includes(p.id) ? "on" : ""}" data-ufp="${esc(p.id)}" style="--c:${esc(p.color || "#6b7a8f")}"><b>${ufProfiles.includes(p.id) ? "✓ " : ""}${esc(p.name)}</b><span class="hint">${esc(p.desc || "")}</span></button>`).join("");
+  $$("[data-ufp]").forEach(b => b.onclick = () => { const id = b.dataset.ufp; ufProfiles = ufProfiles.includes(id) ? ufProfiles.filter(x => x !== id) : [...ufProfiles, id]; ufRender(); });
+  const inherit = mergePerms(ufProfiles);
   permEditor($("#ufPerms"), ufVals, inherit, $("#ufAllGames").checked);
   const n = Object.keys(ufVals).length;
   $("#ufOwnInfo").textContent = n ? `(${n})` : "(keine – es gilt nur das Profil)";
@@ -2630,7 +2644,7 @@ $("#btnUNew").onclick = () => openUser(null);
 $("#uForm").addEventListener("submit", async e => {
   e.preventDefault();
   const body = {username: ufEdit || $("#ufName").value.trim(), note: $("#ufNote").value.trim(),
-    role: ufKind === "admin" ? "admin" : "user", profile: ufKind === "admin" ? null : ufProfile,
+    role: ufKind === "admin" ? "admin" : "user", profiles: ufKind === "admin" ? null : ufProfiles,
     perms: ufKind === "admin" ? null : ufVals, rights: ufKind === "admin" ? null : $$("#ufRights [data-ufr]").filter(c => c.checked).map(c => c.dataset.ufr)};
   const pw = $("#ufPw").value;
   if (pw) body.password = pw;
@@ -2654,7 +2668,7 @@ $("#pfAllGames").onchange = () => permEditor($("#pfPerms"), pfVals, null, $("#pf
 $("#btnPfCancel").onclick = () => $("#dlgProfile").close();
 $("#btnUNewProfile").onclick = () => openProfile(null);
 $("#btnPfDel").onclick = async () => {
-  const n = U.users.filter(u => u.profile === pfEdit).length;
+  const n = U.users.filter(u => (u.profiles || []).includes(pfEdit)).length;
   if (!confirm(`Profil löschen?${n ? ` ${n} Benutzer verlieren es (behalten nur ihre eigenen Rechte).` : ""}`)) return;
   try { await api(`/api/user-profiles/${pfEdit}`, {method: "DELETE"}); $("#dlgProfile").close(); if (uProfFilter === pfEdit) uProfFilter = ""; loadUsers(); } catch (e) { toast(e.message, true); }
 };

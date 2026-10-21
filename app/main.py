@@ -562,14 +562,19 @@ class UserIn(BaseModel):
     role: str | None = None
     perms: dict[str, int] | None = None
     rights: list[str] | None = None
-    profile: str | None = None
+    profiles: list[str] | None = None
     note: str | None = Field(None, max_length=80)
 
 
 @app.get("/api/users", dependencies=auth)
 async def list_users():
-    linked = {p.get("user"): playerdb.display(p) for p in playerdb.all_players() if p.get("user")}
-    return {"users": [{**users.public(u), "player": linked.get(u["username"])} for u in users.load()], "roles": users.ROLE_LABELS,
+    linked = {p.get("user"): p for p in playerdb.all_players() if p.get("user")}
+    out = []
+    for u in users.load():
+        p = linked.get(u["username"])
+        out.append({**users.public(u), "player": playerdb.display(p) if p else None,
+                    "avatar": (p or {}).get("avatar") or "", "steamid": (p or {}).get("steamid") or ""})
+    return {"users": out, "roles": users.ROLE_LABELS,
             "levels": users.LEVELS, "level_hints": users.LEVEL_HINTS, "rights": users.RIGHTS, "profiles": users.profiles(),
             "games_used": sorted({game_of(x) for x in load_servers()})}
 
@@ -600,6 +605,7 @@ async def del_user_profile(pid: str):
 class BulkUsersIn(BaseModel):
     usernames: list[str]
     profile: str | None = None
+    mode: str = "add"           # add | remove | only
     clear_own: bool = False
 
 
@@ -611,9 +617,12 @@ async def users_bulk(data: BulkUsersIn):
         u = users.find(name)
         if not u or u.get("role") == "admin":
             continue
+        cur = users.user_profiles(u)
+        pid = data.profile or ""
+        new = ([pid] if pid else []) if data.mode == "only" else [x for x in cur if x != pid] if data.mode == "remove" \
+            else cur + ([pid] if pid and pid not in cur else [])
         try:
-            users.upsert(u["username"], None, None, {} if data.clear_own else None, [] if data.clear_own else None,
-                         profile_id=data.profile if data.profile is not None else None)
+            users.upsert(u["username"], None, None, {} if data.clear_own else None, [] if data.clear_own else None, profile_ids=new)
             n += 1
         except ValueError as e:
             raise HTTPException(400, str(e))
@@ -625,7 +634,7 @@ async def add_user(data: UserIn):
     if users.find(data.username):
         raise HTTPException(400, "Benutzer existiert bereits")
     try:
-        return users.public(users.upsert(data.username, data.password, data.role or "user", data.perms, data.rights, data.profile, data.note))
+        return users.public(users.upsert(data.username, data.password, data.role or "user", data.perms, data.rights, data.profiles, data.note))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -635,7 +644,7 @@ async def update_user(username: str, data: UserIn):
     if not users.find(username):
         raise HTTPException(404, "Benutzer nicht gefunden")
     try:
-        return users.public(users.upsert(username, data.password or None, data.role, data.perms, data.rights, data.profile, data.note))
+        return users.public(users.upsert(username, data.password or None, data.role, data.perms, data.rights, data.profiles, data.note))
     except ValueError as e:
         raise HTTPException(400, str(e))
 

@@ -851,3 +851,6 @@ dialog.dlgwide{width:min(860px,calc(100vw - 32px));max-height:calc(100vh - 40px)
   .pltable td.plst,.pltable td.plsteam,.pltable td.plnet{grid-column:2/4}
   .pltable tr.pledit{display:block}
 }
+
+.uav.img{background:none;overflow:hidden}.uav.img img{width:100%;height:100%;object-fit:cover;border-radius:50%}
+.ubadges{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end;max-width:55%}
