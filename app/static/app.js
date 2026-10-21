@@ -1492,7 +1492,10 @@ async function gqLoadMaps(quiet){
   if (!current) return;
   try {
     const r = await api(`/api/servers/${current.id}/command`, {body: {command: "maps *"}});
-    const found = [...new Set([...(r.output || "").matchAll(/([A-Za-z0-9_\-\.]+)\.bsp\b/g)].map(m => m[1]))];
+    // Source: „PENDING:   (fs) dm_lockdown“, GoldSrc/andere: „dm_lockdown.bsp“
+    const out = r.output || "";
+    const found = [...new Set([...[...out.matchAll(/\((?:fs|vpk)\)\s+([A-Za-z0-9_\-\.]+)/g)].map(m => m[1].replace(/\.bsp$/i, "")),
+                               ...[...out.matchAll(/([A-Za-z0-9_\-\.]+)\.bsp\b/g)].map(m => m[1])])];
     gqMapsLive = found; gqMapsFor = current.id; gqFillMaps();
     if (!quiet) toast(`${found.length} Maps auf dem Server gefunden`);
   } catch (e) { if (!quiet) toast("Maps konnten nicht gelesen werden: " + e.message, true); }
