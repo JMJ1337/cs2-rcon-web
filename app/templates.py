@@ -377,7 +377,11 @@ def build(game: str, v: dict, data_dir: str) -> dict:
         # Ports innen = außen, damit die Werte in server_config.cfg stimmen (werden nach der Installation eingetragen)
         pub(port, "udp"); pub(qport, "udp"); pub(sport, "udp")
         if 27017 not in (port, qport, sport):
-            pub(27017, "udp")          # Wreckfest unter Wine öffnet den Steam-Socket fest auf 27017
+            # Wreckfest unter Wine öffnet den Steam-Socket fest auf 27017 (im Container). Belegt schon ein anderer
+            # Wreckfest-Server 27017 auf dem Host, wird ein freier Host-Port davorgesetzt.
+            hp = int(v.get("wf_steam_host") or 27017)
+            exposed["27017/udp"] = {}
+            host["PortBindings"]["27017/udp"] = [{"HostPort": str(hp)}]
         exposed["8080/tcp"] = {}
         host["PortBindings"]["8080/tcp"] = [{"HostPort": str(wport)}]
         host["Binds"] += [f"{data_dir}/steamcmd:/serverdata/steamcmd", f"{data_dir}/serverfiles:/serverdata/serverfiles"]

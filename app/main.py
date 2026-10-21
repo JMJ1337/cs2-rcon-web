@@ -7642,7 +7642,8 @@ async def change_ports(sid: str, data: PortsIn):
         want = {port, q, sp}
         binds = {f"{port}/udp": port, f"{q}/udp": q, f"{sp}/udp": sp}
         if WF_EXTRA_UDP not in want:      # Wreckfest (Wine) öffnet seinen Steam-Socket fest auf 27017
-            binds[f"{WF_EXTRA_UDP}/udp"] = WF_EXTRA_UDP
+            cur = ((info.get("HostConfig") or {}).get("PortBindings") or {}).get(f"{WF_EXTRA_UDP}/udp") or [{}]
+            binds[f"{WF_EXTRA_UDP}/udp"] = int(cur[0].get("HostPort") or WF_EXTRA_UDP)
     if len(want) != (2 if g == "cs2" else 3):
         raise HTTPException(400, "Ports müssen verschieden sein")
     clash = sorted(p for p in set(binds.values()) if p in used and p not in own)
@@ -8488,6 +8489,11 @@ async def create_server(data: CreateIn, request: Request):
                     base = catmod.CATALOG.get(data.game, {}).get("params", "")
                 data.values["params"] = (base + " " + gslt.token_param(data.game, t["token"])).strip()
             gslt.assign(t["token"], data.values.get("name") or "")
+    if data.game == "wreckfest" and not data.values.get("wf_steam_host"):
+        used0 = await _used_ports()
+        if 27017 in used0:               # zweiter Wreckfest-Server: fester Wine-Steam-Port 27017 nach außen umlegen
+            mine = {int(x) for k, x in data.values.items() if k.endswith("port") and str(x).isdigit()}
+            data.values["wf_steam_host"] = next(p for p in range(27117, 27300) if p not in used0 and p not in mine)
     try:
         b = templates.build(data.game, data.values, data.data_dir)  # früh validieren
     except ValueError as e:
@@ -8623,6 +8629,10 @@ async def _start_batch(data: BatchIn, host: str) -> dict:
             vals.update({k: str(v) for k, v in templates.suggest_ports(
                 data.game, used, templates.parse_range(automation.get_settings().get("port_range"))).items()})
             vals.pop("token", None)           # jeder Server bekommt seinen eigenen Token
+        if data.game == "wreckfest" and (i or not vals.get("wf_steam_host")):
+            mine = {int(x) for k, x in vals.items() if k.endswith("port") and str(x).isdigit()}
+            vals["wf_steam_host"] = 27017 if 27017 not in used and 27017 not in mine else \
+                next(p for p in range(27117, 27300) if p not in used and p not in mine)
         try:
             b = templates.build(data.game, vals, _renumber(data.data_dir, data.n, n) if i else data.data_dir)
         except ValueError as e:
