@@ -70,7 +70,7 @@ printf '%s\n' "${c_dim}Docker · Portainer · Spielservermanager · optional Lan
 echo
 
 # ---------------------------------------------------------------- Fragen
-LAN_IP_DEF=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
+LAN_IP_DEF=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || true)
 say "Netzwerk"
 ask LAN_IP "IP-Adresse dieses Rechners im LAN" "${LAN_IP_DEF:-}"
 [ -n "$LAN_IP" ] || die "Keine IP angegeben"
