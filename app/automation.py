@@ -72,7 +72,7 @@ def get_settings() -> dict:
 def save_settings(data: dict) -> dict:
     cur = get_settings()
     for k in ("modes", "map_rules", "public_url", "internet_host", "watch_interval", "scan_interval", "scan_subnets",
-              "games_base", "cache_container", "cache_dir", "cs2_template_src", "hostname_pattern", "names_pattern", "container_dns", "auto_bots", "auto_matchzy", "port_range"):
+              "games_base", "cache_container", "cache_dir", "default_join_pw", "default_admin_pw", "cs2_template_src", "hostname_pattern", "names_pattern", "container_dns", "auto_bots", "auto_matchzy", "port_range"):
         if k in data:
             cur[k] = data[k]
     store.save(SETTINGS_FILE, cur)

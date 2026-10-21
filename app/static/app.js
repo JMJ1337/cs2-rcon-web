@@ -1543,6 +1543,7 @@ function renderGq(){
   $("#gqExecBox").classList.toggle("hidden", !!d.noExec);
   $("#gqPwBox").classList.toggle("hidden", !(GAMES[g]?.rcon || g === "tf2"));
   $("#gqJoinPw").value = current.join_pw ?? (lastStatus && lastStatus.join_password) ?? "";
+  $("#btnGqJoinPwStd").textContent = settings.default_join_pw || "Standard"; $("#btnGqJoinPwStd").classList.toggle("hidden", !settings.default_join_pw);
   $("#gqMapPanel").classList.toggle("hidden", !!d.noMaps);
   $("#gqMapAdd").classList.toggle("hidden", !GAMES[g]?.rcon || !current.container);
   if (GAMES[g]?.rcon && current.container) gqLibRender();
@@ -1665,7 +1666,7 @@ async function gqLibRender(){
     } catch (e) { toast(e.message, true); }
   };
   $("#btnGqJoinPw").onclick = () => setPw($("#gqJoinPw").value.trim());
-  $("#btnGqJoinPwStd").onclick = () => setPw("hinkel");
+  $("#btnGqJoinPwStd").onclick = () => settings.default_join_pw ? setPw(settings.default_join_pw) : toast("Kein Standard-Passwort eingestellt (Automatik & Einstellungen)", true);
   $("#btnGqExec").onclick = () => { const c = $("#gqExecCfg").value.trim().replace(/[^\w.\-\/]/g, ""); if (c) send(`exec ${c}`); };
 })();
 const settingsFor = () => (current && gameOf(current) === "tf2") ? TF2_SETTINGS : SETTINGS;
@@ -2027,6 +2028,7 @@ function renderAuto(){
   $("#setScanSubnets").value = settings.scan_subnets || "";
   $("#setGamesBase").value = settings.games_base || "/mnt/grohlan";
   $("#setCacheContainer").value = settings.cache_container || "";
+  $("#setDefJoinPw").value = settings.default_join_pw || ""; $("#setDefAdminPw").value = settings.default_admin_pw || "";
   api("/api/cache/dir").then(r => {
     if (!r.container) { $("#cacheDirInfo").textContent = "Kein Lancache-Container gefunden."; $("#btnCacheDir").disabled = true; return; }
     $("#setCacheDir").value = r.base || settings.cache_dir || ""; $("#btnCacheDir").disabled = false;
@@ -2055,6 +2057,7 @@ $("#btnAutoSave").onclick = async () => {
       public_url: $("#setPublicUrl").value.trim(), watch_interval: parseInt($("#setInterval").value, 10) || 10,
       scan_interval: Math.max(0, parseInt($("#setScanInterval").value, 10) || 0), scan_subnets: $("#setScanSubnets").value.trim(),
       games_base: $("#setGamesBase").value.trim(), cache_container: $("#setCacheContainer").value.trim(),
+      default_join_pw: $("#setDefJoinPw").value.trim(), default_admin_pw: $("#setDefAdminPw").value.trim(),
       hostname_pattern: $("#setHostnamePattern").value.trim(), names_pattern: $("#setNamesPattern").value.trim(), internet_host: $("#setInternetHost").value.trim(), auto_bots: $("#setAutoBots").checked, auto_matchzy: $("#setAutoMz").checked, container_dns: $("#setContainerDns").value.trim(), port_range: $("#setPortRange").value.trim()}});
     renderAuto(); refreshModeSelects(); toast("Gespeichert – wird beim nächsten Prüfen angewendet");
   } catch(err){ toast(err.message, true); }

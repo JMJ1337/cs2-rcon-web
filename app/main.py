@@ -1768,7 +1768,7 @@ async def collect_generic(s: dict) -> dict:
     if (catmod.CATALOG.get(g) or {}).get("rcon") and s.get("container") and (_lib().get(g)):
         asyncio.create_task(_lib_restore(s))      # Maps (+ gewählte Mods) aus der Bibliothek, auch nach Neuanlegen
     if (catmod.CATALOG.get(g) or {}).get("rcon"):
-        pw = s["join_pw"] if "join_pw" in s else templates.DEFAULT_JOIN_PW
+        pw = s["join_pw"] if "join_pw" in s else templates.default_join_pw()
         if _jpw_applied.get(s["id"]) != pw and time.time() - _jpw_try.get(s["id"], 0) > 60:
             try:
                 if await _apply_join_pw(s, pw, live_required=False) and "join_pw" not in s:
@@ -3247,6 +3247,8 @@ class SettingsIn(BaseModel):
     games_base: str | None = Field(None, max_length=200)
     cache_container: str | None = Field(None, max_length=100)
     cache_dir: str | None = Field(None, max_length=300)
+    default_join_pw: str | None = Field(None, max_length=64)
+    default_admin_pw: str | None = Field(None, max_length=64)
     hostname_pattern: str | None = Field(None, max_length=60)
     names_pattern: str | None = Field(None, max_length=60)
     internet_host: str | None = Field(None, max_length=120)
@@ -3975,6 +3977,8 @@ async def _tour_create_servers(n: int) -> str | None:
     nr = max([_server_nr(s, (_state.get(s["id"]) or {}).get("hostname")) for s in cs] + [1]) + 1
     used = set(await _used_ports())
     vals = {k: (dv.replace("{n}", str(nr)) if isinstance(dv, str) else dv) for k, _l, _t, dv, _h in templates.TEMPLATES["cs2"]["fields"]}
+    vals = {k: (templates.default_admin_pw() if v == "{default_admin_pw}" else templates.default_join_pw() if v == "{default_join_pw}" else v)
+            for k, v in vals.items()}
     vals.update({k: str(v) for k, v in templates.suggest_ports("cs2", used, templates.parse_range(automation.get_settings().get("port_range"))).items()})
     vals.update(server_name=f"Groh CS #{nr} Turnier", mode="wingman", token="", _copy_from="_local" if _tpl.get("last") else cs[0]["id"])
     base = (automation.get_settings().get("games_base") or "/mnt/grohlan").rstrip("/")
@@ -6708,7 +6712,11 @@ def _resume_jobs() -> None:
 @app.get("/api/templates", dependencies=auth)
 async def list_templates():
     base = (automation.get_settings().get("games_base") or "/mnt/grohlan").rstrip("/")
-    tpl = {k: {**v, "data_default": v["data_default"].replace("{base}", base)} for k, v in templates.TEMPLATES.items()}
+    st = automation.get_settings()
+    sub = {"{default_admin_pw}": st.get("default_admin_pw") or "", "{default_join_pw}": st.get("default_join_pw") or ""}
+    tpl = {k: {**v, "data_default": v["data_default"].replace("{base}", base),
+               "fields": [[f[0], f[1], f[2], sub.get(f[3], f[3]), *f[4:]] for f in v["fields"]]}
+           for k, v in templates.TEMPLATES.items()}
     return {"templates": tpl, "docker": docker_api.available(), "games_base": base}
 
 
@@ -8296,7 +8304,7 @@ async def rcon_enable(sid: str, data: RconEnableIn):
     c = catmod.CATALOG.get(game_of(s)) or {}
     if not c.get("rcon") or not s.get("container"):
         raise HTTPException(400, "Für dieses Spiel nicht möglich")
-    pw = re.sub(r'["\s;]', "", data.password or s.get("password") or "") or templates.DEFAULT_ADMIN_PW
+    pw = re.sub(r'["\s;]', "", data.password or s.get("password") or "") or templates.default_admin_pw()
     try:
         info = await docker_api.inspect(s["container"])
         if ((info.get("Config") or {}).get("Labels") or {}).get("gsm.managed") != "1":

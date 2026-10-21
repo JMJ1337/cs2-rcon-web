@@ -138,14 +138,28 @@ RESERVED = {27015, 27016, 27017}     # Wreckfest (Steam/Query, unter Wine fest 2
 for _k in _catalog.CATALOG:
     PORT_PLAN[_k] = _catalog.port_plan(_k)
 
-# Standard-Passwörter (Groh LAN): Beitritt „hinkel“, RCON/Admin „groh6671“ – im Formular vorausgefüllt, änderbar
-DEFAULT_JOIN_PW, DEFAULT_ADMIN_PW = "hinkel", "groh6671"
+# Standard-Passwörter: stehen NICHT im Code, sondern in den Einstellungen (Automatik & Einstellungen → Standard-Passwörter).
+# Felder bekommen Platzhalter, die /api/templates mit den eingestellten Werten füllt.
+ADMIN_PW_FIELDS = ("rcon_pw", "admin_pw", "rcon_password")
+JOIN_PW_FIELDS = ("password", "server_pw", "join_pw", "server_password")
 for _t in TEMPLATES.values():
     for _f in _t["fields"]:
-        if _f[3] == "" and _f[0] in ("rcon_pw", "admin_pw", "rcon_password"):
-            _f[3] = DEFAULT_ADMIN_PW
-        elif _f[3] == "" and _f[0] in ("password", "server_pw", "join_pw", "server_password"):
-            _f[3] = DEFAULT_JOIN_PW
+        if _f[3] == "" and _f[0] in ADMIN_PW_FIELDS:
+            _f[3] = "{default_admin_pw}"
+        elif _f[3] == "" and _f[0] in JOIN_PW_FIELDS:
+            _f[3] = "{default_join_pw}"
+
+
+def default_join_pw() -> str:
+    from . import automation
+    return (automation.get_settings().get("default_join_pw") or "").strip()
+
+
+def default_admin_pw() -> str:
+    """Eingestelltes Standard-RCON-/Admin-Passwort – ohne Einstellung ein zufälliges (RCON braucht eins)."""
+    from . import automation
+    import secrets
+    return (automation.get_settings().get("default_admin_pw") or "").strip() or secrets.token_urlsafe(9)
 
 
 def parse_range(txt) -> tuple[int, int] | None:
@@ -227,6 +241,7 @@ def _port(v, label):
 
 def build(game: str, v: dict, data_dir: str) -> dict:
     """Liefert {name, image, spec, uid, data_dir, server: {...für die Serverliste...}}."""
+    v = {k: (default_admin_pw() if x == "{default_admin_pw}" else default_join_pw() if x == "{default_join_pw}" else x) for k, x in v.items()}
     t = TEMPLATES[game]
     name = re.sub(r"[^a-zA-Z0-9_.\-]", "-", (v.get("name") or "").strip()) or f"{game}-server"
     data_dir = data_dir.rstrip("/")
@@ -341,7 +356,7 @@ def build(game: str, v: dict, data_dir: str) -> dict:
                                                    for f in pp if f in vals)).strip()
         rcon_pw = ""
         if c.get("rcon"):                    # RCON aktivieren: Steuerung (Map, Bots, Name …) live ohne Neustart
-            rcon_pw = re.sub(r'["\s;]', "", v.get("rcon_pw") or "") or DEFAULT_ADMIN_PW
+            rcon_pw = re.sub(r'["\s;]', "", v.get("rcon_pw") or "") or default_admin_pw()
             base = re.sub(r"\s*\+rcon_password\s+\S+", "", sub["params"] or "")
             sub["params"] = (base + f" +rcon_password {rcon_pw}").strip()
         env = [e.format(**sub) for e in c["env"]]

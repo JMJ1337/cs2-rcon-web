@@ -366,6 +366,8 @@
             <div class="field"><label>Automatischer Netzwerk-Scan (Minuten, 0 = aus)</label><input id="setScanInterval" inputmode="numeric"></div>
             <div class="field"><label>Zusätzliche Netze für den Scan</label><input id="setScanSubnets" placeholder="z. B. 192.168.200.0/24" class="mono"></div>
             <div class="field"><label>Basisordner für neue Spielserver (auf dem Docker-Host)</label><input id="setGamesBase" placeholder="/mnt/grohlan" class="mono"></div>
+            <div class="field"><label>Standard-Beitrittspasswort für neue Server (leer = ohne)</label><input id="setDefJoinPw" class="mono" autocomplete="off"></div>
+            <div class="field"><label>Standard-RCON-/Admin-Passwort für neue Server (leer = zufällig je Server)</label><input id="setDefAdminPw" class="mono" autocomplete="off"></div>
             <div class="field"><label>Lancache-Container (leer = automatisch)</label><input id="setCacheContainer" placeholder="z. B. lancache-monolithic-1" class="mono"></div>
             <div class="field" style="grid-column:1/-1"><label>Speicherorte</label>
               <div class="hint" style="margin-bottom:6px">Lokal (z. B. <span class="mono">/home/&lt;benutzer&gt;/spielserver</span>) oder Netzwerk: NFS/SMB-Freigabe oder <b>iSCSI</b> – für Netzwerkspeicher ist iSCSI deutlich schneller (Block-Zugriff), besonders für den Lancache. Netzwerkspeicher zuerst auf dem Server einhängen: <a href="#" id="lnkStorage">Speicher (iSCSI)</a> erzeugt das Skript dafür, oder das Installationsskript erneut ausführen.</div>
@@ -735,7 +737,7 @@
               <div class="row" id="gqLimits" style="gap:6px;align-items:center;flex-wrap:wrap"></div>
             </div>
             <div id="gqPwBox"><h3>Server-Passwort <span class="hint">live, bleibt nach Neustart</span></h3>
-            <div class="row"><input id="gqJoinPw" placeholder="leer = ohne Passwort"><button id="btnGqJoinPw">Setzen</button><button class="small" id="btnGqJoinPwStd" title="Standard-Passwort">hinkel</button></div></div>
+            <div class="row"><input id="gqJoinPw" placeholder="leer = ohne Passwort"><button id="btnGqJoinPw">Setzen</button><button class="small" id="btnGqJoinPwStd" title="Standard-Passwort aus den Einstellungen">Standard</button></div></div>
             <h3>Chat-Nachricht</h3>
             <div class="row"><input id="gqSayText" placeholder="Nachricht an alle Spieler"><button id="btnGqSay">Senden</button></div>
             <div id="gqExecBox"><h3>Config ausführen</h3>
@@ -1136,6 +1138,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=183"></script>
+<script src="/static/app.js?v=184"></script>
 </body>
 </html>
