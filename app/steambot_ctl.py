@@ -38,7 +38,8 @@ def settings() -> dict:
 
 def save(new: dict) -> dict:
     d = settings()
-    for k in ("enabled", "auto_add", "bot_name", "recent_hours", "max_age_days", "requested", "since", "adds"):
+    for k in ("enabled", "auto_add", "bot_name", "recent_hours", "max_age_days", "requested", "since", "adds",
+              "optout", "chat_seen", "chat"):
         if k in new:
             d[k] = new[k]
     store.save(FILE, d)

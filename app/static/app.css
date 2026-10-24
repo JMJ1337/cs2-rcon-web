@@ -901,3 +901,12 @@ dialog.dlgwide{width:min(860px,calc(100vw - 32px));max-height:calc(100vh - 40px)
 .apiact .ev .at{color:var(--muted);width:92px;flex:none}.apiact .ev .dt{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .apiact .ev.err b{color:var(--bad,#e5534b)}
 #botMsgs .bm{padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Steam-Bot: Freunde + Posteingang */
+.botfriends{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px;max-height:420px;overflow:auto}
+.bf{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);min-width:0}
+.bf .uav{width:32px;height:32px}.bf .who{flex:1;min-width:0}.bf .who b,.bf .who .hint{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bf .who .hint{font-size:11.5px}.bf .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}.bf .dot.on{background:var(--ok,#3fb950)}.bf .dot.play{background:#58a6ff}
+.bf.oo{opacity:.7}.bf .oo-t{font-size:10.5px;padding:1px 5px;border-radius:6px;background:var(--line)}
+.ibx{display:flex;gap:8px;padding:6px 0;border-top:1px solid var(--line);align-items:flex-start}.ibx.done{opacity:.55}
+.ibx .k{font-size:11px;padding:1px 6px;border-radius:6px;background:var(--line);flex:none;margin-top:2px}.ibx .tx{flex:1;min-width:0}

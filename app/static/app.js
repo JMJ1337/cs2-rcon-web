@@ -4063,7 +4063,7 @@ async function loadBot(){
   try { botData = await api("/api/steambot"); } catch (e) { $("#botStatus").innerHTML = `<div class="hint">${esc(e.message)}</div>`; return; }
   const d = botData, s = d.settings, st = d.status || {}, b = st.bot || {};
   if (!botLoaded || !$("#view-bot").contains(document.activeElement)){
-    $("#botEnabled").checked = !!s.enabled; $("#botAuto").checked = s.auto_add !== false;
+    $("#botEnabled").checked = !!s.enabled; $("#botAuto").checked = s.auto_add !== false; $("#botChat").checked = s.chat !== false;
     $("#botName").value = s.bot_name || "LAN-Bot"; $("#botRecent").value = s.recent_hours || 24; $("#botMaxAge").value = s.max_age_days || 7;
     botLoaded = true;
   }
@@ -4104,8 +4104,40 @@ async function loadBot(){
   $("#botSelN").textContent = botSel.size;
   const names = Object.fromEntries(d.players.map(p => [p.steamid, p.name]));
   renderBotMsgs(d.messages || [], names);
+  renderBotFriends(); renderBotInbox();
 }
 let botMsgsAll = false;
+function renderBotFriends(){
+  const d = botData; if (!d) return;
+  const f = ($("#botFriendFilter").value || "").trim().toLowerCase();
+  const list = (d.friends || []).filter(x => !f || (x.name + " " + x.steamid + " " + (x.game || "")).toLowerCase().includes(f));
+  const n = (d.friends || []).filter(x => x.rel === "Freund").length, on = (d.friends || []).filter(x => x.rel === "Freund" && x.online).length;
+  $("#botFriendsSub").textContent = `${n} Freunde · ${on} online${(d.optouts || []).length ? ` · ${d.optouts.length} ohne Rundnachrichten` : ""}`;
+  const hue = t => { let h = 0; for (const c of t) h = (h * 31 + c.charCodeAt(0)) % 360; return `hsl(${h} 45% 40%)`; };
+  $("#botFriends").innerHTML = list.map(x => {
+    const ini = esc((x.name || "?").slice(0, 1).toUpperCase());
+    const av = x.avatar ? `<span class="uav img"><img src="${esc(x.avatar)}" alt="" referrerpolicy="no-referrer"></span>` : `<span class="uav" style="--c:${hue(x.name || "")}">${ini}</span>`;
+    const sub = x.rel !== "Freund" ? esc(x.rel) : x.game ? "spielt " + esc(x.game) : x.online ? "online" : x.online === false ? "offline" : "";
+    return `<div class="bf ${x.optout ? "oo" : ""}" title="${esc(x.steamid)}">${av}<div class="who"><b>${esc(x.name)}</b><span class="hint">${sub}</span></div>
+      ${x.optout ? `<span class="oo-t" title="hat „stop“ geschrieben – bekommt keine Rundnachrichten">🔕</span>` : ""}
+      <span class="dot ${x.game ? "play" : x.online ? "on" : ""}"></span>
+      <button class="small" data-booo="${esc(x.steamid)}" data-on="${x.optout ? 0 : 1}" title="${x.optout ? "Rundnachrichten wieder an" : "keine Rundnachrichten mehr"}">${x.optout ? "🔔" : "🔕"}</button></div>`;
+  }).join("") || `<div class="hint">${(d.friends || []).length ? "Keine Treffer." : "Noch keine Freunde."}</div>`;
+  $$("[data-booo]").forEach(b => b.onclick = async () => { try { await api(`/api/steambot/optout/${b.dataset.booo}`, {body: {on: b.dataset.on === "1"}}); botLoaded = false; loadBot(); } catch (e) { toast(e.message, true); } });
+}
+$("#botFriendFilter").addEventListener("input", renderBotFriends);
+function renderBotInbox(){
+  const d = botData; if (!d) return;
+  const items = d.inbox || [], open = items.filter(x => x.status !== "erledigt").length;
+  $("#botInboxSub").textContent = open ? `${open} offen` : "Vorschläge und Serverwünsche per Chat";
+  $("#botInbox").innerHTML = items.slice(0, 12).map(x => `<div class="ibx ${x.status === "erledigt" ? "done" : ""}">
+      <span class="k">${x.kind === "server" ? "🖥️ Server" + (x.game && GAMES[x.game] ? " · " + esc(GAMES[x.game].short || GAMES[x.game].label) : "") : "💡 Idee"}</span>
+      <div class="tx"><b>${esc(x.name)}</b> <span class="hint">${new Date(x.t * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"})}</span><div>${esc(x.text)}</div></div>
+      <span style="flex:none">${x.status === "erledigt" ? `<button class="small" data-ibx="${x.id}" data-st="offen" title="wieder öffnen">↺</button>` : `<button class="small" data-ibx="${x.id}" data-st="erledigt" title="erledigt">✓</button>`}<button class="small danger" data-ibxdel="${x.id}" title="löschen">✕</button></span></div>`).join("")
+    || `<div class="hint">Noch nichts. Spieler schreiben dem Bot z. B. „Vorschlag: …“ oder „Server: Valheim für 6 Leute“.</div>`;
+  $$("[data-ibx]").forEach(b => b.onclick = async () => { await api(`/api/steambot/inbox/${b.dataset.ibx}`, {body: {status: b.dataset.st}}); botLoaded = false; loadBot(); });
+  $$("[data-ibxdel]").forEach(b => b.onclick = async () => { await api(`/api/steambot/inbox/${b.dataset.ibxdel}`, {method: "DELETE"}); botLoaded = false; loadBot(); });
+}
 function renderBotMsgs(msgs, names){
   // ausgehende Rundschreiben (gleicher Text kurz hintereinander) zu einer Zeile zusammenfassen
   const items = [];
@@ -4124,7 +4156,7 @@ function renderBotMsgs(msgs, names){
 }
 $("#botSave").onclick = async () => {
   try {
-    await api("/api/steambot", {method: "PUT", body: {enabled: $("#botEnabled").checked, auto_add: $("#botAuto").checked, bot_name: $("#botName").value.trim() || "LAN-Bot",
+    await api("/api/steambot", {method: "PUT", body: {enabled: $("#botEnabled").checked, auto_add: $("#botAuto").checked, chat: $("#botChat").checked, bot_name: $("#botName").value.trim() || "LAN-Bot",
       recent_hours: +$("#botRecent").value || 24, max_age_days: +$("#botMaxAge").value || 7}});
     toast("Gespeichert"); botLoaded = false; setTimeout(loadBot, 1500);
   } catch (e) { toast(e.message, true); }

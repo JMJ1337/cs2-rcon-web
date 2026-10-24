@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import mapimages, gslt, matchlog, steamlist, playerdb, notify, prefill_more
-from . import cache_model, cache_inventory, timings, steambot_ctl, stream_ctl, extapi, dmstats, hof, gma
+from . import cache_model, cache_inventory, timings, steambot_ctl, stream_ctl, extapi, dmstats, hof, gma, botchat
 from . import tournament as tour
 from . import automation, cache_history, configfiles, depots, filebrowser, hoststorage, prefill, diagnostics, livestats, netnames, cache_stats, docker_api, hoststats, install_watch, metrics, scanner, steam, store, templates, users
 from .games import GAMES, adapters, game_of
@@ -77,7 +77,8 @@ async def lifespan(_app):
              asyncio.create_task(load_loop()), asyncio.create_task(live_loop()),
              asyncio.create_task(player_loop()), asyncio.create_task(monitor_loop()),
              asyncio.create_task(gslt_loop()), asyncio.create_task(backup_loop()),
-             asyncio.create_task(_names_loop()), asyncio.create_task(tour_loop())] if WATCH_ENABLED else []
+             asyncio.create_task(_names_loop()), asyncio.create_task(tour_loop()),
+             asyncio.create_task(bot_chat_loop())] if WATCH_ENABLED else []
     _inv_watch()
     try:
         _resume_jobs()
@@ -4573,6 +4574,8 @@ async def _tour_announce(d: dict, force: bool = False) -> dict:
             lines.append("⚠️ Du hast noch kein Team – such dir schnell einen Partner (Wingman, 2 gegen 2)!")
         lines += [f"📺 Turnierbaum, Ergebnisse & Live-Stream: {url}", "",
                   "Sobald dein Match startet, schicke ich dir die Einladung mit Server-Link. Bereit machen, Headset auf – GL HF! 🍀🎯"]
+        if botchat.opted_out(sid):                    # hat Rundnachrichten abbestellt
+            continue
         try:
             await steambot_ctl.api("POST", "/msg", {"steamids": [sid], "text": "\n".join(lines)}, timeout=30)
             sent.append(sid)
@@ -4878,6 +4881,7 @@ class BotSettings(BaseModel):
     bot_name: str | None = Field(None, max_length=32)
     recent_hours: float | None = Field(None, ge=1, le=24 * 30)
     max_age_days: float | None = Field(None, ge=1, le=365)
+    chat: bool | None = None          # auf Chat-Nachrichten antworten (stop, Vorschlag, Serverwunsch, hilfe)
 
 
 class BotLogin(BaseModel):
@@ -5042,8 +5046,53 @@ async def steambot_get(request: Request):
         p["playing"] = f.get("game") if f else None
         p["recent"] = time.time() - (p["last_seen"] or 0) < float(d.get("recent_hours") or 24) * 3600
         players.append(p)
-    return {"settings": {k: v for k, v in d.items() if k not in ("key", "requested", "adds")}, "status": st, "players": players,
-            "messages": (bot.get("messages") or [])[-30:]}
+    oo = botchat.optouts()
+    friends = []
+    for f in bot.get("friends") or []:
+        if f.get("rel") not in ("Friend", "RequestInitiator", "RequestRecipient"):
+            continue
+        p = playerdb.get(f["steamid"])
+        friends.append({"steamid": f["steamid"], "name": (playerdb.display(p) if p else None) or f.get("name") or f["steamid"],
+                        "avatar": (p or {}).get("avatar") or "", "online": f.get("online"), "game": f.get("game"),
+                        "rel": {"Friend": "Freund", "RequestInitiator": "angefragt", "RequestRecipient": "möchte Freund werden"}[f["rel"]],
+                        "optout": f["steamid"] in oo})
+    friends.sort(key=lambda x: (x["rel"] != "Freund", not x["game"], not x["online"], x["name"].lower()))
+    return {"settings": {k: v for k, v in d.items() if k not in ("key", "requested", "adds", "optout", "chat_seen")},
+            "status": st, "players": players, "messages": (bot.get("messages") or [])[-30:], "friends": friends,
+            "inbox": list(reversed(botchat.inbox()))[:40],
+            "optouts": [{"steamid": s, "name": playerdb.display(playerdb.get(s)) if playerdb.get(s) else s, "t": t} for s, t in oo.items()]}
+
+
+class InboxIn(BaseModel):
+    status: str = Field(pattern="^(offen|erledigt)$")
+
+
+@app.post("/api/steambot/inbox/{eid}", dependencies=auth)
+async def steambot_inbox_set(eid: str, data: InboxIn, request: Request):
+    _need_admin(request)
+    botchat.inbox_set(eid, data.status)
+    return {"ok": True}
+
+
+@app.delete("/api/steambot/inbox/{eid}", dependencies=auth)
+async def steambot_inbox_del(eid: str, request: Request):
+    _need_admin(request)
+    botchat.inbox_set(eid, delete=True)
+    return {"ok": True}
+
+
+class OptoutIn(BaseModel):
+    on: bool
+
+
+@app.post("/api/steambot/optout/{sid}", dependencies=auth)
+async def steambot_optout(sid: str, data: OptoutIn, request: Request):
+    """Abmeldung von Rundnachrichten von Hand setzen/aufheben (normalerweise schreibt der Spieler „stop“/„start“)."""
+    _need_admin(request)
+    if not re.fullmatch(r"\d{17}", sid):
+        raise HTTPException(400, "SteamID64 erwartet")
+    botchat.set_optout(sid, data.on)
+    return {"ok": True}
 
 
 @app.put("/api/steambot", dependencies=auth)
@@ -5115,13 +5164,25 @@ async def steambot_message(data: BotMsg, request: Request):
         targets = [p["steamid"] for p in steambot_ctl.lan_players(float(d.get("recent_hours") or 24))]
     else:
         targets = [x for x in data.steamids if re.fullmatch(r"\d{17}", x)]
-    send = [x for x in targets if x in friends]
-    skipped = len(targets) - len(send)
+    send, opted = botchat.without_optouts([x for x in targets if x in friends])
+    skipped = len(targets) - len(send) - len(opted)
     if not send:
-        raise HTTPException(400, "Keiner der Empfänger ist (schon) Freund des Bots – Nachrichten gehen nur an bestätigte Freunde"
+        raise HTTPException(400, ("Alle Empfänger haben Rundnachrichten abbestellt" if opted else
+                                  "Keiner der Empfänger ist (schon) Freund des Bots – Nachrichten gehen nur an bestätigte Freunde")
                             if targets else "Keine Empfänger")
     r = await _bot("POST", "/msg", {"steamids": send, "text": data.text}, timeout=30 + len(send))
-    return {**r, "skipped": skipped}
+    return {**r, "skipped": skipped, "opted_out": len(opted)}
+
+
+async def bot_chat_loop():
+    """Steam-Bot: Chat-Nachrichten zügig beantworten (stop/start, Vorschlag, Serverwunsch, hilfe)."""
+    await asyncio.sleep(30)
+    while True:
+        try:
+            await botchat.tick()
+        except Exception:  # noqa: BLE001
+            log.debug("Steam-Bot-Chat", exc_info=True)
+        await asyncio.sleep(8)
 
 
 async def monitor_loop():

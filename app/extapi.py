@@ -425,13 +425,16 @@ async def _send(steamids: list[str], text: str) -> dict:
     st = await M.steambot_ctl.status()
     friends = {f["steamid"] for f in ((st.get("bot") or {}).get("friends") or []) if f.get("rel") == "Friend"}
     send, not_friend = [x for x in ids if x in friends], [x for x in ids if x not in friends]
-    res = {"done": [], "failed": []}
+    res, opted = {"done": [], "failed": []}, []
     if send:
+        send, opted = M.botchat.without_optouts(send)
+        if opted:
+            note("Bot: abbestellt übersprungen", len(opted))
         try:
-            res = await M.steambot_ctl.api("POST", "/msg", {"steamids": send, "text": text}, timeout=max(30, len(send)))
+            res = await M.steambot_ctl.api("POST", "/msg", {"steamids": send, "text": text}, timeout=max(30, len(send))) if send else {}
         except Exception as e:  # noqa: BLE001
             raise HTTPException(502, str(e)[:200])
-    return {"sent": res.get("done") or [], "failed": res.get("failed") or [], "not_friends": not_friend}
+    return {"sent": res.get("done") or [], "failed": res.get("failed") or [], "not_friends": not_friend, "opted_out": opted}
 
 
 @router.post("/bot/message", dependencies=[Depends(auth("bot"))])
@@ -462,7 +465,7 @@ async def v1_bot_invite(data: InviteIn):
         s = next((x for x in M.load_servers() if x["id"] == data.server_id), None)
         if not s:
             raise HTTPException(404, "Server nicht gefunden")
-        out = {"sent": [], "failed": [], "not_friends": []}
+        out = {"sent": [], "failed": [], "not_friends": [], "opted_out": []}
         for lan, group in M._split_lan(data.steamids).items():
             if group:
                 r = await _send(group, (head + "\n" if head else "") + (await M.invite_join_text(s, lan)).strip())

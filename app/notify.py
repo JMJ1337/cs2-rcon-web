@@ -28,6 +28,7 @@ EVENTS = {
     "cache_down": "Lancache läuft nicht",
     "backup": "Sicherung fehlgeschlagen",
     "players": "Erster Spieler auf einem leeren Server",
+    "bot_inbox": "Steam-Bot: Vorschlag oder Serverwunsch",
 }
 DEFAULTS = {"enabled": False, "whatsapp": "", "ntfy_url": "", "telegram_token": "", "telegram_chat": "",
             "events": {k: k != "players" for k in EVENTS}, "repeat_min": 360, "max_per_hour": 12,

@@ -6,7 +6,7 @@
 <title>Spielservermanager</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0a43a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%23111'%3E%3E_%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap">
-<link rel="stylesheet" href="/static/app.css?v=133">
+<link rel="stylesheet" href="/static/app.css?v=134">
 </head>
 <body>
 
@@ -501,6 +501,7 @@
             <div class="pfopts">
               <label><input type="checkbox" id="botEnabled"> Bot eingeschaltet</label>
               <label><input type="checkbox" id="botAuto"> Neue Spieler automatisch als Freund anfragen</label>
+              <label><input type="checkbox" id="botChat"> Auf Chat-Nachrichten antworten („stop“, „Vorschlag: …“, „Server: …“, „hilfe“)</label>
               <label>Name im Steam-Chat <input id="botName" maxlength="32" style="width:160px"></label>
               <label>„Alle auf der LAN“ = Spieler der letzten <input type="number" id="botRecent" min="1" step="1" style="width:70px"> Stunden</label>
               <label>Automatisch anfragen: Spieler der letzten <input type="number" id="botMaxAge" min="1" step="1" style="width:70px"> Tage</label>
@@ -519,6 +520,11 @@
             <h3 class="pdsec" style="margin-top:14px">Letzte Nachrichten</h3>
             <div id="botMsgs" class="hint"></div>
           </div>
+        </div>
+        <div class="grid2" style="margin-top:16px">
+          <div class="panel"><h2>Posteingang <span class="hint" id="botInboxSub">Vorschläge und Serverwünsche per Chat</span></h2><div id="botInbox"></div></div>
+          <div class="panel"><h2>Freunde <span class="hint" id="botFriendsSub"></span></h2>
+            <input id="botFriendFilter" placeholder="Freunde suchen" style="margin-bottom:8px"><div id="botFriends" class="botfriends"></div></div>
         </div>
         <div class="panel" style="margin-top:16px">
           <h2>Spieler auf der LAN <span class="hint">(automatisch: mit LAN-IP gesehen · unter „Spieler“ per Haken änderbar · wer übers Internet spielt, fehlt hier)</span></h2>
@@ -1159,6 +1165,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=190"></script>
+<script src="/static/app.js?v=191"></script>
 </body>
 </html>
