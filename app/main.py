@@ -5568,6 +5568,104 @@ async def players_sync_admins(request: Request):
     return {"done": await _sync_admins(), "log": _admin_sync["log"]}
 
 
+# ---------------------------------------------------------------- Admins je Server (Anzeige + Hinzufügen/Entfernen)
+ADMIN_SYNC_GAMES = ("cs2", "wreckfest", "valheim")
+
+
+def _server_admins(s: dict) -> list[dict]:
+    g = game_of(s)
+    out, seen = [], set()
+    by_sid = {p["steamid"]: p for p in playerdb.all_players() if p.get("steamid")}
+    for p in playerdb.all_players():
+        manual = set(p.get("admin") or [])
+        acct = _user_admin_games(p["user"]) if p.get("user") else set()
+        via = []
+        if g in manual:
+            via.append("server")
+        if "*" in manual:
+            via.append("alle")
+        if g in acct or "*" in acct:
+            via.append("konto")
+        if via:
+            seen.add(p.get("user"))
+            out.append({"id": p["id"], "name": playerdb.display(p), "steamid": p.get("steamid") or "", "avatar": p.get("avatar") or "",
+                        "user": p.get("user") or "", "via": via})
+    for u in users.load():   # Tool-Konten mit Adminrechten ohne verknüpften Spieler
+        if u["username"] in seen or u.get("pending"):
+            continue
+        if u.get("role") == "admin" or users.level(u, g) >= 3:
+            p = by_sid.get(u.get("steamid") or "")
+            out.append({"id": "", "name": u.get("steam_name") or u["username"], "steamid": u.get("steamid") or "",
+                        "avatar": (p or {}).get("avatar") or "", "user": u["username"], "via": ["konto"]})
+    return sorted(out, key=lambda x: (("server" not in x["via"]), x["name"].lower()))
+
+
+@app.get("/api/servers/{sid}/admins", dependencies=auth)
+async def server_admins(sid: str, request: Request):
+    s = get_server(sid)
+    return {"admins": _server_admins(s), "sync": game_of(s) in ADMIN_SYNC_GAMES and bool(s.get("container")),
+            "can_edit": _is_admin(request), "log": _admin_sync["log"][-5:]}
+
+
+class ServerAdminIn(BaseModel):
+    player_id: str | None = Field(None, max_length=64)
+    steamid: str | None = Field(None, max_length=200)     # SteamID in jedem Format oder Profil-Link
+
+
+@app.post("/api/servers/{sid}/admins", dependencies=auth)
+async def server_admin_add(sid: str, data: ServerAdminIn, request: Request):
+    """Spieler zum Admin für das Spiel dieses Servers machen (gilt für alle Server des Spiels) und sofort eintragen."""
+    _need_admin(request)
+    s = get_server(sid)
+    g = game_of(s)
+    p = playerdb.get(data.player_id) if data.player_id else None
+    if not p:
+        if not (data.steamid or "").strip():
+            raise HTTPException(400, "Spieler auswählen oder SteamID/Profil-Link angeben")
+        try:
+            r = await steam.resolve_player(data.steamid.strip())
+        except steam.SteamError as e:
+            raise HTTPException(400, str(e))
+        p = playerdb.get(r["steamid"]) or playerdb.add_manual(r["steamid"], r.get("name") or "", r.get("avatar") or "")
+    if not p.get("steamid"):
+        raise HTTPException(400, f"„{playerdb.display(p)}“ hat keine SteamID – erst unter Spieler eintragen")
+    adm = set(p.get("admin") or [])
+    if g not in adm and "*" not in adm:
+        playerdb.update(p["id"], {"admin": sorted(adm | {g})})
+    res = None
+    try:
+        res = await _sync_admins_server(s)
+        store.save("admin_sync.json", _admin_sync["last"])
+    except (docker_api.DockerError, HTTPException, RconError) as e:
+        res = f"Fehler: {str(e)[:120]}"
+    asyncio.create_task(_sync_admins())                  # übrige Server dieses Spiels
+    return {"admins": _server_admins(s), "result": res}
+
+
+@app.delete("/api/servers/{sid}/admins/{pid}", dependencies=auth)
+async def server_admin_del(sid: str, pid: str, request: Request):
+    _need_admin(request)
+    s = get_server(sid)
+    g = game_of(s)
+    p = playerdb.get(pid)
+    if not p:
+        raise HTTPException(404, "Spieler nicht gefunden")
+    adm = set(p.get("admin") or [])
+    if g not in adm:
+        if "*" in adm:
+            raise HTTPException(409, f"„{playerdb.display(p)}“ ist Admin für alle Spiele – unter Spieler ändern")
+        raise HTTPException(409, "Adminrechte kommen vom Benutzerkonto – unter Benutzer ändern")
+    playerdb.update(p["id"], {"admin": sorted(adm - {g})})
+    res = None
+    try:
+        res = await _sync_admins_server(s)
+        store.save("admin_sync.json", _admin_sync["last"])
+    except (docker_api.DockerError, HTTPException, RconError) as e:
+        res = f"Fehler: {str(e)[:120]}"
+    asyncio.create_task(_sync_admins())
+    return {"admins": _server_admins(s), "result": res}
+
+
 class PlayerEdit(BaseModel):
     nick: str | None = Field(None, max_length=64)
     steamid: str | None = Field(None, max_length=200)

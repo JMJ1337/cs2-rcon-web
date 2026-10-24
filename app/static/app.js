@@ -1127,13 +1127,59 @@ function setTab(t){
   if (t === "config") loadConfigTab();
   stopPoll(); stopCt();
   if (t === "container"){ refreshContainer(); loadSleep(); ctTimer = setInterval(refreshContainer, 5000); }
-  if (t === "overview"){ refreshStatus(); pollTimer = setInterval(refreshStatus, 5000); }
+  if (t === "overview"){ refreshStatus(); pollTimer = setInterval(refreshStatus, 5000); loadSvAdmins(); }
   if (t === "maps"){ wsFavGame = wsGame(); renderFavs(); $("#wsResults").innerHTML = ""; $("#wsResHead").classList.add("hidden"); }
   if (t === "match") initMatch();
   if (t === "settings" && !Object.keys(loadedSettings).length) loadSettings();
   if (t === "console"){ renderCmdRef(); if (GAMES[gameOf(current)].console) $("#consoleIn").focus(); }
 }
 function stopPoll(){ if (pollTimer){ clearInterval(pollTimer); pollTimer = null; } }
+
+/* ---------- Admins je Server ---------- */
+const ADM_VIA = {server: "Admin für dieses Spiel", alle: "Admin für alle Spiele", konto: "über Benutzerkonto"};
+let svAdminPlayers = [];
+async function loadSvAdmins(){
+  if (!current) return;
+  const id = current.id;
+  let d; try { d = await api(`/api/servers/${id}/admins`); } catch (e) { $("#svAdmins").innerHTML = `<div class="hint">${esc(e.message)}</div>`; return; }
+  if (!current || current.id !== id) return;
+  renderSvAdmins(d);
+}
+function renderSvAdmins(d){
+  const g = gameOf(current), short = (GAMES[g] || {}).short || g;
+  $("#svAdminsSub").textContent = d.admins.length ? `${d.admins.length} · gelten für alle ${short}-Server` : "";
+  $("#btnSvAdminAdd").classList.toggle("hidden", !d.can_edit);
+  const hue = n => { let h = 0; for (const c of n) h = (h * 31 + c.charCodeAt(0)) % 360; return `hsl(${h} 45% 40%)`; };
+  $("#svAdmins").innerHTML = d.admins.length ? d.admins.map(a => {
+    const ini = esc((a.name || "?").slice(0, 1).toUpperCase());
+    const av = a.avatar ? `<span class="uav img"><img src="${esc(a.avatar)}" alt="" referrerpolicy="no-referrer" onerror="this.parentNode.classList.remove('img');this.parentNode.textContent='${ini}'"></span>`
+                        : `<span class="uav" style="--c:${hue(a.name || "")}">${ini}</span>`;
+    const tags = a.via.map(v => `<span class="tag" title="${esc(ADM_VIA[v] || v)}">${v === "server" ? esc(short) : v === "alle" ? "alle Spiele" : "Konto" + (a.user ? " " + esc(a.user) : "")}</span>`).join("");
+    const del = d.can_edit && a.via.includes("server") && a.id ? `<button class="small danger" data-svadmdel="${esc(a.id)}" title="Adminrechte für ${esc(short)} entfernen">✕</button>` : "";
+    const link = a.steamid ? ` href="https://steamcommunity.com/profiles/${esc(a.steamid)}" target="_blank" rel="noopener"` : "";
+    return `<div class="svadm">${av}<div class="who"><b>${link ? `<a${link}>${esc(a.name)}</a>` : esc(a.name)}</b><span class="hint">${tags}${a.steamid ? "" : " ohne SteamID"}</span></div>${del}</div>`;
+  }).join("") : `<div class="hint">Noch keine Admins für ${esc(short)}.</div>`;
+  $("#svAdminsHint").textContent = d.sync ? "Wird automatisch in die Admin-Liste des Servers eingetragen" + (g === "wreckfest" ? " (gilt ab dem nächsten Neustart)." : ".")
+    : `Anzeige der Tool-Admins – ${short} hat (noch) keine automatisch gepflegte Admin-Liste.`;
+  $$("#svAdmins [data-svadmdel]").forEach(b => b.onclick = async () => {
+    try { const r = await api(`/api/servers/${current.id}/admins/${encodeURIComponent(b.dataset.svadmdel)}`, {method: "DELETE"});
+      renderSvAdmins({...d, admins: r.admins}); toast("Adminrechte entfernt" + (r.result ? ` – ${r.result}` : "")); } catch (e) { toast(e.message, true); } });
+}
+$("#btnSvAdminAdd").onclick = async () => {
+  $("#svAdminForm").classList.remove("hidden"); $("#svAdminIn").value = ""; $("#svAdminIn").focus();
+  try { svAdminPlayers = (await api("/api/players")).filter(p => p.steamid);
+    $("#svAdminList").innerHTML = svAdminPlayers.map(p => `<option value="${esc(p.name)} · ${esc(p.steamid)}"></option>`).join(""); } catch {}
+};
+$("#btnSvAdminCancel").onclick = () => $("#svAdminForm").classList.add("hidden");
+$("#svAdminIn").onkeydown = e => { if (e.key === "Enter") $("#btnSvAdminSave").click(); };
+$("#btnSvAdminSave").onclick = async () => {
+  const v = $("#svAdminIn").value.trim(); if (!v) return;
+  const m = v.match(/·\s*(\d{17})$/), p = m && svAdminPlayers.find(x => x.steamid === m[1]);
+  const btn = $("#btnSvAdminSave"); btn.disabled = true;
+  try { const r = await api(`/api/servers/${current.id}/admins`, {body: p ? {player_id: p.id} : {steamid: v}});
+    $("#svAdminForm").classList.add("hidden"); loadSvAdmins(); toast("Admin hinzugefügt" + (r.result ? ` – ${r.result}` : ""));
+  } catch (e) { toast(e.message, true); } finally { btn.disabled = false; }
+};
 
 /* ---------- Übersicht ---------- */
 function resetOverview(){
