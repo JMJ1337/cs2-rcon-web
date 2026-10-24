@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
-    paths: ["app/**", "tools/**", "Dockerfile", "requirements.txt", ".github/workflows/docker.yml"]
+    paths: ["app/**", "tools/**", "caddy/**", "Dockerfile", "requirements.txt", ".github/workflows/docker.yml"]
   pull_request:
     branches: [main]
   workflow_dispatch:

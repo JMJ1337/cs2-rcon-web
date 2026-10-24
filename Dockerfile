@@ -4,6 +4,11 @@ WORKDIR /src
 COPY tools/streamhelper/ .
 RUN CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o /out/gsm-stream.exe .
 
+# Caddy mit DuckDNS-Modul für den optionalen HTTPS-Zugang (https-stack.yml) – wird für die Zielplattform übersetzt
+FROM --platform=$BUILDPLATFORM caddy:2.8.4-builder AS caddy
+ARG TARGETOS TARGETARCH
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH xcaddy build v2.8.4 --with github.com/caddy-dns/duckdns --output /out/caddy
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -16,6 +21,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY --from=streamhelper /out/gsm-stream.exe ./app/bin/gsm-stream.exe
+COPY --from=caddy /out/caddy /usr/local/bin/caddy
+COPY caddy/Caddyfile /srv/caddy/Caddyfile
 
 # Version/Build-Datum (setzt die GitHub Action beim Bauen)
 ARG APP_VERSION=dev

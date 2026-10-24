@@ -1,0 +1,35 @@
+# HTTPS-Zugang von außen für den Spielservermanager (läuft im selben Image, Stack: https-stack.yml)
+# Zertifikat von Let's Encrypt über die DuckDNS-API (DNS-Prüfung) – dafür müssen die Ports 80/443 NICHT frei sein.
+{
+	admin off
+}
+
+{$GSM_DOMAIN}:{$GSM_HTTPS_PORT:8443} {
+	tls {
+		dns duckdns {$DUCKDNS_TOKEN}
+		propagation_delay 30s
+	}
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# Von außen erreichbar: öffentliche Seite, Steam-Anmeldung, Homepage-API, Einbetten, Overlays, Stream, Map-Downloads
+	@public path / /index.html /static/* /favicon.ico /api/public /api/public/* /api/me /api/logout /api/version /api/gameicons /api/appicon/* /api/applogo/* /api/logo/* /api/cache/games /auth/steam/* /c/* /j/* /embed/* /overlay/* /stream/* /fastdl/* /api/v1/*
+	# Verwaltung (Login, alle übrigen /api/…) nur, wenn GSM_ALLOW_ADMIN=1
+	@admin expression "{$GSM_ALLOW_ADMIN:0}" == "1"
+
+	handle @public {
+		reverse_proxy {$GSM_UPSTREAM:127.0.0.1:8090}
+	}
+	handle @admin {
+		reverse_proxy {$GSM_UPSTREAM:127.0.0.1:8090}
+	}
+	handle {
+		respond "Die Verwaltung ist nur im LAN erreichbar." 403
+	}
+}
