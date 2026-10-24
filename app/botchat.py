@@ -3,7 +3,7 @@
 - „stop“ / „keine Nachrichten mehr“ → keine Rundnachrichten und Ankündigungen mehr (mit „start“ wieder an)
 - „Vorschlag: …“ / „Idee …“ / „Verbesserung …“ → landet im Posteingang der Verwaltung (Steam-Bot)
 - „Server …“ / „Kannst du einen Valheim-Server anlegen?“ → Serverwunsch im Posteingang
-- „hilfe“ → kurze Übersicht; alles andere bekommt (höchstens alle 30 Minuten) dieselbe Übersicht
+- „hilfe“ → kurze Übersicht; alles, was er nicht versteht, beantwortet er ebenfalls mit der Übersicht
 
 Die Antworten gehen sofort zurück; Posteingang-Einträge lösen zusätzlich eine Benachrichtigung aus (wenn eingerichtet).
 """
@@ -16,7 +16,7 @@ from . import automation, notify, playerdb, steambot_ctl, store
 
 log = logging.getLogger("cs2rcon")
 INBOX = "botinbox.json"
-_help_sent: dict[str, float] = {}
+_help_sent: dict[str, list[float]] = {}
 
 RX_STOP = re.compile(r"\b(stop+|abmelden|abbestellen|unsubscribe|keine\s+(nachricht|nachrichten|infos?|werbung|rundmails?|mails?)"
                      r"|nicht\s+mehr\s+(an)?schreiben|schreib\s+mir\s+nicht|lass\s+mich\s+in\s+ruhe)\b", re.I)
@@ -133,13 +133,15 @@ async def handle(steamid: str, text: str) -> str | None:
         g = (GAMES.get(e.get("game") or "") or {}).get("label")
         return (f"🖥️ Danke – dein Wunsch nach einem {g}-Server ist bei der Orga angekommen. Sie melden sich, sobald er läuft."
                 if g else "🖥️ Danke – dein Serverwunsch ist bei der Orga angekommen. Schreib gern dazu, welches Spiel und für wie viele Leute.")
-    if RX_HELP.match(t):
-        _help_sent[steamid] = time.time()
-        return HELP.format(brand=automation.brand())
-    if time.time() - _help_sent.get(steamid, 0) > 1800:      # unbekannt: höchstens alle 30 min die Übersicht
-        _help_sent[steamid] = time.time()
-        return HELP.format(brand=automation.brand())
-    return None
+    # „hilfe“ oder nicht verstanden: immer die Übersicht – nur gegen Endlos-Pingpong (z. B. mit einem anderen Bot)
+    # höchstens 6 Antworten in 10 Minuten pro Person
+    now = time.time()
+    recent = [x for x in _help_sent.get(steamid, []) if now - x < 600]
+    if len(recent) >= 6:
+        return None
+    _help_sent[steamid] = recent + [now]
+    intro = "" if RX_HELP.match(t) else "🤔 Das habe ich leider nicht verstanden.\n\n"
+    return intro + HELP.format(brand=automation.brand())
 
 
 async def tick() -> None:
