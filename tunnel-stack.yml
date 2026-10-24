@@ -1,0 +1,16 @@
+# Cloudflare-Tunnel für den Spielservermanager: HTTPS von außen ohne Portfreigabe im Router.
+# Portainer → Stacks → Add stack → Repository (Compose path: tunnel-stack.yml) oder Web editor,
+# Variable TUNNEL_TOKEN = Token aus Cloudflare Zero Trust → Networks → Tunnels → (Tunnel) → Install connector.
+# Im Tunnel unter „Public Hostname“: z. B. live.eure-lan.de → Service HTTP → localhost:8090 (Port der Weboberfläche).
+# Von außen sind nur öffentliche Seite, Steam-Anmeldung, Homepage-API, Einbetten, Overlays, Stream und Map-Downloads
+# erreichbar – die Verwaltung bleibt im LAN (Einstellung „Verwaltung auch von außen“ unter Automatik & Einstellungen).
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: spielservermanager-tunnel
+    restart: unless-stopped
+    pull_policy: always
+    network_mode: host            # erreicht die Weboberfläche über localhost:<Port>
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?TUNNEL_TOKEN aus Cloudflare Zero Trust eintragen}

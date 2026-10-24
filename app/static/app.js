@@ -2074,7 +2074,7 @@ function renderAuto(){
   $("#setScanSubnets").value = settings.scan_subnets || "";
   $("#setGamesBase").value = settings.games_base || "/srv/gameserver"; $("#setBrand").value = settings.brand || "";
   $("#setCacheContainer").value = settings.cache_container || "";
-  $("#setEmergency").value = settings.emergency_login || "lan"; $("#setDefJoinPw").value = settings.default_join_pw || ""; $("#setDefAdminPw").value = settings.default_admin_pw || "";
+  $("#setEmergency").value = settings.emergency_login || "lan"; $("#setExternalUrl").value = settings.external_url || ""; $("#setExternalAdmin").checked = !!settings.external_admin; $("#setDefJoinPw").value = settings.default_join_pw || ""; $("#setDefAdminPw").value = settings.default_admin_pw || "";
   api("/api/cache/dir").then(r => {
     if (!r.container) { $("#cacheDirInfo").textContent = "Kein Lancache-Container gefunden."; $("#btnCacheDir").disabled = true; return; }
     $("#setCacheDir").value = r.base || settings.cache_dir || ""; $("#btnCacheDir").disabled = false;
@@ -2104,6 +2104,7 @@ $("#btnAutoSave").onclick = async () => {
       scan_interval: Math.max(0, parseInt($("#setScanInterval").value, 10) || 0), scan_subnets: $("#setScanSubnets").value.trim(),
       games_base: $("#setGamesBase").value.trim(), brand: $("#setBrand").value.trim() || "LAN", cache_container: $("#setCacheContainer").value.trim(),
       emergency_login: $("#setEmergency").value,
+      external_url: $("#setExternalUrl").value.trim(), external_admin: $("#setExternalAdmin").checked,
       default_join_pw: $("#setDefJoinPw").value.trim(), default_admin_pw: $("#setDefAdminPw").value.trim(),
       hostname_pattern: $("#setHostnamePattern").value.trim(), names_pattern: $("#setNamesPattern").value.trim(), internet_host: $("#setInternetHost").value.trim(), auto_bots: $("#setAutoBots").checked, auto_matchzy: $("#setAutoMz").checked, container_dns: $("#setContainerDns").value.trim(), port_range: $("#setPortRange").value.trim()}});
     renderAuto(); refreshModeSelects(); toast("Gespeichert – wird beim nächsten Prüfen angewendet");

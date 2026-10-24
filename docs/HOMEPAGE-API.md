@@ -232,6 +232,6 @@ const api = (path, body) => fetch("http://203.0.113.10:8090/api/v1" + path, {
 
 ## 6. Betrieb
 
-**HTTPS:** Eine https-Homepage darf keine http-Seiten einbetten, das blockiert der Browser als „Mixed Content“. Auch der API-Schlüssel sollte nicht unverschlüsselt durchs Internet gehen. Empfehlung: einen Reverse-Proxy mit Let's-Encrypt-Zertifikat vor das Tool setzen, z. B. Nginx Proxy Manager oder Caddy, mit einer Subdomain wie `live.example.org` auf Port 8090. Dann lauten die Adressen `https://live.example.org/api/v1` und `https://live.example.org/embed/…`.
+**HTTPS:** Eine https-Homepage darf keine http-Seiten einbetten („Mixed Content“), und der API-Schlüssel sollte nicht unverschlüsselt durchs Internet gehen. Empfehlung: Cloudflare-Tunnel – Anleitung in [`CLOUDFLARE.md`](CLOUDFLARE.md). Dann lauten die Adressen z. B. `https://live.example.org/api/v1` und `https://live.example.org/embed/…`.
 
 **Schlüssel tauschen:** Unter 🔌 API einen neuen Schlüssel erzeugen und in der Homepage eintragen, dann den alten löschen.

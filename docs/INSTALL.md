@@ -61,6 +61,7 @@ oder das Installationsskript erneut ausführen.
 | Lancache mitinstallieren? | nein | lokaler Download-Cache für Steam, Epic, Battle.net … |
 | Speicherort + Größe für den Cache | lokal im Benutzerordner, `1000g` | nur mit Lancache. Ist der Cache voll, fliegen die am längsten unbenutzten Spiele raus |
 | Upstream-DNS | `1.1.1.1 8.8.8.8` | nur mit Lancache: Der Lancache ist DNS-Server der Spieler-PCs; alles, was er nicht cacht (Webseiten, Logins …), fragt er bei diesen „vorgelagerten“ Servern nach. Cloudflare `1.1.1.1`, Google `8.8.8.8`, Quad9 `9.9.9.9` – oder die Router-IP, damit lokale Namen (NAS, Drucker) auflösbar bleiben |
+| HTTPS von außen (Cloudflare-Tunnel)? | nein | Token aus Cloudflare Zero Trust, siehe [CLOUDFLARE.md](CLOUDFLARE.md) – ohne Portfreigabe |
 
 Am Ende steht eine Zusammenfassung – erst nach „j“ wird installiert.
 
@@ -89,7 +90,7 @@ curl -fsSL https://github.com/JMJ1337/cs2-rcon-web/releases/latest/download/inst
        WITH_CACHE=1 CACHE_KIND=custom CACHE_DIR=/srv/lancache CACHE_SIZE=2000g UPSTREAM_DNS='1.1.1.1 8.8.8.8' bash
 ```
 
-Weitere Variablen: `BRAND` (Name der Veranstaltung), `GSM_VERSION` (z. B. `1.0.0`, Standard `latest`), `GSM_IMAGE`, `PORTAINER_IMAGE`.
+Weitere Variablen: `WITH_TUNNEL=1` + `TUNNEL_TOKEN` + `EXTERNAL_URL` (Cloudflare-Tunnel), `BRAND` (Name der Veranstaltung), `GSM_VERSION` (z. B. `1.0.0`, Standard `latest`), `GSM_IMAGE`, `PORTAINER_IMAGE`.
 
 ## Update
 

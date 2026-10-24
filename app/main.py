@@ -256,7 +256,7 @@ async def login(data: LoginIn, request: Request, response: Response):
         await asyncio.sleep(1.0)  # Brute-Force bremsen
         raise HTTPException(401, "Benutzername oder Passwort falsch")
     _login_fails.pop(keys[0], None)
-    response.set_cookie(COOKIE, make_token(u["username"]), httponly=True, samesite="strict",
+    response.set_cookie(COOKIE, make_token(u["username"]), httponly=True, secure=_is_https(request), samesite="strict",
                         max_age=SESSION_HOURS * 3600)
     return {"ok": True, "user": users.public(u)}
 
@@ -267,7 +267,7 @@ STEAM_OPENID = "https://steamcommunity.com/openid/login"
 
 def _base_url(request: Request) -> str:
     host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
-    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    proto = "https" if _is_https(request) else (request.headers.get("x-forwarded-proto") or request.url.scheme)
     return f"{proto}://{host}"
 
 
@@ -328,7 +328,7 @@ async def steam_return(request: Request):
     else:
         users.touch_login(u["username"])
     resp = RedirectResponse("/?steam=" + ("registriert" if new else "ok"), status_code=302)
-    resp.set_cookie(COOKIE, make_token(u["username"]), httponly=True, samesite="lax", max_age=SESSION_HOURS * 3600)
+    resp.set_cookie(COOKIE, make_token(u["username"]), httponly=True, secure=_is_https(request), samesite="lax", max_age=SESSION_HOURS * 3600)
     return resp
 
 
@@ -812,7 +812,7 @@ async def change_own_password(data: PwIn, request: Request, response: Response):
         raise HTTPException(400, "Altes Passwort falsch")
     users.upsert(u["username"], data.new_password, None)
     await asyncio.sleep(1.1)  # neues Token muss nach pw_changed liegen
-    response.set_cookie(COOKIE, make_token(u["username"]), httponly=True, samesite="strict",
+    response.set_cookie(COOKIE, make_token(u["username"]), httponly=True, secure=_is_https(request), samesite="strict",
                         max_age=SESSION_HOURS * 3600)
     return {"ok": True}
 
@@ -1236,16 +1236,37 @@ async def _matchzy_info(s: dict) -> dict:
 _wan: dict = {"ip": None, "t": 0.0}
 
 
-def client_ip(request: Request) -> str:
-    """IP des Besuchers – hinter einem Reverse-Proxy aus X-Forwarded-For."""
-    ip = request.client.host if request.client else ""
-    fwd = request.headers.get("x-forwarded-for") or request.headers.get("x-real-ip") or ""
+def _peer_private(request: Request) -> bool:
     try:
-        if fwd and ipaddress.ip_address(ip).is_private:
-            ip = fwd.split(",")[0].strip()
+        a = ipaddress.ip_address(request.client.host if request.client else "")
+        return a.is_private or a.is_loopback
     except ValueError:
-        pass
+        return False
+
+
+def via_tunnel(request: Request) -> bool:
+    """Anfrage kommt über den Cloudflare-Tunnel (cloudflared im LAN setzt Cf-Connecting-Ip)."""
+    return bool(request.headers.get("cf-connecting-ip")) and _peer_private(request)
+
+
+def client_ip(request: Request) -> str:
+    """IP des Besuchers – über Cloudflare aus Cf-Connecting-Ip, hinter einem eigenen Proxy aus dem letzten
+    X-Forwarded-For-Eintrag (den hängt der Proxy selbst an; frühere Einträge kann der Besucher fälschen)."""
+    ip = request.client.host if request.client else ""
+    if not _peer_private(request):
+        return ip
+    cf = (request.headers.get("cf-connecting-ip") or "").strip()
+    if cf:
+        return cf
+    fwd = request.headers.get("x-forwarded-for") or request.headers.get("x-real-ip") or ""
+    if fwd:
+        ip = fwd.split(",")[-1].strip() or ip
     return ip
+
+
+def _is_https(request: Request) -> bool:
+    return (request.headers.get("x-forwarded-proto") or request.url.scheme or "").lower() == "https" \
+        or '"https"' in (request.headers.get("cf-visitor") or "")
 
 
 def client_is_lan(request: Request) -> bool:
@@ -3311,6 +3332,8 @@ class SettingsIn(BaseModel):
     games_base: str | None = Field(None, max_length=200)
     brand: str | None = Field(None, max_length=40)
     emergency_login: str | None = Field(None, pattern="^(on|lan|off)$")
+    external_url: str | None = Field(None, max_length=200)
+    external_admin: bool | None = None
     cache_container: str | None = Field(None, max_length=100)
     cache_dir: str | None = Field(None, max_length=300)
     default_join_pw: str | None = Field(None, max_length=64)
@@ -3360,6 +3383,11 @@ async def put_settings(data: SettingsIn):
         if gb and not gb.startswith("/"):
             raise HTTPException(400, "Basisordner muss ein absoluter Pfad sein (z. B. /srv/gameserver)")
         payload["games_base"] = gb or "/srv/gameserver"
+    if "external_url" in payload:
+        eu = payload["external_url"].strip().rstrip("/")
+        if eu and not re.fullmatch(r"https?://[\w.-]+(:\d+)?", eu):
+            raise HTTPException(400, "Externe Adresse bitte als https://name.domain angeben")
+        payload["external_url"] = eu
     if "brand" in payload:
         payload["brand"] = re.sub(r'["\\;{}]', "", payload["brand"]).strip() or "LAN"
     if "cache_container" in payload:
@@ -3697,7 +3725,7 @@ async def steam_return(request: Request):
     if not playerdb.get(sid):
         playerdb.add_manual(sid, "", "")
     resp = RedirectResponse("/#turnier")
-    resp.set_cookie("gsm_steam", _sign_sid(sid), max_age=30 * 86400, httponly=True, samesite="lax")
+    resp.set_cookie("gsm_steam", _sign_sid(sid), max_age=30 * 86400, httponly=True, secure=_is_https(request), samesite="lax")
     return resp
 
 
@@ -9587,6 +9615,27 @@ def _docker_host_ip(request: Request | None = None) -> str:
 _seen_hosts: list[str] = []
 
 
+# Von außen (über den Cloudflare-Tunnel) nur die öffentlichen Teile – Verwaltung nur im LAN (abschaltbar)
+_PUBLIC_EXACT = {"/", "/index.html", "/favicon.ico", "/api/public", "/api/me", "/api/logout", "/api/version",
+                 "/api/gameicons", "/api/cache/games"}
+_PUBLIC_PREFIX = ("/static/", "/api/public/", "/api/appicon/", "/api/applogo/", "/api/logo/", "/auth/steam/", "/c/", "/j/",
+                  "/embed/", "/overlay/", "/stream/", "/fastdl/", "/api/v1/")
+
+
+def external_allowed(path: str) -> bool:
+    return path in _PUBLIC_EXACT or path.startswith(_PUBLIC_PREFIX)
+
+
+@app.middleware("http")
+async def tunnel_gate(request: Request, call_next):
+    if via_tunnel(request) and not external_allowed(request.url.path) \
+            and not automation.get_settings().get("external_admin"):
+        if request.url.path.startswith("/api/"):
+            return JSONResponse({"detail": "Die Verwaltung ist nur im LAN erreichbar."}, status_code=403)
+        return _Resp(content="Die Verwaltung ist nur im LAN erreichbar.", media_type="text/plain", status_code=403)
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def remember_host(request: Request, call_next):
     h = request.url.hostname or ""
@@ -9855,7 +9904,7 @@ class ApiOptIn(BaseModel):
 @app.get("/api/apikeys", dependencies=auth)
 async def apikeys_list(request: Request):
     _need_admin(request)
-    return {**extapi.list_keys(), "base": str(request.base_url).rstrip("/")}
+    return {**extapi.list_keys(), "base": (automation.get_settings().get("external_url") or str(request.base_url)).rstrip("/")}
 
 
 @app.post("/api/apikeys", dependencies=auth)

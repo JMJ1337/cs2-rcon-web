@@ -35,7 +35,9 @@ DEFAULT_SETTINGS = {
     "scan_interval": 15,        # Minuten, 0 = aus
     "scan_subnets": "",         # zusätzliche Netze, z. B. "192.168.1.0/24"
     "brand": "LAN",
-    "emergency_login": "lan",   # Notzugang admin + ADMIN_PASSWORD: on | lan (nur aus dem LAN) | off             # Name der Veranstaltung – erscheint in Servernamen, Titeln, Benachrichtigungen ({brand})
+    "emergency_login": "lan",
+    "external_url": "",         # öffentliche HTTPS-Adresse (z. B. Cloudflare-Tunnel), nur zur Anzeige/für Links
+    "external_admin": False,    # Verwaltung auch über den Tunnel von außen erlauben   # Notzugang admin + ADMIN_PASSWORD: on | lan (nur aus dem LAN) | off             # Name der Veranstaltung – erscheint in Servernamen, Titeln, Benachrichtigungen ({brand})
     "games_base": "/srv/gameserver",   # Basisordner für neue Spielserver (z. B. NAS-Mount auf dem Docker-Host)
     "cache_container": "",      # Lancache-Container (leer = automatisch erkennen)
     "hostname_pattern": "{brand} CS #{nr} {mode}",       # CS2-Servername nach Modus (leer = aus)
@@ -117,7 +119,7 @@ def get_settings() -> dict:
 def save_settings(data: dict) -> dict:
     cur = get_settings()
     for k in ("modes", "map_rules", "public_url", "internet_host", "watch_interval", "scan_interval", "scan_subnets",
-              "games_base", "brand", "emergency_login", "cache_container", "cache_dir", "default_join_pw", "default_admin_pw", "cs2_template_src", "hostname_pattern", "names_pattern", "container_dns", "auto_bots", "auto_matchzy", "port_range"):
+              "games_base", "brand", "emergency_login", "external_url", "external_admin", "cache_container", "cache_dir", "default_join_pw", "default_admin_pw", "cs2_template_src", "hostname_pattern", "names_pattern", "container_dns", "auto_bots", "auto_matchzy", "port_range"):
         if k in data:
             cur[k] = data[k]
     store.save(SETTINGS_FILE, cur)

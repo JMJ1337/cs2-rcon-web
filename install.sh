@@ -203,6 +203,15 @@ if [ "$WITH_CACHE" = 1 ]; then
   ask UPSTREAM_DNS "Lancache" "Upstream-DNS (mehrere durch Leerzeichen getrennt)\n\nDer Lancache ist der DNS-Server für die Spieler-PCs. Alles, was nicht gecacht wird (Webseiten, Spiele-Logins …), fragt er bei diesen „vorgelagerten“ DNS-Servern nach.\n\n  1.1.1.1 = Cloudflare, 8.8.8.8 = Google, 9.9.9.9 = Quad9\n  oder die IP deines Routers (z. B. 192.168.1.1), wenn lokale Namen (NAS, Drucker) auflösbar bleiben sollen." "1.1.1.1 8.8.8.8"
 fi
 
+yesno WITH_TUNNEL "HTTPS von außen" "Zugang aus dem Internet per Cloudflare-Tunnel (HTTPS) einrichten?\n\nDamit erreichen eure Homepage und Besucher die öffentliche Seite, die Homepage-API, eingebettete Turnierbäume, Overlays und Map-Downloads verschlüsselt unter z. B. https://live.eure-lan.de – OHNE Portfreigabe im Router (der Tunnel baut die Verbindung von innen nach außen auf). Die Verwaltung bleibt im LAN.\n\nVoraussetzung: eine Domain bei Cloudflare (kostenloses Konto). Kann auch später nachgeholt werden (tunnel-stack.yml, docs/CLOUDFLARE.md)." n
+if [ "$WITH_TUNNEL" = 1 ]; then
+  ask TUNNEL_TOKEN "Cloudflare-Tunnel" "Tunnel-Token\n\nCloudflare-Dashboard → Zero Trust → Networks → Tunnels → „Create a tunnel“ → Cloudflared → Namen vergeben → bei „Install connector“ den langen Token hinter „--token“ kopieren (beginnt meist mit eyJ…).\n\nDanach im Tunnel unter „Public Hostname“: Subdomain + Domain wählen, Service HTTP, URL localhost:$GSM_PORT." ""
+  TUNNEL_TOKEN=$(printf '%s' "$TUNNEL_TOKEN" | sed -E 's/.*--token[ =]+//; s/[[:space:]]//g')
+  [ ${#TUNNEL_TOKEN} -ge 40 ] || die "Tunnel-Token fehlt oder ist zu kurz"
+  ask EXTERNAL_URL "Cloudflare-Tunnel" "Öffentliche Adresse, wie im Tunnel unter „Public Hostname“ eingetragen\n\nz. B. https://live.eure-lan.de (nur zur Anzeige in der Weboberfläche, kann leer bleiben)" ""
+  case "$EXTERNAL_URL" in ""|https://*) ;; *) EXTERNAL_URL="https://${EXTERNAL_URL#http://}" ;; esac
+fi
+
 storage_text() {   # storage_text PREFIX
   local k d; k=$(eval echo \${${1}_KIND}); d=$(eval echo \${${1}_DIR})
   case "$k" in
@@ -221,6 +230,8 @@ Neue Spielserver bekommen Beitritts- und RCON-Passwort 123456789
 [ "$WITH_CACHE" = 1 ] && SUMMARY="$SUMMARY
 Lancache:       $(storage_text CACHE), max. $CACHE_SIZE
                 DNS auf $LAN_IP:53"
+[ "$WITH_TUNNEL" = 1 ] && SUMMARY="$SUMMARY
+Von außen:      Cloudflare-Tunnel ${EXTERNAL_URL:-(Adresse im Cloudflare-Dashboard)}"
 if [ "$INTERACTIVE" = 1 ]; then
   yesno GO "Zusammenfassung" "$SUMMARY\n\nJetzt installieren?" j
   [ "$GO" = 1 ] || die "Abgebrochen"
@@ -467,6 +478,23 @@ TZ_HOST=$(cat /etc/timezone 2>/dev/null || timedatectl show -p Timezone --value 
 deploy_stack "$STACK_GSM" "$GSM_COMPOSE" "$(jq -n --arg i "$GSM_IMAGE" --arg p "$GSM_PASSWORD" --arg w "$GSM_PORT" --arg t "${TZ_HOST:-Europe/Berlin}" \
   '[{name:"IMAGE",value:$i},{name:"ADMIN_PASSWORD",value:$p},{name:"WEB_PORT",value:$w},{name:"TZ",value:$t}]')"
 
+if [ "$WITH_TUNNEL" = 1 ]; then
+  TUNNEL_COMPOSE=$(cat <<'YML'
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: spielservermanager-tunnel
+    restart: unless-stopped
+    pull_policy: always
+    network_mode: host
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+YML
+)
+  deploy_stack "spielservermanager-tunnel" "$TUNNEL_COMPOSE" "$(jq -n --arg t "$TUNNEL_TOKEN" '[{name:"TUNNEL_TOKEN",value:$t}]')"
+fi
+
 G="http://127.0.0.1:$GSM_PORT"
 for _ in $(seq 1 90); do curl -sf "$G/api/version" >/dev/null && break; sleep 2; done
 curl -sf "$G/api/version" >/dev/null || die "Spielservermanager startet nicht (docker logs spielservermanager)"
@@ -483,7 +511,7 @@ if ! gsm_login "$GSM_USER" && ! gsm_login admin; then
 fi
 if [ "${GSM_SKIP_SETUP:-0}" != 1 ]; then
   curl -sf -b "$JAR" -X PUT "$G/api/settings" -H 'Content-Type: application/json' \
-    -d "$(jq -n --arg g "$GAMES_DIR" --arg b "$BRAND" --arg c "${CACHE_DIR:-}" '{games_base:$g, brand:$b} + (if $c != "" then {cache_dir:$c} else {} end)')" >/dev/null \
+    -d "$(jq -n --arg g "$GAMES_DIR" --arg b "$BRAND" --arg c "${CACHE_DIR:-}" --arg e "${EXTERNAL_URL:-}" '{games_base:$g, brand:$b} + (if $c != "" then {cache_dir:$c} else {} end) + (if $e != "" then {external_url:$e} else {} end)')" >/dev/null \
     && ok "Spielserver-Ordner: $GAMES_DIR" || warn "Spielserver-Ordner konnte nicht gesetzt werden"
 fi
 if [ "$GSM_USER" != "admin" ] && [ "${GSM_SKIP_SETUP:-0}" != 1 ]; then
@@ -515,6 +543,7 @@ printf '%s\n' "${c_ok}${c_b}Fertig!${c_0}"
 echo
 printf '  Spielservermanager:  %shttp://%s:%s%s   (Benutzer %s)\n' "$c_b" "$LAN_IP" "$GSM_PORT" "$c_0" "$GSM_USER"
 printf '  Portainer:           https://%s:9443   (Benutzer %s)\n' "$LAN_IP" "$PORTAINER_USER"
+[ "$WITH_TUNNEL" = 1 ] && printf '  Von außen (HTTPS):   %s   (Cloudflare-Tunnel; Public Hostname → HTTP localhost:%s; eine Portfreigabe der Weboberfläche im Router schließen)\n' "${EXTERNAL_URL:-siehe Cloudflare-Dashboard}" "$GSM_PORT"
 [ "$WITH_CACHE" = 1 ] && printf '  Lancache:            DNS-Server der Clients/DHCP auf %s stellen\n' "$LAN_IP"
 echo
 printf '%s\n' "  Updates: Portainer → Stacks → $STACK_GSM → „Update the stack“ mit „Re-pull image“ (oder dieses Skript erneut ausführen)."

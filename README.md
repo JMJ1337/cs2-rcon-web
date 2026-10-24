@@ -39,6 +39,7 @@ Außerdem:
 - **Spiele-Basisordner:** Neue Server landen unter `/srv/gameserver/<spiel>/<name>` (einstellbar, der Installer fragt danach).
   Ein NAS dafür auf dem Docker-Host dauerhaft mounten, z. B. per `/etc/fstab`:
   `192.168.1.5:/volume1/spielserver  /srv/gameserver  nfs  defaults,_netdev,nofail  0  0`
+- **HTTPS von außen:** per Cloudflare-Tunnel ohne Portfreigabe – nur öffentliche Seite, Homepage-API, Einbetten, Overlays und Map-Downloads, Verwaltung bleibt im LAN. Anleitung: [`docs/CLOUDFLARE.md`](docs/CLOUDFLARE.md)
 - **Name der Veranstaltung** (*Automatik & Einstellungen*): erscheint in Servernamen (`{brand}`), Titeln und Benachrichtigungen.
 - **Standard-Passwörter:** Bei einer Neuinstallation bekommen neue Spielserver das Beitritts- und RCON-Passwort `123456789` –
   unter *Automatik & Einstellungen* ändern.
