@@ -178,7 +178,8 @@ def load() -> list[dict]:
 
 
 def public(u: dict) -> dict:
-    return {k: u.get(k) for k in ("username", "role", "created", "last_login", "note", "steamid", "pending", "steam_name")} | {"profiles": user_profiles(u),
+    return {k: u.get(k) for k in ("username", "role", "created", "last_login", "note", "steamid", "pending", "steam_name",
+                                  "nick", "email", "external_id", "source")} | {"profiles": user_profiles(u),
         "rights": effective_rights(u), "own_rights": [r for r in (u.get("rights") or []) if r in RIGHTS],
         "role_label": ROLE_LABELS.get(u.get("role"), ""),
         "own_perms": u.get("perms") or {}, "public_only": public_only(u),
@@ -277,7 +278,10 @@ def find_by_steam(steamid: str) -> dict | None:
 
 def _free_name(base: str, users: list[dict]) -> str:
     import re as _re
-    b = _re.sub(r"[^a-z0-9._-]", "", (base or "").lower().replace(" ", "_"))[:24] or "spieler"
+    t = (base or "").lower().replace(" ", "_")
+    for x, y in (("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss")):
+        t = t.replace(x, y)
+    b = _re.sub(r"[^a-z0-9._-]", "", t).strip("._-")[:24] or "spieler"
     name, n = b, 2
     while any(x["username"] == name for x in users):
         name, n = f"{b}{n}", n + 1
@@ -293,6 +297,64 @@ def register_steam(steamid: str, steam_name: str) -> dict:
     users.append(u)
     store.save(FILE, users)
     return u
+
+
+# ---------------------------------------------------------------- Konten von der Homepage (Homepage-API)
+def find_external(external_id: str) -> dict | None:
+    return next((u for u in load() if external_id and u.get("external_id") == external_id), None)
+
+
+def upsert_external(d: dict) -> tuple[dict, bool]:
+    """Konto von der Homepage anlegen oder aktualisieren. Neue Konten sehen nur die öffentliche Seite.
+    Rolle, Rechte und Profile bestehender Konten bleiben unverändert – die vergibt der Admin im Spielservermanager.
+    Zuordnung: external_id, sonst SteamID (verknüpft ein vorhandenes Konto, z. B. aus der Steam-Registrierung)."""
+    import re as _re
+    users = load()
+    ext = d["external_id"]
+    sid = d.get("steamid") or ""
+    u = next((x for x in users if x.get("external_id") == ext), None)
+    if u is None and sid:
+        u = next((x for x in users if x.get("steamid") == sid and not x.get("external_id")), None)
+    if sid:
+        other = next((x for x in users if x.get("steamid") == sid and x is not u), None)
+        if other:
+            raise ValueError(f"Die SteamID gehört schon zum Konto „{other['username']}“")
+    created = u is None
+    if created:
+        want = (d.get("username") or d.get("nick") or "").strip().lower()
+        name = want if want and _re.fullmatch(r"[a-z0-9._-]{1,32}", want) and not any(x["username"] == want for x in users) \
+            else _free_name(want or d.get("nick") or f"user{ext[-6:]}", users)
+        u = {"username": name, "role": "user", "created": int(time.time()), "last_login": None,
+             "profiles": [PUBLIC_PROFILE["id"]], "hash": _hash(secrets.token_urlsafe(24)), "pw_changed": 0}
+        users.append(u)
+    u["external_id"] = ext
+    u.setdefault("source", "homepage")
+    for k, n in (("nick", 64), ("email", 120), ("note", 80)):
+        if d.get(k) is not None:
+            v = str(d[k]).strip()[:n]
+            if v:
+                u[k] = v
+            else:
+                u.pop(k, None)
+    if sid:
+        u["steamid"] = sid
+        if d.get("nick"):
+            u["steam_name"] = u.get("steam_name") or d["nick"][:64]
+    if d.get("password"):
+        u["hash"] = _hash(d["password"])
+        u["pw_changed"] = int(time.time())
+    store.save(FILE, users)
+    return u, created
+
+
+def delete_external(external_id: str) -> str | None:
+    u = find_external(external_id)
+    if not u:
+        return None
+    if u.get("role") == "admin":
+        raise ValueError("Administrator-Konten lassen sich nicht über die API löschen")
+    delete(u["username"])
+    return u["username"]
 
 
 def touch_login(username: str) -> None:

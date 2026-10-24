@@ -1,8 +1,8 @@
-"""Externe API (/api/v1) für die Homepage: Turnier (Status, Anmeldung, Teams), Zuschauen/Stream, Steam-Bot.
+"""Externe API (/api/v1) für die Homepage: Turnier (Status, Anmeldung, Teams, Anlegen), Benutzerkonten, Zuschauen/Stream, Steam-Bot.
 
 Zugriff mit API-Schlüssel (Header „X-API-Key: …“ oder „Authorization: Bearer …“), angelegt in der Verwaltung unter
-„🔌 API“. Jeder Schlüssel hat Rechte: tournament (lesen + Anmeldung), bot (Nachrichten, Einladungen, Freunde),
-stream (lesen). Nur-lesen-Endpunkte für Turnier und Stream gehen ohne Schlüssel, wenn „öffentlich lesbar“ an ist.
+„🔌 API“. Jeder Schlüssel hat Rechte: tournament (lesen + Anmeldung), organize (Turniere anlegen/einstellen),
+users (Benutzerkonten von der Homepage anlegen/aktualisieren), bot (Nachrichten, Einladungen, Freunde), stream (lesen). Nur-lesen-Endpunkte für Turnier und Stream gehen ohne Schlüssel, wenn „öffentlich lesbar“ an ist.
 Die Homepage ruft die API vom eigenen Server aus auf (Schlüssel nie im Browser!) und reicht die SteamID des
 angemeldeten Homepage-Nutzers mit.
 """
@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from . import store
 
 FILE = "apikeys.json"
-SCOPES = ("tournament", "bot", "stream")
+SCOPES = ("tournament", "organize", "users", "bot", "stream")
 router = APIRouter(prefix="/api/v1", tags=["Homepage-API"])
 
 
@@ -381,3 +381,155 @@ async def v1_bot_invite(data: InviteIn):
     txt = (head + "\n" if head else "") + f"Verbinden: {addr}" + (f"\nPasswort: {data.password}" if data.password else "") + \
         f"\nIn der CS2-Konsole: connect {addr}" + (f"; password {data.password}" if data.password else "")
     return await _send(data.steamids, txt)
+
+
+# ---------------------------------------------------------------- Turniere anlegen und einstellen (Recht „organize“)
+class TourSetIn(BaseModel):
+    name: str | None = Field(None, max_length=60)
+    mode: str | None = Field(None, description="ko | double | groups | rr")
+    start: float | None = Field(None, description="geplanter Start (Unix-Sekunden)")
+    registration: bool | None = None
+    maps: list[str] | None = Field(None, max_length=20)
+    match_min: int | None = Field(None, ge=10, le=180)
+    pause_min: int | None = Field(None, ge=0, le=60)
+
+
+class TourCreateIn(TourSetIn):
+    template: str | None = Field(None, max_length=40, description="ID einer Turniervorlage aus GET /tournament/options")
+
+
+def _tour_apply(M, d: dict, data: TourSetIn) -> None:
+    for k, v in data.model_dump(exclude_none=True).items():
+        if k == "template":
+            continue
+        if k == "mode" and v not in M.tour.MODES:
+            raise HTTPException(400, "Unbekannter Modus – erlaubt: " + ", ".join(M.tour.MODES))
+        if k == "maps":
+            v = [re.sub(r"[^\w\-/]", "", x) for x in v if x.strip()][:20] or M.tour.WINGMAN_MAPS
+        if k == "name":
+            v = re.sub(r'["\\;]', "", v).strip()[:60] or d.get("name")
+        d[k] = v
+
+
+@router.get("/tournament/options", dependencies=[Depends(auth("organize"))])
+async def v1_tour_options():
+    """Modi, Vorlagen und Standard-Maps – für das Formular „Turnier anlegen“ auf der Homepage."""
+    M = _M()
+    return {"modes": M.tour.MODES, "maps_default": M.tour.WINGMAN_MAPS,
+            "templates": [{"id": t["id"], "name": t.get("name")} for t in M.tour.templates()]}
+
+
+@router.post("/tournament/new", dependencies=[Depends(auth("organize"))])
+async def v1_tour_new(data: TourCreateIn):
+    """Neues Turnier anlegen (das bisherige wird im Archiv gespeichert). Spielplan und Start macht die Turnierleitung."""
+    M = _M()
+    d = M.tour.load()
+    if M._tour_busy(d) or M._tour_test(d):
+        raise HTTPException(409, "Das aktuelle Turnier läuft – erst im Spielservermanager anhalten")
+    if data.template and not any(t["id"] == data.template for t in M.tour.templates()):
+        raise HTTPException(400, "Vorlage nicht gefunden")
+    if M._tour_has_content(d):
+        M.tour.lib_save(d)
+    new = M.tour.new_from(data.template)
+    new["name"] = f"{M.automation.brand()} Wingman-Turnier" if not data.name and not data.template else new["name"]
+    _tour_apply(M, new, data)
+    new["via"] = "homepage"
+    M._tour_names.clear()
+    M.tour.save(new)
+    return {"ok": True, "tournament": {k: new.get(k) for k in ("name", "mode", "start", "registration", "maps", "match_min", "pause_min", "status")}}
+
+
+@router.put("/tournament", dependencies=[Depends(auth("organize"))])
+async def v1_tour_set(data: TourSetIn):
+    """Einstellungen des aktuellen Turniers ändern (z. B. Anmeldung öffnen/schließen, Startzeit, Maps)."""
+    M = _M()
+    d = M.tour.load()
+    if d.get("status") == "running" and (data.mode or data.maps):
+        raise HTTPException(409, "Modus und Maps lassen sich während des Turniers nicht ändern")
+    _tour_apply(M, d, data)
+    if d["matches"] and d["status"] != "done":
+        M.tour.plan(d)
+    M.tour.save(d)
+    return {"ok": True, "tournament": {k: d.get(k) for k in ("name", "mode", "start", "registration", "maps", "match_min", "pause_min", "status")}}
+
+
+# ---------------------------------------------------------------- Benutzerkonten von der Homepage (Recht „users“)
+class UserSyncIn(BaseModel):
+    external_id: str = Field(min_length=1, max_length=64, pattern=r"^[\w.@:+-]+$", description="eindeutige Nutzer-ID der Homepage")
+    username: str | None = Field(None, max_length=32, description="gewünschter Benutzername (a–z, 0–9, . _ -), sonst aus nick")
+    nick: str | None = Field(None, max_length=64, description="Anzeigename / Nickname")
+    email: str | None = Field(None, max_length=120, pattern=r"^$|^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    steamid: str | None = Field(None, pattern=r"^$|^\d{17}$", description="SteamID64 – damit klappt auch „Mit Steam anmelden“")
+    avatar: str | None = Field(None, max_length=300, pattern=r"^$|^https://")
+    password: str | None = Field(None, min_length=8, max_length=128, description="optional: Login mit Benutzername + Passwort")
+    note: str | None = Field(None, max_length=80)
+
+
+class UserBulkIn(BaseModel):
+    users: list[UserSyncIn] = Field(max_length=500)
+
+
+def _user_out(M, u: dict, created: bool | None = None) -> dict:
+    out = {"external_id": u.get("external_id"), "username": u["username"], "nick": u.get("nick"), "email": u.get("email"),
+           "steamid": u.get("steamid"), "public_only": M.users.public_only(u), "profiles": M.users.user_profiles(u),
+           "role": u.get("role"), "created_at": u.get("created"), "last_login": u.get("last_login")}
+    if created is not None:
+        out["created"] = created
+    return out
+
+
+def _sync_user(M, data: UserSyncIn) -> dict:
+    try:
+        u, created = M.users.upsert_external(data.model_dump())
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    if data.steamid:                                          # Spieler-Eintrag (Name, Bild, Admin je Spiel) verknüpfen
+        p = M.playerdb.get(data.steamid)
+        if p is None:
+            p = M.playerdb.add_manual(data.steamid, data.nick or "", data.avatar or "")
+        if not p.get("user") or not M.users.find(p["user"]):
+            M.playerdb.update(p["id"], {"user": u["username"]})
+    return _user_out(M, u, created)
+
+
+@router.post("/users", dependencies=[Depends(auth("users"))])
+async def v1_user_sync(data: UserSyncIn):
+    """Konto anlegen oder aktualisieren. Neue Konten sehen nur die öffentliche Seite, bis ein Admin Rechte vergibt."""
+    return _sync_user(_M(), data)
+
+
+@router.post("/users/bulk", dependencies=[Depends(auth("users"))])
+async def v1_user_bulk(data: UserBulkIn):
+    """Viele Konten auf einmal (max. 500) – Fehler einzelner Einträge brechen den Rest nicht ab."""
+    M, res = _M(), []
+    for x in data.users:
+        try:
+            res.append({"ok": True, **_sync_user(M, x)})
+        except HTTPException as e:
+            res.append({"ok": False, "external_id": x.external_id, "error": e.detail})
+    return {"results": res, "created": sum(1 for r in res if r.get("created")), "failed": sum(1 for r in res if not r["ok"])}
+
+
+@router.get("/users/{external_id}", dependencies=[Depends(auth("users"))])
+async def v1_user_get(external_id: str):
+    M = _M()
+    u = M.users.find_external(external_id)
+    if not u:
+        raise HTTPException(404, "Kein Konto mit dieser external_id")
+    return _user_out(M, u)
+
+
+@router.delete("/users/{external_id}", dependencies=[Depends(auth("users"))])
+async def v1_user_delete(external_id: str):
+    """Konto löschen (z. B. wenn es auf der Homepage gelöscht wurde). Administratoren sind geschützt."""
+    M = _M()
+    try:
+        name = M.users.delete_external(external_id)
+    except ValueError as e:
+        raise HTTPException(403, str(e))
+    if not name:
+        raise HTTPException(404, "Kein Konto mit dieser external_id")
+    for p in M.playerdb.all_players():
+        if p.get("user") == name:
+            M.playerdb.update(p["id"], {"user": ""})
+    return {"ok": True, "username": name}

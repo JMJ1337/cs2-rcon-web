@@ -2759,7 +2759,7 @@ function renderPending(){
 }
 function renderUserCards(){
   const f = $("#uFilter").value.trim().toLowerCase();
-  const list = U.users.filter(u => !u.pending && (!f || [u.username, u.note, u.player, ...uProfs(u).map(p => p.name)].filter(Boolean).join(" ").toLowerCase().includes(f))
+  const list = U.users.filter(u => !u.pending && (!f || [u.username, u.note, u.player, u.nick, u.email, u.source === "homepage" ? "homepage" : "", ...uProfs(u).map(p => p.name)].filter(Boolean).join(" ").toLowerCase().includes(f))
     && (!uProfFilter || (u.profiles || []).includes(uProfFilter)));
   $("#uCount").textContent = `${U.users.length}${list.length !== U.users.length ? ` · ${list.length} angezeigt` : ""}`;
   for (const n of [...uSel]) if (!U.users.some(u => u.username === n)) uSel.delete(n);
@@ -2769,7 +2769,7 @@ function renderUserCards(){
       <div class="uch">${adm ? "" : `<input type="checkbox" data-usel="${esc(u.username)}" ${uSel.has(u.username) ? "checked" : ""} style="width:auto">`}
         ${uAvatar(u, adm)}
         <div class="ucn"><b>${esc(u.username)}</b>${me && u.username === me.username ? ' <span class="pill">du</span>' : ""}
-          <div class="hint">${esc(u.note || "")}${u.player ? `${u.note ? " · " : ""}🎮 ${esc(u.player)}` : ""}</div></div>
+          <div class="hint">${[u.source === "homepage" ? "🌐 Homepage" : "", u.nick && u.nick !== u.username ? esc(u.nick) : "", u.email ? esc(u.email) : "", esc(u.note || ""), u.player ? `🎮 ${esc(u.player)}` : ""].filter(Boolean).join(" · ")}</div></div>
         <span class="ubadges">${adm ? `<span class="ubadge" style="--c:#e5534b">Administrator</span>` : prs.length ? prs.map(p => `<span class="ubadge" style="--c:${esc(p.color || "#6b7a8f")}">${esc(p.name)}</span>`).join("") : `<span class="ubadge">${u.public_only ? "🌐 nur öffentliche Seite" : u.role === "viewer" ? "Nur ansehen" : "ohne Profil"}</span>`}</span></div>
       <div class="lvchips">${adm ? `<span class="lvchip" style="--c:#e5534b">alles</span>` : permChips(u.perms) + ((u.rights || []).includes("tournament") ? `<span class="lvchip" style="--c:#d9a441">🏆 Turnier</span>` : "")}
         ${own && !adm ? `<span class="hint" title="eigene Abweichungen vom Profil">✱ ${own} Abweichung${own > 1 ? "en" : ""}</span>` : ""}</div>
@@ -4670,7 +4670,7 @@ async function refreshPubStream(){
 setInterval(() => { if (!$("#pub").classList.contains("hidden") && !document.hidden) refreshPubStream(); }, 10000);
 
 // --- Homepage-API: Schlüssel und Optionen
-const SCOPE_L = {tournament: "Turnier", stream: "Stream", bot: "Steam-Bot"};
+const SCOPE_L = {tournament: "Turnier", organize: "Turniere anlegen", users: "Benutzerkonten", stream: "Stream", bot: "Steam-Bot"};
 async function loadApi(){
   let r; try { r = await api("/api/apikeys"); } catch (e) { return toast(e.message, true); }
   $("#apiKeys").innerHTML = r.keys.length ? `<table class="tbl"><thead><tr><th>Name</th><th>Schlüssel</th><th>Rechte</th><th>Angelegt</th><th>Zuletzt benutzt</th><th></th></tr></thead><tbody>${r.keys.map(k => `<tr>

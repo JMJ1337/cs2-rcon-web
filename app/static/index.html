@@ -537,6 +537,8 @@
           <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">
             <input id="apiName" placeholder="Name, z. B. Homepage" maxlength="60" style="width:200px">
             <label><input type="checkbox" class="apiScope" value="tournament" checked> Turnier</label>
+            <label><input type="checkbox" class="apiScope" value="organize"> Turniere anlegen</label>
+            <label><input type="checkbox" class="apiScope" value="users"> Benutzerkonten</label>
             <label><input type="checkbox" class="apiScope" value="stream" checked> Stream</label>
             <label><input type="checkbox" class="apiScope" value="bot"> Steam-Bot</label>
             <button class="primary small" id="apiCreate">Schlüssel erzeugen</button>
@@ -1153,6 +1155,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=188"></script>
+<script src="/static/app.js?v=189"></script>
 </body>
 </html>

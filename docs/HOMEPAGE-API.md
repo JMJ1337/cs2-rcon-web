@@ -3,6 +3,8 @@
 Mit dieser API kann eure Homepage folgende Dinge nutzen:
 
 - **Turnier:** Status, Spielplan, Ergebnisse und Live-Spielstände lesen. Spieler an- und abmelden, Teams gründen, beitreten und verlassen.
+- **Turniere anlegen:** neues Turnier mit Name, Modus, Startzeit, Maps; Anmeldung öffnen und schließen.
+- **Benutzerkonten:** Nutzer der Homepage im Spielservermanager anlegen und aktuell halten – sie sehen zunächst nur die öffentliche Seite.
 - **Zuschauen:** Live-Stream und CSTV-Adressen der laufenden Spiele abrufen, außerdem fertige Seiten zum Einbetten (iframe).
 - **Steam-Bot:** Nachrichten, Einladungen zu Spielen und Freundschaftsanfragen, z. B. für das Finalturnier.
 
@@ -12,7 +14,7 @@ Mit dieser API kann eure Homepage folgende Dinge nutzen:
 
 | | |
 |---|---|
-| **Basis-URL** | `https://<tool-adresse>/api/v1`, z. B. `http://203.0.113.10:8090/api/v1`. Im Betrieb empfehlen wir HTTPS, siehe Abschnitt 6. |
+| **Basis-URL** | `https://<tool-adresse>/api/v1`, z. B. `https://live.example.org/api/v1`. Von außen über HTTPS (Cloudflare-Tunnel), siehe Abschnitt 7. |
 | **Schlüssel** | Wird im Spielservermanager unter **🔌 API** erzeugt und nur einmal angezeigt. |
 | **Header** | `X-API-Key: gsm_…`, alternativ `Authorization: Bearer gsm_…` |
 | **Format** | JSON hin und zurück (`Content-Type: application/json`) |
@@ -22,6 +24,8 @@ Jeder Schlüssel hat eines oder mehrere Rechte:
 | Recht | erlaubt |
 |---|---|
 | `tournament` | Turnier lesen, Spieler an- und abmelden, Teams verwalten, Serverliste lesen |
+| `organize` | Turniere anlegen und einstellen (Name, Modus, Start, Maps, Anmeldung) |
+| `users` | Benutzerkonten anlegen, aktualisieren, abfragen und löschen |
 | `stream` | Stream-Status lesen |
 | `bot` | Steam-Bot: Status, Freunde, Freundschaftsanfrage, Nachricht, Einladung |
 
@@ -131,7 +135,88 @@ Die Adressen sind die öffentlichen.
 
 ---
 
-## 3. Zuschauen und Stream
+### Turnier anlegen und einstellen (Recht `organize`)
+
+| Methode | Pfad | Body | Ergebnis |
+|---|---|---|---|
+| GET | `/tournament/options` | – | `{"modes": {"ko": "K.-o.-System", "double": "Doppel-K.-o.", "groups": "Gruppen + K.-o.", "rr": "Jeder gegen jeden"}, "maps_default": [...], "templates": [{"id", "name"}]}` |
+| POST | `/tournament/new` | siehe unten | neues Turnier; das bisherige wird im Archiv gespeichert. `409`, solange ein Turnier läuft. |
+| PUT | `/tournament` | dieselben Felder, alle optional | Einstellungen des aktuellen Turniers ändern, z. B. `{"registration": false}` |
+
+```json
+{"name": "Winter-Cup 2026", "mode": "groups", "start": 1795000000, "registration": true,
+ "maps": ["de_inferno", "de_nuke"], "match_min": 35, "pause_min": 10, "template": null}
+```
+
+| Feld | Bedeutung |
+|---|---|
+| `name` | bis 60 Zeichen |
+| `mode` | `ko`, `double`, `groups` oder `rr` |
+| `start` | geplanter Start (Unix-Sekunden) |
+| `registration` | Anmeldung offen (`true`) oder geschlossen |
+| `maps` | Map-Pool, bis 20 Maps |
+| `match_min` / `pause_min` | geplante Spieldauer und Pause in Minuten (für den Zeitplan) |
+| `template` | optional: ID einer im Spielservermanager gespeicherten Vorlage (nur bei `/tournament/new`) |
+
+Spielplan erstellen und Turnier starten macht weiterhin die Turnierleitung im Spielservermanager.
+
+---
+
+## 3. Benutzerkonten (Recht `users`)
+
+Die Homepage schickt ihre Nutzer an den Spielservermanager. **Neue Konten sehen nur die öffentliche Seite** (Profil
+„Nur öffentliche Seite“). Rechte, Profile und Rolle vergebt ihr danach im Spielservermanager unter *Benutzer* –
+die API ändert diese bei bestehenden Konten **nie**. Konten von der Homepage tragen dort das Zeichen 🌐 Homepage.
+
+### Datensatz
+
+| Feld | Pflicht | Inhalt |
+|---|---|---|
+| `external_id` | ja | eindeutige Nutzer-ID auf der Homepage (Buchstaben, Ziffern, `. _ - @ : +`, bis 64 Zeichen) |
+| `username` | nein | gewünschter Benutzername; ist er vergeben oder ungültig, wird er automatisch angepasst (Umlaute → ae/oe/ue) |
+| `nick` | nein | Anzeigename, bis 64 Zeichen |
+| `email` | nein | E-Mail-Adresse |
+| `steamid` | nein | SteamID64 (17 Ziffern) – dann klappt „Mit Steam anmelden“, Spieler und Avatar werden verknüpft |
+| `avatar` | nein | Bild-Adresse, nur `https://` |
+| `password` | nein | mind. 8 Zeichen – Login mit Benutzername + Passwort (wird nur gehasht gespeichert) |
+| `note` | nein | Notiz, bis 80 Zeichen |
+
+```json
+{"external_id": "17", "username": "anna", "nick": "Anna B.", "email": "anna@example.org",
+ "steamid": "76561197960287930", "avatar": "https://example.org/anna.png", "password": "mindestens8"}
+```
+
+Weggelassene Felder bleiben unverändert, ein leerer Text `""` löscht `nick`, `email` bzw. `note`.
+
+**Zuordnung:** zuerst über `external_id`. Gibt es die noch nicht, aber schon ein Konto mit derselben SteamID (z. B. über
+„Mit Steam registrieren“ angelegt), wird dieses übernommen. Sonst entsteht ein neues Konto.
+
+### Endpunkte
+
+| Methode | Pfad | Body | Antwort |
+|---|---|---|---|
+| POST | `/users` | Datensatz | Konto (siehe unten), `"created": true` bei neuem Konto |
+| POST | `/users/bulk` | `{"users": [Datensatz, …]}` (max. 500) | `{"results": [...], "created": 3, "failed": 0}` – je Eintrag `"ok": true` + Konto oder `"ok": false` + `error` |
+| GET | `/users/{external_id}` | – | Konto oder `404` |
+| DELETE | `/users/{external_id}` | – | Konto gelöscht (Administratoren sind geschützt: `403`) |
+
+```json
+{"external_id": "17", "username": "anna", "nick": "Anna B.", "email": "anna@example.org", "steamid": "76561197960287930",
+ "public_only": true, "profiles": ["oeffentlich"], "role": "user", "created_at": 1792872284, "last_login": null, "created": true}
+```
+
+`public_only` wird `false`, sobald ihr dem Konto im Spielservermanager Rechte gebt. `409` kommt, wenn die SteamID schon zu
+einem anderen Konto gehört.
+
+**Anmeldung der Nutzer im Spielservermanager:** „Mit Steam anmelden“ (wenn `steamid` gesetzt ist) oder Benutzername +
+Passwort (wenn `password` mitgeschickt wurde).
+
+**Empfehlung:** bei Registrierung und Profiländerung auf der Homepage `POST /users` aufrufen, beim Löschen des
+Homepage-Kontos `DELETE /users/{id}`, und einmalig alle bestehenden Nutzer per `/users/bulk` übertragen.
+
+---
+
+## 4. Zuschauen und Stream
 
 ### `GET /stream`
 
@@ -165,7 +250,7 @@ Wie der Stream entsteht: Ein Stream-PC hängt per CSTV am laufenden Spiel und fo
 
 ---
 
-## 4. Steam-Bot
+## 5. Steam-Bot
 
 > Steam-Regel: Nachrichten gehen nur an **Freunde** des Bots. Wer noch kein Freund ist, bekommt zuerst eine Freundschaftsanfrage (`/bot/friend`) und muss sie annehmen. Spieler auf der LAN fragt der Bot automatisch an, wenn das im Tool eingeschaltet ist.
 
@@ -191,15 +276,19 @@ Wie der Stream entsteht: Ein Stream-PC hängt per CSTV am laufenden Spiel und fo
 
 ---
 
-## 5. Beispiele
+## 6. Beispiele
 
 ```bash
 KEY=gsm_xxxxxxxx
-API=http://203.0.113.10:8090/api/v1
+API=https://live.example.org/api/v1
 
 curl -s $API/tournament -H "X-API-Key: $KEY"
 curl -s -X POST $API/tournament/register -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
      -d '{"steamid":"76561197960287930","name":"Anna"}'
+curl -s -X POST $API/users -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+     -d '{"external_id":"17","nick":"Anna","email":"anna@example.org","steamid":"76561197960287930"}'
+curl -s -X POST $API/tournament/new -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+     -d '{"name":"Winter-Cup 2026","mode":"groups","registration":true}'
 curl -s -X POST $API/bot/message -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
      -d '{"steamids":["76561197960287930"],"text":"Dein Match beginnt in 10 Minuten!"}'
 ```
@@ -207,7 +296,7 @@ curl -s -X POST $API/bot/message -H "X-API-Key: $KEY" -H "Content-Type: applicat
 ```php
 <?php // PHP (Homepage-Backend)
 function lan_api($method, $path, $body = null) {
-  $ch = curl_init("http://203.0.113.10:8090/api/v1" . $path);
+  $ch = curl_init("https://live.example.org/api/v1" . $path);
   curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_CUSTOMREQUEST => $method,
     CURLOPT_HTTPHEADER => ["X-API-Key: " . getenv("GSM_API_KEY"), "Content-Type: application/json"],
     CURLOPT_POSTFIELDS => $body ? json_encode($body) : null, CURLOPT_TIMEOUT => 60]);
@@ -221,7 +310,7 @@ lan_api("POST", "/tournament/register", ["steamid" => $steamid, "name" => $nick]
 
 ```js
 // Node (Homepage-Backend)
-const api = (path, body) => fetch("http://203.0.113.10:8090/api/v1" + path, {
+const api = (path, body) => fetch("https://live.example.org/api/v1" + path, {
   method: body ? "POST" : "GET",
   headers: {"X-API-Key": process.env.GSM_API_KEY, "Content-Type": "application/json"},
   body: body ? JSON.stringify(body) : undefined,
@@ -230,7 +319,7 @@ const api = (path, body) => fetch("http://203.0.113.10:8090/api/v1" + path, {
 
 ---
 
-## 6. Betrieb
+## 7. Betrieb
 
 **HTTPS:** Eine https-Homepage darf keine http-Seiten einbetten („Mixed Content“), und der API-Schlüssel sollte nicht unverschlüsselt durchs Internet gehen. Empfehlung: Cloudflare-Tunnel – Anleitung in [`CLOUDFLARE.md`](CLOUDFLARE.md). Dann lauten die Adressen z. B. `https://live.example.org/api/v1` und `https://live.example.org/embed/…`.
 
