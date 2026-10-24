@@ -481,6 +481,8 @@ def _user_out(M, u: dict, created: bool | None = None) -> dict:
 def _sync_user(M, data: UserSyncIn) -> dict:
     try:
         u, created = M.users.upsert_external(data.model_dump())
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
     except ValueError as e:
         raise HTTPException(409, str(e))
     if data.steamid:                                          # Spieler-Eintrag (Name, Bild, Admin je Spiel) verknüpfen
@@ -514,8 +516,8 @@ async def v1_user_bulk(data: UserBulkIn):
 async def v1_user_get(external_id: str):
     M = _M()
     u = M.users.find_external(external_id)
-    if not u:
-        raise HTTPException(404, "Kein Konto mit dieser external_id")
+    if not u or u.get("source") != "homepage":
+        raise HTTPException(404, "Kein über die Homepage angelegtes Konto mit dieser external_id")
     return _user_out(M, u)
 
 

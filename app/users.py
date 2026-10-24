@@ -306,19 +306,22 @@ def find_external(external_id: str) -> dict | None:
 
 def upsert_external(d: dict) -> tuple[dict, bool]:
     """Konto von der Homepage anlegen oder aktualisieren. Neue Konten sehen nur die öffentliche Seite.
-    Rolle, Rechte und Profile bestehender Konten bleiben unverändert – die vergibt der Admin im Spielservermanager.
-    Zuordnung: external_id, sonst SteamID (verknüpft ein vorhandenes Konto, z. B. aus der Steam-Registrierung)."""
+    Rolle, Rechte und Profile bleiben unverändert – die vergibt der Admin im Spielservermanager.
+    Die Homepage darf nur Konten ändern, die sie selbst angelegt hat (source = homepage); fremde Konten
+    (z. B. aus der Steam-Registrierung oder von Hand angelegt) werden nie übernommen."""
     import re as _re
     users = load()
     ext = d["external_id"]
     sid = d.get("steamid") or ""
     u = next((x for x in users if x.get("external_id") == ext), None)
-    if u is None and sid:
-        u = next((x for x in users if x.get("steamid") == sid and not x.get("external_id")), None)
+    if u is not None and u.get("source") != "homepage":
+        raise PermissionError("Dieses Konto wurde nicht über die Homepage angelegt und lässt sich nicht über die API ändern")
+    if u is not None and u.get("role") == "admin":
+        raise PermissionError("Administrator-Konten lassen sich nicht über die API ändern")
     if sid:
         other = next((x for x in users if x.get("steamid") == sid and x is not u), None)
         if other:
-            raise ValueError(f"Die SteamID gehört schon zum Konto „{other['username']}“")
+            raise ValueError(f"Die SteamID gehört schon zu einem anderen Konto im Spielservermanager ({other['username']})")
     created = u is None
     if created:
         want = (d.get("username") or d.get("nick") or "").strip().lower()
@@ -328,7 +331,7 @@ def upsert_external(d: dict) -> tuple[dict, bool]:
              "profiles": [PUBLIC_PROFILE["id"]], "hash": _hash(secrets.token_urlsafe(24)), "pw_changed": 0}
         users.append(u)
     u["external_id"] = ext
-    u.setdefault("source", "homepage")
+    u["source"] = "homepage"
     for k, n in (("nick", 64), ("email", 120), ("note", 80)):
         if d.get(k) is not None:
             v = str(d[k]).strip()[:n]
@@ -351,6 +354,8 @@ def delete_external(external_id: str) -> str | None:
     u = find_external(external_id)
     if not u:
         return None
+    if u.get("source") != "homepage":
+        raise ValueError("Nur über die Homepage angelegte Konten lassen sich über die API löschen")
     if u.get("role") == "admin":
         raise ValueError("Administrator-Konten lassen sich nicht über die API löschen")
     delete(u["username"])

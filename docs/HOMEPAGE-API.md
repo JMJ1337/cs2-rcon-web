@@ -188,8 +188,13 @@ die API ändert diese bei bestehenden Konten **nie**. Konten von der Homepage tr
 
 Weggelassene Felder bleiben unverändert, ein leerer Text `""` löscht `nick`, `email` bzw. `note`.
 
-**Zuordnung:** zuerst über `external_id`. Gibt es die noch nicht, aber schon ein Konto mit derselben SteamID (z. B. über
-„Mit Steam registrieren“ angelegt), wird dieses übernommen. Sonst entsteht ein neues Konto.
+**Zuordnung und Grenzen:**
+
+- Das Konto wird über `external_id` gefunden. Gibt es sie noch nicht, entsteht ein neues Konto.
+- Die API ändert und löscht **nur Konten, die sie selbst angelegt hat** (🌐 Homepage). Konten aus der Steam-Registrierung
+  oder von Hand angelegte Konten sind tabu (`403`), ebenso Administrator-Konten.
+- Gehört die SteamID schon zu einem anderen Konto im Spielservermanager, kommt `409` – das Konto dann ohne `steamid`
+  schicken oder den Admin bitten, die Konten zusammenzuführen.
 
 ### Endpunkte
 
@@ -198,7 +203,7 @@ Weggelassene Felder bleiben unverändert, ein leerer Text `""` löscht `nick`, `
 | POST | `/users` | Datensatz | Konto (siehe unten), `"created": true` bei neuem Konto |
 | POST | `/users/bulk` | `{"users": [Datensatz, …]}` (max. 500) | `{"results": [...], "created": 3, "failed": 0}` – je Eintrag `"ok": true` + Konto oder `"ok": false` + `error` |
 | GET | `/users/{external_id}` | – | Konto oder `404` |
-| DELETE | `/users/{external_id}` | – | Konto gelöscht (Administratoren sind geschützt: `403`) |
+| DELETE | `/users/{external_id}` | – | Konto gelöscht – nur selbst angelegte, keine Administratoren (`403`) |
 
 ```json
 {"external_id": "17", "username": "anna", "nick": "Anna B.", "email": "anna@example.org", "steamid": "76561197960287930",
