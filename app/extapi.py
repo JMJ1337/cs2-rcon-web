@@ -400,7 +400,7 @@ class TourCreateIn(TourSetIn):
 
 def _tour_apply(M, d: dict, data: TourSetIn) -> None:
     for k, v in data.model_dump(exclude_none=True).items():
-        if k == "template":
+        if k not in TourSetIn.model_fields:            # nur Einstellungen – Teams, IDs usw. behandelt der Aufrufer
             continue
         if k == "mode" and v not in M.tour.MODES:
             raise HTTPException(400, "Unbekannter Modus – erlaubt: " + ", ".join(M.tour.MODES))
@@ -535,3 +535,121 @@ async def v1_user_delete(external_id: str):
         if p.get("user") == name:
             M.playerdb.update(p["id"], {"user": ""})
     return {"ok": True, "username": name}
+
+
+# ---------------------------------------------------------------- Turnier von der Homepage übernehmen + Ergebnisse
+class ImportPlayer(BaseModel):
+    steamid: str = Field(pattern=SID)
+    name: str | None = Field(None, max_length=40)
+    avatar: str | None = Field(None, max_length=300, pattern=r"^$|^https://")
+
+
+class ImportTeam(BaseModel):
+    external_id: str = Field(min_length=1, max_length=64, pattern=r"^[\w.@:+-]+$")
+    name: str = Field(min_length=1, max_length=24)
+    players: list[ImportPlayer] = Field(min_length=1, max_length=10)
+
+
+class TourImportIn(TourSetIn):
+    external_id: str = Field(min_length=1, max_length=64, pattern=r"^[\w.@:+-]+$", description="Turnier-ID der Homepage")
+    teams: list[ImportTeam] = Field(max_length=128)
+    seeding: str = Field("random", pattern="^(random|given)$", description="given = Reihenfolge der Teams ist die Setzliste")
+    generate: bool = Field(True, description="Spielplan sofort erzeugen")
+
+
+@router.put("/tournament/import", dependencies=[Depends(auth("organize"))])
+async def v1_tour_import(data: TourImportIn):
+    """Turnier mit Teams von der Homepage übernehmen (anlegen oder – solange noch nicht gespielt wird – ersetzen).
+    Anmeldung und Teams verwaltet die Homepage; gespielt, gewertet und gestartet wird im Spielservermanager."""
+    M = _M()
+    d = M.tour.load()
+    if M._tour_busy(d) or M._tour_test(d):
+        raise HTTPException(409, "Das aktuelle Turnier läuft – erst im Spielservermanager anhalten")
+    same = d.get("external_id") == data.external_id
+    played = [m for m in d.get("matches") or [] if m.get("status") == "live" or (m.get("status") == "done" and m.get("s1") is not None)]
+    if same and played:
+        raise HTTPException(409, "In diesem Turnier wurde schon gespielt – Teams und Spielplan lassen sich nicht mehr ersetzen")
+    if not same:
+        if M._tour_has_content(d):
+            M.tour.lib_save(d)
+        d = M.tour.new_from(None)
+        d["name"] = data.name or f"{M.automation.brand()} Turnier"
+    sids = [p.steamid for t in data.teams for p in t.players]
+    if len(sids) != len(set(sids)):
+        raise HTTPException(400, "Ein Spieler steht in mehreren Teams")
+    names = [t.name.strip().lower() for t in data.teams]
+    if len(names) != len(set(names)):
+        raise HTTPException(400, "Teamnamen müssen eindeutig sein")
+    if len({t.external_id for t in data.teams}) != len(data.teams):
+        raise HTTPException(400, "external_id der Teams muss eindeutig sein")
+    _tour_apply(M, d, data)
+    keep = {t.get("ext_id"): t["id"] for t in d.get("teams") or [] if t.get("ext_id")}
+    d["teams"], d["players"] = [], []
+    for t in data.teams:
+        d["teams"].append({"id": keep.get(t.external_id) or M.tour.new_team_id(), "ext_id": t.external_id,
+                           "name": re.sub(r'["\\;]', "", t.name).strip()[:24], "players": [p.steamid for p in t.players]})
+        for p in t.players:
+            pl = M.playerdb.get(p.steamid) or M.playerdb.add_manual(p.steamid, p.name or "", p.avatar or "")
+            d["players"].append({"steamid": p.steamid, "name": (p.name or M.playerdb.display(pl) or p.steamid).strip()[:40],
+                                 "avatar": p.avatar or pl.get("avatar"), "t": time.time(), "via": "homepage"})
+    d.update(external_id=data.external_id, via="homepage", registration=False, status="setup")
+    d["matches"], d["groups"] = [], {}
+    if data.generate and len(d["teams"]) >= 2:
+        try:
+            M.tour.generate(d, shuffle=data.seeding == "random")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        d["servers"] = [s["id"] for s in M._tour_pool()]
+        M.tour.plan(d)
+    M._tour_names.clear()
+    M.tour.save(d)
+    return {"ok": True, "external_id": d["external_id"], "name": d["name"], "teams": len(d["teams"]),
+            "matches": len(d["matches"]), "servers_needed": M.tour.needed_servers(d) if d["matches"] else 0,
+            "team_ids": {t["ext_id"]: t["id"] for t in d["teams"]}}
+
+
+def _champion(d: dict, M) -> str | None:
+    if d.get("status") != "done" or not d.get("matches"):
+        return None
+    if d.get("mode") == "rr":
+        tab = M.tour.rr_table(d)
+        return tab[0]["team"] if tab else None
+    ko = [m for m in d["matches"] if m["stage"] in ("W", "K", "F")]
+    last = max(ko, key=lambda m: (m["stage"] == "F", m["round"])) if ko else None
+    return (last or {}).get("winner")
+
+
+@router.get("/tournament/results", dependencies=[Depends(auth("tournament", read=True))])
+async def v1_tour_results():
+    """Alle Ergebnisse für die eigene Darstellung auf der Homepage: Spiele mit Teams (inkl. external_id), Stand, Sieger,
+    Spielerwerte je Match, Gruppentabellen, Bestenliste und Turniersieger."""
+    M = _M()
+    d = M.tour.load()
+    v = M._tour_out(d)
+    ext = {t["id"]: t.get("ext_id") for t in d["teams"]}
+
+    def team(tid):
+        if not tid:
+            return None
+        if tid == M.tour.BYE:
+            return {"id": None, "external_id": None, "name": "Freilos", "bye": True}
+        return {"id": tid, "external_id": ext.get(tid), "name": M.tour.team_name(d, tid)}
+
+    raw = {m["id"]: m for m in d["matches"]}
+    matches = []
+    for m in v["matches"]:
+        r = raw.get(m["id"]) or {}
+        matches.append({"id": m["id"], "no": m.get("no"), "stage": m["stage"], "round": m["round"], "label": m["label"],
+                        "group": m.get("group"), "team1": team(r.get("t1")), "team2": team(r.get("t2")),
+                        "placeholder1": m.get("p1"), "placeholder2": m.get("p2"), "score1": m.get("s1"), "score2": m.get("s2"),
+                        "status": m["status"], "winner": team(r.get("winner")), "walkover": bool(m.get("walkover")),
+                        "map": m.get("map"), "planned": m.get("planned"), "started": m.get("started"), "ended": m.get("ended"),
+                        "server": m.get("server_name"), "tv_url": m.get("tv_url"), "stats": r.get("stats") or []})
+    groups = {g: [{**row, "team": team(row["team"])} for row in rows] for g, rows in (v.get("groups") or {}).items()}
+    out = {"external_id": d.get("external_id"), "name": d.get("name"), "mode": d.get("mode"), "status": d.get("status"),
+           "start": d.get("start"), "updated": time.time(),
+           "teams": [{"id": t["id"], "external_id": t.get("ext_id"), "name": t["name"], "players": t["players"]} for t in d["teams"]],
+           "matches": matches, "groups": groups, "leaders": v.get("leaders") or [], "champion": team(_champion(d, M))}
+    if v.get("table"):
+        out["table"] = [{**row, "team": team(row["team"])} for row in v["table"]]
+    return out

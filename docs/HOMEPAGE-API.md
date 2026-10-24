@@ -135,7 +135,70 @@ Die Adressen sind die öffentlichen.
 
 ---
 
-### Turnier anlegen und einstellen (Recht `organize`)
+### Turnier von der Homepage übernehmen (Recht `organize`) – empfohlener Weg
+
+Die Homepage erstellt das Turnier samt Anmeldung und Teams selbst und **schiebt es fertig zu uns**. Gespielt
+(Server, MatchZy, Ergebnisse) wird im Spielservermanager; die Homepage holt die Ergebnisse mit
+`GET /tournament/results` ab und stellt sie selbst dar.
+
+`PUT /tournament/import`
+
+```json
+{
+  "external_id": "wintercup-2026",          // Turnier-ID der Homepage (Pflicht)
+  "name": "Winter-Cup 2026", "mode": "groups", "start": 1795000000,
+  "maps": ["de_inferno", "de_nuke"], "match_min": 35, "pause_min": 10,
+  "seeding": "random",                       // random = zufällig gesetzt, given = Reihenfolge der Teams ist die Setzliste
+  "generate": true,                          // Spielplan sofort erzeugen
+  "teams": [
+    {"external_id": "t17", "name": "Die Lianen",
+     "players": [{"steamid": "76561197960287930", "name": "Anna", "avatar": "https://…"},
+                 {"steamid": "76561197960287931", "name": "Ben"}]}
+  ]
+}
+```
+
+- Neue `external_id`: das bisherige Turnier wandert ins Archiv, das neue wird angelegt.
+- Gleiche `external_id`: Teams und Einstellungen werden **ersetzt** (z. B. nach Nachmeldungen) – aber nur, solange
+  noch kein Spiel lief. Danach `409`.
+- `409` auch, solange ein Turnier im Spielservermanager läuft.
+- Die Anmeldung im Spielservermanager bleibt geschlossen (die macht die Homepage).
+- Teamnamen bis 24 Zeichen und eindeutig, jeder Spieler nur in einem Team, bis 10 Spieler pro Team, bis 128 Teams.
+- Antwort: `{"ok": true, "teams": 8, "matches": 13, "servers_needed": 4, "team_ids": {"t17": "t8fa826", …}}`
+
+Den Start des Turniers (Server bereitstellen, „Turnier starten“) macht die Turnierleitung im Spielservermanager.
+
+### Ergebnisse abrufen: `GET /tournament/results`
+
+Alles für die eigene Grafik der Homepage, Teams immer mit eurer `external_id`:
+
+```json
+{"external_id": "wintercup-2026", "name": "Winter-Cup 2026", "mode": "groups", "status": "running", "updated": 1795003600,
+ "teams": [{"id": "t8fa826", "external_id": "t17", "name": "Die Lianen", "players": ["7656…30", "7656…31"]}],
+ "matches": [{"id": "m5", "no": 5, "stage": "K", "round": 4, "label": "K.-o. · Halbfinale", "group": null,
+              "team1": {"id": "t8fa826", "external_id": "t17", "name": "Die Lianen"}, "team2": null,
+              "placeholder1": null, "placeholder2": "Sieger #3",
+              "score1": 7, "score2": 4, "status": "live", "winner": null, "walkover": false,
+              "map": "de_inferno", "planned": 1795003000, "started": 1795003100, "ended": null,
+              "server": "LAN CS #2", "tv_url": "steam://…", "stats": [{"side": "1", "steamid": "…", "name": "Anna", "kills": 12, …}]}],
+ "groups": {"A": [{"team": {"external_id": "t17", …}, "played": 2, "won": 2, "lost": 0, "rf": 26, "ra": 14}]},
+ "leaders": [{"steamid": "…", "name": "Anna", "rating": 1.21, "kd": 1.4, "adr": 88, …}],
+ "champion": null}
+```
+
+| Feld | Bedeutung |
+|---|---|
+| `stage` | `G` Gruppe, `K`/`W` K.-o. bzw. Winner-Bracket, `L` Loser-Bracket, `F` großes Finale, `R` Jeder-gegen-jeden |
+| `status` | `wait` (Gegner offen), `ready`, `live` (Stand in `score1`/`score2` live), `done` |
+| `team2.bye` | `true` = Freilos |
+| `placeholder1/2` | solange ein Gegner noch offen ist, z. B. „Sieger #3“ |
+| `champion` | Turniersieger, sobald `status = done` |
+
+Empfehlung: alle 15–30 s abrufen (während `live`), sonst seltener.
+
+### Turnier direkt im Spielservermanager anlegen und einstellen (Recht `organize`)
+
+Nur nötig, wenn die Homepage **keine** eigenen Teams schickt (Anmeldung dann über unsere Endpunkte oben).
 
 | Methode | Pfad | Body | Ergebnis |
 |---|---|---|---|

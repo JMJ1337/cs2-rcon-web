@@ -119,12 +119,14 @@ def _rr_rounds(ids: list) -> list[list[tuple]]:
     return out
 
 
-def generate(d: dict) -> dict:
-    """Spielplan neu erzeugen (löscht alte Matches). Reihenfolge der Teams = Setzliste (zufällig gemischt)."""
+def generate(d: dict, shuffle: bool = True) -> dict:
+    """Spielplan neu erzeugen (löscht alte Matches). Reihenfolge der Teams = Setzliste (zufällig gemischt,
+    oder wie übergeben, wenn shuffle=False – z. B. Setzliste von der Homepage)."""
     teams = [t["id"] for t in d["teams"] if len(t["players"]) >= 1]
     if len(teams) < 2:
         raise ValueError("Mindestens 2 Teams mit Spielern nötig")
-    random.shuffle(teams)
+    if shuffle:
+        random.shuffle(teams)
     d["matches"], d["groups"] = [], {}
     mode = d.get("mode") or "ko"
     if mode == "rr":
