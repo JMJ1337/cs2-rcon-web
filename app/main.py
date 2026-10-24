@@ -49,8 +49,18 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 if not ADMIN_PASSWORD:
-    ADMIN_PASSWORD = "changeme"
-    log.warning("ADMIN_PASSWORD nicht gesetzt – Standardpasswort 'changeme' aktiv!")
+    # kein festes Standardpasswort: einmalig zufällig erzeugen, im Datenordner merken und im Log anzeigen
+    _pwf = DATA_DIR / ".admin_password"
+    try:
+        ADMIN_PASSWORD = _pwf.read_text().strip() if _pwf.exists() else ""
+        if not ADMIN_PASSWORD:
+            ADMIN_PASSWORD = secrets.token_urlsafe(12)
+            _pwf.write_text(ADMIN_PASSWORD)
+            _pwf.chmod(0o600)
+    except OSError:
+        ADMIN_PASSWORD = secrets.token_urlsafe(12)
+    log.warning("ADMIN_PASSWORD nicht gesetzt – Anmeldung als „admin“ mit dem zufälligen Passwort: %s "
+                "(steht auch in /data/.admin_password; besser ADMIN_PASSWORD im Stack setzen)", ADMIN_PASSWORD)
 SESSION_HOURS = int(os.getenv("SESSION_HOURS", "24"))
 RCON_TIMEOUT = float(os.getenv("RCON_TIMEOUT", "4"))
 WATCH_ENABLED = os.getenv("WATCH_ENABLED", "1") != "0"
@@ -189,18 +199,63 @@ class LoginIn(BaseModel):
     password: str
 
 
+# Fehlversuche beim Login: pro IP und pro Benutzername (gleitendes Fenster, nur im Speicher)
+LOGIN_WINDOW = 15 * 60
+LOGIN_MAX_IP = 10          # danach ist die IP für den Rest des Fensters gesperrt
+LOGIN_MAX_USER = 20        # höher, damit niemand fremde Konten einfach aussperren kann
+_login_fails: dict[str, list[float]] = {}
+
+
+def _login_blocked(*keys: str) -> int:
+    """Sekunden bis zur Freigabe (0 = frei)."""
+    now, wait = time.time(), 0
+    for k in keys:
+        lst = [t for t in _login_fails.get(k, []) if now - t < LOGIN_WINDOW]
+        if lst:
+            _login_fails[k] = lst
+        else:
+            _login_fails.pop(k, None)
+        limit = LOGIN_MAX_IP if k.startswith("ip:") else LOGIN_MAX_USER
+        if len(lst) >= limit:
+            wait = max(wait, int(LOGIN_WINDOW - (now - lst[-limit])) + 1)
+    return wait
+
+
+def _is_lan(request: Request) -> bool:
+    try:
+        a = ipaddress.ip_address(client_ip(request))
+        return a.is_private or a.is_loopback
+    except ValueError:
+        return False
+
+
+def _emergency_ok(request: Request) -> bool:
+    """Notzugang „admin“ + ADMIN_PASSWORD aus dem Stack: an / nur aus dem LAN / aus (Einstellung)."""
+    mode = (automation.get_settings().get("emergency_login") or "lan").lower()
+    return mode == "on" or (mode == "lan" and _is_lan(request))
+
+
 @app.post("/api/login")
-async def login(data: LoginIn, response: Response):
+async def login(data: LoginIn, request: Request, response: Response):
     name = (data.username or "admin").strip().lower()
+    keys = (f"ip:{client_ip(request)}", f"user:{name}")
+    wait = _login_blocked(*keys)
+    if wait:
+        raise HTTPException(429, f"Zu viele Fehlversuche – bitte in {max(1, wait // 60)} Minute(n) erneut versuchen")
     u = users.verify(name, data.password)
-    if not u and name == "admin" and hmac.compare_digest(data.password.encode(), ADMIN_PASSWORD.encode()):
+    if not u and name == "admin" and _emergency_ok(request) and hmac.compare_digest(data.password.encode(), ADMIN_PASSWORD.encode()):
         u = users.find("admin")  # Notfall-Login mit ADMIN_PASSWORD aus dem Stack
-        if not u:
-            users.bootstrap(ADMIN_PASSWORD)
+        if not u and _is_lan(request):
+            users.restore_admin(ADMIN_PASSWORD)   # gelöschten „admin“ nur aus dem LAN wiederherstellen
             u = users.find("admin")
+        if u:
+            log.warning("Notfall-Login als admin von %s", client_ip(request))
     if not u:
+        for k in keys:
+            _login_fails.setdefault(k, []).append(time.time())
         await asyncio.sleep(1.0)  # Brute-Force bremsen
         raise HTTPException(401, "Benutzername oder Passwort falsch")
+    _login_fails.pop(keys[0], None)
     response.set_cookie(COOKIE, make_token(u["username"]), httponly=True, samesite="strict",
                         max_age=SESSION_HOURS * 3600)
     return {"ok": True, "user": users.public(u)}
@@ -3145,11 +3200,20 @@ class TestIn(BaseModel):
 
 
 @app.post("/api/test", dependencies=auth)
-async def test_connection(data: TestIn):
-    pw = data.password
-    if not pw and data.server_id:
-        pw = get_server(data.server_id).get("password", "")
-    c = RconClient(data.host.strip(), data.port, pw or "", RCON_TIMEOUT)
+async def test_connection(data: TestIn, request: Request):
+    host, port, pw = data.host.strip(), data.port, data.password or ""
+    if data.server_id:
+        # bestehender Server: Ziel immer aus der Serverliste – das gespeicherte Passwort geht nie an fremde Adressen
+        s = get_server(data.server_id)
+        need_game(request, game_of(s), 3)
+        if (host, port) != (s["host"], int(s["port"])):
+            need_game(request, game_of(s), 4)           # anderes Ziel = Server umziehen – nur mit Recht „Anlegen“
+        pw = pw or s.get("password", "")
+    else:
+        # neuer Server: nur wer irgendwo anlegen darf, und nur mit selbst eingegebenem Passwort
+        if users.max_level(request.state.user, GAMES) < 4:
+            raise HTTPException(403, "Keine Berechtigung (Anlegen nötig)")
+    c = RconClient(host, port, pw, RCON_TIMEOUT)
     try:
         raw = await c.execute("status")
     except RconError as e:
@@ -3246,6 +3310,7 @@ class SettingsIn(BaseModel):
     scan_subnets: str | None = Field(None, max_length=200)
     games_base: str | None = Field(None, max_length=200)
     brand: str | None = Field(None, max_length=40)
+    emergency_login: str | None = Field(None, pattern="^(on|lan|off)$")
     cache_container: str | None = Field(None, max_length=100)
     cache_dir: str | None = Field(None, max_length=300)
     default_join_pw: str | None = Field(None, max_length=64)

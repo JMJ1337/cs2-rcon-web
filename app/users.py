@@ -260,6 +260,16 @@ def bootstrap(admin_password: str) -> None:
                            "created": int(time.time()), "last_login": None, "pw_changed": 0}])
 
 
+def restore_admin(admin_password: str) -> None:
+    """Notzugang: gelöschten Benutzer „admin“ mit dem Stack-Passwort wieder anlegen."""
+    lst = load()
+    if any(u.get("username") == "admin" for u in lst):
+        return
+    lst.append({"username": "admin", "role": "admin", "hash": _hash(admin_password),
+                "created": int(time.time()), "last_login": None, "pw_changed": 0})
+    store.save(FILE, lst)
+
+
 # ---------------------------------------------------------------- Registrierung per Steam
 def find_by_steam(steamid: str) -> dict | None:
     return next((u for u in load() if steamid and u.get("steamid") == steamid), None)

@@ -478,7 +478,7 @@ gsm_login() { curl -sf -c "$JAR" -X POST "$G/api/login" -H 'Content-Type: applic
   -d "$(jq -n --arg u "$1" --arg p "$GSM_PASSWORD" '{username:$u,password:$p}')" >/dev/null; }
 if ! gsm_login "$GSM_USER" && ! gsm_login admin; then
   warn "Anmeldung am Spielservermanager nicht möglich – vermutlich von einer früheren Installation mit anderem Passwort."
-  warn "Stack ist aktualisiert; Benutzer und Ordner bitte in der Weboberfläche prüfen (Notzugang: admin + ADMIN_PASSWORD aus dem Stack)."
+  warn "Stack ist aktualisiert; Benutzer und Ordner bitte in der Weboberfläche prüfen (Notzugang aus dem LAN: admin + ADMIN_PASSWORD aus dem Stack)."
   GSM_SKIP_SETUP=1
 fi
 if [ "${GSM_SKIP_SETUP:-0}" != 1 ]; then
@@ -490,7 +490,7 @@ if [ "$GSM_USER" != "admin" ] && [ "${GSM_SKIP_SETUP:-0}" != 1 ]; then
   curl -sf -b "$JAR" -X POST "$G/api/users" -H 'Content-Type: application/json' \
     -d "$(jq -n --arg u "$GSM_USER" --arg p "$GSM_PASSWORD" '{username:$u,password:$p,role:"admin"}')" >/dev/null \
     && ok "Benutzer $GSM_USER angelegt (Administrator)" || warn "Benutzer $GSM_USER gibt es schon"
-  # Start-Benutzer „admin“ entfernen (Notzugang mit dem Stack-Passwort ADMIN_PASSWORD bleibt trotzdem möglich)
+  # Start-Benutzer „admin“ entfernen (Notzugang aus dem LAN mit dem Stack-Passwort ADMIN_PASSWORD bleibt möglich)
   JAR2=$(mktemp)
   if curl -sf -c "$JAR2" -X POST "$G/api/login" -H 'Content-Type: application/json' \
        -d "$(jq -n --arg u "$GSM_USER" --arg p "$GSM_PASSWORD" '{username:$u,password:$p}')" >/dev/null; then

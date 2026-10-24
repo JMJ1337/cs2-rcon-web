@@ -34,7 +34,8 @@ DEFAULT_SETTINGS = {
     "watch_interval": 10,
     "scan_interval": 15,        # Minuten, 0 = aus
     "scan_subnets": "",         # zusätzliche Netze, z. B. "192.168.1.0/24"
-    "brand": "LAN",             # Name der Veranstaltung – erscheint in Servernamen, Titeln, Benachrichtigungen ({brand})
+    "brand": "LAN",
+    "emergency_login": "lan",   # Notzugang admin + ADMIN_PASSWORD: on | lan (nur aus dem LAN) | off             # Name der Veranstaltung – erscheint in Servernamen, Titeln, Benachrichtigungen ({brand})
     "games_base": "/srv/gameserver",   # Basisordner für neue Spielserver (z. B. NAS-Mount auf dem Docker-Host)
     "cache_container": "",      # Lancache-Container (leer = automatisch erkennen)
     "hostname_pattern": "{brand} CS #{nr} {mode}",       # CS2-Servername nach Modus (leer = aus)
@@ -48,7 +49,7 @@ DEFAULT_SETTINGS = {
 
 # Bestehende Installationen aus der Zeit vor der einstellbaren Veranstaltung: deren bisherige Standardwerte
 # werden beim ersten Start einmalig fest gespeichert, damit sich dort nichts ändert.
-_LEGACY = {"brand": "GrohLAN", "games_base": "/mnt/grohlan", "tpl_dns_default": "192.168.200.27",
+_LEGACY = {"emergency_login": "on", "brand": "GrohLAN", "games_base": "/mnt/grohlan", "tpl_dns_default": "192.168.200.27",
            "hostname_pattern": "Groh CS #{nr} {mode}", "names_pattern": "Groh {game} #{nr} {mode}"}
 _LEGACY_OLD_CS = ("CS#{nr} {mode}", "Groh {mode} {nr}", "CS #{nr} {mode}", "Groh CS {nr} {mode}")
 _LEGACY_OLD_NAMES = ("{game}#{nr} {mode}", "Groh {mode} {nr}", "{game} #{nr} {mode}", "Groh {game} {nr} {mode}")
@@ -67,7 +68,7 @@ def _migrate_brand(s: dict) -> dict:
     if s or (store.DATA_DIR / SETTINGS_FILE).exists():   # bestehende Installation (auch wenn die Datei gerade nicht lesbar ist)
         if not s:
             return s                                      # nichts überschreiben – beim nächsten Lesen erneut versuchen
-        for k in ("brand", "games_base", "tpl_dns_default"):
+        for k in ("brand", "games_base", "tpl_dns_default", "emergency_login"):
             s.setdefault(k, _LEGACY[k])
         hp = s.get("hostname_pattern", _LEGACY["hostname_pattern"])
         s["hostname_pattern"] = _LEGACY["hostname_pattern"] if hp in _LEGACY_OLD_CS else hp
@@ -91,6 +92,11 @@ def brand() -> str:
 
 def get_settings() -> dict:
     s = _migrate_brand(store.load(SETTINGS_FILE, {}))
+    if s and "brand" in s and "emergency_login" not in s:
+        # einmalig: bestehende Installationen (vor v1.2.0 angelegt – erkennbar an tpl_dns_default) behalten den
+        # Notzugang wie bisher, neuere nur aus dem LAN
+        s["emergency_login"] = "on" if "tpl_dns_default" in s else "lan"
+        store.save(SETTINGS_FILE, s)
     out = {**DEFAULT_SETTINGS, **s}
     if not out.get("modes"):
         out["modes"] = DEFAULT_MODES
@@ -111,7 +117,7 @@ def get_settings() -> dict:
 def save_settings(data: dict) -> dict:
     cur = get_settings()
     for k in ("modes", "map_rules", "public_url", "internet_host", "watch_interval", "scan_interval", "scan_subnets",
-              "games_base", "brand", "cache_container", "cache_dir", "default_join_pw", "default_admin_pw", "cs2_template_src", "hostname_pattern", "names_pattern", "container_dns", "auto_bots", "auto_matchzy", "port_range"):
+              "games_base", "brand", "emergency_login", "cache_container", "cache_dir", "default_join_pw", "default_admin_pw", "cs2_template_src", "hostname_pattern", "names_pattern", "container_dns", "auto_bots", "auto_matchzy", "port_range"):
         if k in data:
             cur[k] = data[k]
     store.save(SETTINGS_FILE, cur)

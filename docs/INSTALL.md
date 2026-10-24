@@ -100,7 +100,8 @@ Weitere Variablen: `BRAND` (Name der Veranstaltung), `GSM_VERSION` (z. B. `1.0.0
 
 - Einstellungen, Benutzer, Spieler, Turniere: Docker-Volume `spielservermanager-data`
 - Spielserver: der gewählte Spielserver-Ordner (Standard `/srv/gameserver`), darin `_bibliothek/` mit allen über die Oberfläche hinzugefügten Maps und Mods
-- Notzugang: Benutzer `admin` mit dem Passwort aus der Stack-Variable `ADMIN_PASSWORD` (Portainer → Stack → Environment variables)
+- Notzugang: Benutzer `admin` mit dem Passwort aus der Stack-Variable `ADMIN_PASSWORD` (Portainer → Stack → Environment variables) –
+  standardmäßig **nur aus dem LAN** (änderbar unter *Automatik & Einstellungen*); ein gelöschter `admin` wird dabei wieder angelegt
 
 ## Spieler aus dem Internet
 

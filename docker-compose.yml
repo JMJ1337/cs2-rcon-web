@@ -7,7 +7,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      ADMIN_PASSWORD: "bitte-aendern"   # Login-Passwort der Weboberfläche
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?ADMIN_PASSWORD setzen, z. B. ADMIN_PASSWORD=geheim docker compose up -d}"   # Notzugang admin
       SESSION_HOURS: "24"               # wie lange ein Login gültig bleibt
       RCON_TIMEOUT: "4"                 # Sekunden
       TZ: Europe/Berlin

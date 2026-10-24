@@ -47,7 +47,8 @@ Außerdem:
 - **Namen wie im Spiel:** Die Server heißen in der Liste automatisch so wie im Spiel (abschaltbar je Server).
 - **Benutzerkonten** mit Rollen *Administrator*, *Spielleiter* (bedienen) und *Nur ansehen*. Sie liegen im Volume
   `cs2-rcon-data` und bleiben bei Updates erhalten. Erster Login: Benutzer `admin` + `ADMIN_PASSWORD`
-  (funktioniert auch später noch als Notfall-Login).
+  (funktioniert später als Notzugang – standardmäßig nur aus dem LAN, einstellbar unter *Automatik & Einstellungen*;
+  nach 10 Fehlversuchen pro IP ist der Login 15 Minuten gesperrt).
 - **Docker-Steuerung:** Container starten/stoppen/neu starten, Logs, CPU/RAM – pro Server einen Container verknüpfen.
 - **Neue Server anlegen:** CS2, Factorio, Satisfactory, Valheim, Wreckfest als Container mit Datenordner auf dem NAS
   (Ordner wird angelegt und für den Container beschreibbar gemacht).

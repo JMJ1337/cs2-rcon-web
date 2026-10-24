@@ -369,6 +369,7 @@
             <div class="field"><label>Basisordner für neue Spielserver (auf dem Docker-Host)</label><input id="setGamesBase" placeholder="/srv/gameserver" class="mono"></div>
             <div class="field"><label>Standard-Beitrittspasswort für neue Server (leer = ohne)</label><input id="setDefJoinPw" class="mono" autocomplete="off"></div>
             <div class="field"><label>Standard-RCON-/Admin-Passwort für neue Server (leer = zufällig je Server)</label><input id="setDefAdminPw" class="mono" autocomplete="off"></div>
+            <div class="field"><label>Notzugang „admin“ mit dem Stack-Passwort (ADMIN_PASSWORD)</label><select id="setEmergency"><option value="lan">nur aus dem LAN (empfohlen)</option><option value="on">immer</option><option value="off">aus</option></select></div>
             <div class="field"><label>Lancache-Container (leer = automatisch)</label><input id="setCacheContainer" placeholder="z. B. lancache-monolithic-1" class="mono"></div>
             <div class="field" style="grid-column:1/-1"><label>Speicherorte</label>
               <div class="hint" style="margin-bottom:6px">Lokal (z. B. <span class="mono">/home/&lt;benutzer&gt;/spielserver</span>) oder Netzwerk: NFS/SMB-Freigabe oder <b>iSCSI</b> – für Netzwerkspeicher ist iSCSI deutlich schneller (Block-Zugriff), besonders für den Lancache. Netzwerkspeicher zuerst auf dem Server einhängen: <a href="#" id="lnkStorage">Speicher (iSCSI)</a> erzeugt das Skript dafür, oder das Installationsskript erneut ausführen.</div>
@@ -1139,6 +1140,6 @@
 <div id="toast"></div>
 <div id="updateBar" class="hidden">Eine neue Version des Spielservermanagers ist da. <button class="small primary" id="btnReloadApp">Neu laden</button></div>
 <script src="/static/commands.js?v=10"></script>
-<script src="/static/app.js?v=185"></script>
+<script src="/static/app.js?v=186"></script>
 </body>
 </html>
