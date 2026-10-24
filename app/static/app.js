@@ -4103,7 +4103,24 @@ async function loadBot(){
   $$("[data-botadd]").forEach(btn => btn.onclick = async () => { try { await api(`/api/steambot/add/${btn.dataset.botadd}`, {method: "POST"}); toast("Freundschaftsanfrage gesendet"); loadBot(); } catch (e) { toast(e.message, true); } });
   $("#botSelN").textContent = botSel.size;
   const names = Object.fromEntries(d.players.map(p => [p.steamid, p.name]));
-  $("#botMsgs").innerHTML = (d.messages || []).slice().reverse().map(m => `<div>${new Date(m.t * 1000).toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit"})} ${m.dir === "in" ? "⬅ <b>" + esc(names[m.from] || m.from) + "</b>" : "➡ " + esc(names[m.to] || m.to)}: ${esc(m.text)}</div>`).join("") || "noch keine";
+  renderBotMsgs(d.messages || [], names);
+}
+let botMsgsAll = false;
+function renderBotMsgs(msgs, names){
+  // ausgehende Rundschreiben (gleicher Text kurz hintereinander) zu einer Zeile zusammenfassen
+  const items = [];
+  for (const m of msgs.slice().reverse()){
+    const last = items[items.length - 1];
+    if (m.dir !== "in" && last && last.dir !== "in" && last.text === m.text && Math.abs(last.t - m.t) < 300){ last.to.push(m.to); continue; }
+    items.push({...m, to: m.dir === "in" ? [] : [m.to]});
+  }
+  const show = botMsgsAll ? items.slice(0, 50) : items.slice(0, 8);
+  const tm = t => new Date(t * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"});
+  $("#botMsgs").innerHTML = show.map(m => `<div class="bm" title="${esc(m.text)}">${tm(m.t)} ${m.dir === "in" ? "⬅ <b>" + esc(names[m.from] || m.from) + "</b>"
+      : "➡ " + (m.to.length > 1 ? `<b>${m.to.length} Spieler</b>` : esc(names[m.to[0]] || m.to[0]))}: ${esc(m.text.length > 140 ? m.text.slice(0, 140) + "…" : m.text)}</div>`).join("")
+    + (items.length > 8 ? `<div style="margin-top:4px"><a href="#" id="botMsgsMore">${botMsgsAll ? "weniger anzeigen" : `alle anzeigen (${Math.min(items.length, 50)})`}</a></div>` : "")
+    || "noch keine";
+  const more = $("#botMsgsMore"); if (more) more.onclick = e => { e.preventDefault(); botMsgsAll = !botMsgsAll; renderBotMsgs(msgs, names); };
 }
 $("#botSave").onclick = async () => {
   try {
@@ -4679,11 +4696,26 @@ async function loadApi(){
       <td><button class="small danger" data-apidel="${esc(k.id)}">Löschen</button></td></tr>`).join("")}</tbody></table>` : `<div class="hint">Noch keine Schlüssel.</div>`;
   $$("[data-apidel]").forEach(b => b.onclick = async () => { if (!confirm("Schlüssel löschen? Die Homepage verliert damit den Zugriff.")) return;
     await api(`/api/apikeys/${b.dataset.apidel}`, {method: "DELETE"}); loadApi(); });
+  renderApiAct(r.activity);
   $("#apiPublic").checked = !!r.public_read;
   if (document.activeElement !== $("#apiOrigins")) $("#apiOrigins").value = (r.origins || []).join("\n");
   $("#apiEmbed").innerHTML = `Turnierbaum (aktualisiert sich selbst): <code>&lt;iframe src="${esc(r.base)}/embed/tournament" style="width:100%;height:900px;border:0"&gt;&lt;/iframe&gt;</code><br>
     Live-Stream: <code>&lt;iframe src="${esc(r.base)}/embed/stream" style="width:100%;aspect-ratio:16/9;border:0" allowfullscreen&gt;&lt;/iframe&gt;</code><br>
     Hinweis: Eine https-Homepage kann nur https-Seiten einbetten – dafür das Tool über einen https-Proxy (z. B. <code>live.example.org</code>) erreichbar machen.`;
+}
+function renderApiAct(a){
+  if (!a) return;
+  const chips = o => Object.entries(o || {}).map(([k, v]) => `<span>${esc(k)}<b>${v}</b></span>`).join("") || `<span class="hint">nichts</span>`;
+  const when = t => { const d = new Date(t * 1000), today = new Date().toDateString() === d.toDateString();
+    return today ? d.toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit"}) : d.toLocaleDateString("de-DE", {day: "2-digit", month: "2-digit"}) + " " + d.toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit"}); };
+  const reads = Object.values(a.reads_today || {}).reduce((x, y) => x + y, 0);
+  $("#apiAct").innerHTML = `<div class="hint">Letzte 24 Stunden</div><div class="sum">${chips(a.day)}</div>
+    <div class="hint">Abrufe heute: ${reads}${reads ? " – " + Object.entries(a.reads_today).map(([k, v]) => `${esc(k)} ${v}`).join(", ") : ""}</div>
+    <details style="margin-top:6px"><summary class="hint" style="cursor:pointer">Letzte 7 Tage</summary><div class="sum">${chips(a.week)}</div>
+      <div class="hint">Abrufe: ${Object.entries(a.reads_week || {}).map(([k, v]) => `${esc(k)} ${v}`).join(", ") || "keine"}</div></details>
+    <div style="margin-top:10px">${(a.recent || []).slice(0, 8).map(e => `<div class="ev ${e.action === "Fehler" ? "err" : ""}"><span class="at">${when(e.t)}</span>
+      <span><b>${esc(e.action)}</b>${e.n > 1 ? ` ×${e.n}` : ""} <span class="hint">· ${esc(e.key)}</span></span>
+      <span class="dt">${esc((e.details || []).join(", "))}</span></div>`).join("") || `<div class="hint">Noch keine Änderungen über die API.</div>`}</div>`;
 }
 $("#apiCreate").onclick = async () => {
   const name = $("#apiName").value.trim() || "Homepage", scopes = $$(".apiScope").filter(x => x.checked).map(x => x.value);

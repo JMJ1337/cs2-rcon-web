@@ -892,3 +892,12 @@ dialog.dlgwide{width:min(860px,calc(100vw - 32px));max-height:calc(100vh - 40px)
 .svadm .who .hint{display:block;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .svadm .tag{display:inline-block;font-size:10.5px;padding:1px 6px;border-radius:8px;background:var(--line);margin-right:3px}
 .svadm .who a{color:inherit;text-decoration:none}.svadm .who a:hover{text-decoration:underline}
+
+/* API-Aktivität und Bot-Verlauf (kompakt) */
+.apiact .sum{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 10px}
+.apiact .sum span{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:3px 8px;font-size:12.5px}
+.apiact .sum b{margin-left:4px}
+.apiact .ev{display:flex;gap:8px;font-size:13px;padding:3px 0;border-top:1px solid var(--line)}
+.apiact .ev .at{color:var(--muted);width:92px;flex:none}.apiact .ev .dt{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.apiact .ev.err b{color:var(--bad,#e5534b)}
+#botMsgs .bm{padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

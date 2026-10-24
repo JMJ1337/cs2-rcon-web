@@ -6,6 +6,7 @@ users (Benutzerkonten von der Homepage anlegen/aktualisieren), bot (Nachrichten,
 Die Homepage ruft die API vom eigenen Server aus auf (Schlüssel nie im Browser!) und reicht die SteamID des
 angemeldeten Homepage-Nutzers mit.
 """
+import contextvars
 import hashlib
 import re
 import secrets
@@ -66,6 +67,92 @@ def origins() -> list[str]:
 
 _last_save = {"t": 0.0}
 
+# ---------------------------------------------------------------- Aktivität: was über die API passiert ist (zusammengefasst)
+LOG_FILE = "apilog.json"
+_ctx: contextvars.ContextVar = contextvars.ContextVar("gsm_api", default=None)
+_log = {"d": None, "t": 0.0}
+_READS = (("/tournament/results", "Ergebnisse"), ("/tournament/player", "Spielerstatus"), ("/tournament", "Turnier"),
+          ("/servers", "Server"), ("/stream", "Stream"), ("/users", "Benutzer"), ("/bot", "Steam-Bot"),
+          ("/deathmatch", "Bestenlisten"), ("/halloffame", "Bestenlisten"))
+_WRITES = ((r"POST /users/bulk", "Benutzer abgeglichen"), (r"POST /users", "Benutzer gespeichert"),
+           (r"DELETE /users/", "Benutzer gelöscht"), (r"PUT /tournament/import", "Turnier übertragen"),
+           (r"POST /tournament/new", "Turnier angelegt"), (r"PUT /tournament", "Turnier-Einstellungen geändert"),
+           (r"POST /tournament/register", "Turnier-Anmeldung"), (r"POST /tournament/unregister", "Turnier-Abmeldung"),
+           (r"POST /tournament/teams", "Team-Änderung"), (r"POST /bot/message", "Bot-Nachricht"),
+           (r"POST /bot/invite", "Bot-Einladung"), (r"POST /bot/friend", "Freundschaftsanfrage"))
+
+
+def _logdata() -> dict:
+    if _log["d"] is None:
+        _log["d"] = {"events": [], "reads": {}, **store.load(LOG_FILE, {})}
+    return _log["d"]
+
+
+def note(action: str, n: int = 1, detail: str = "") -> None:
+    """Vom Endpunkt aus ein Ereignis mit Anzahl/Detail melden (statt der Standardbeschreibung)."""
+    h = _ctx.get()
+    if h is not None and n:
+        h.setdefault("events", []).append({"action": action, "n": int(n), "detail": str(detail)[:80]})
+
+
+def log_request(method: str, path: str, status: int, h: dict) -> None:
+    sub = path[len("/api/v1"):] or "/"
+    d = _logdata()
+    now = time.time()
+    if method == "GET":
+        if status < 400:
+            group = next((lbl for pre, lbl in _READS if sub.startswith(pre)), "Sonstiges")
+            day = time.strftime("%Y-%m-%d")
+            d["reads"].setdefault(day, {})
+            d["reads"][day][group] = d["reads"][day].get(group, 0) + 1
+            for k in sorted(d["reads"])[:-14]:
+                d["reads"].pop(k, None)
+    else:
+        label = next((lbl for pat, lbl in _WRITES if f"{method} {sub}".startswith(pat)), f"{method} {sub}")
+        key = h.get("key") or "ohne Schlüssel"
+        if status >= 400:
+            d["events"].append({"t": now, "key": key, "action": "Fehler", "n": 1, "detail": f"{label} ({status})"})
+        else:
+            for e in h.get("events") or [{"action": label, "n": 1, "detail": ""}]:
+                d["events"].append({"t": now, "key": key, **e})
+        del d["events"][:-500]
+    if now - _log["t"] > 15:
+        _log["t"] = now
+        store.save(LOG_FILE, d)
+
+
+def activity() -> dict:
+    """Zusammenfassung für die Verwaltung: Summen 24 h / 7 Tage, Abrufe, letzte Ereignisse (zusammengefasst)."""
+    d = _logdata()
+    now = time.time()
+
+    def sums(sec):
+        out: dict[str, int] = {}
+        for e in d["events"]:
+            if now - e["t"] < sec:
+                out[e["action"]] = out.get(e["action"], 0) + e.get("n", 1)
+        return dict(sorted(out.items(), key=lambda x: -x[1]))
+    today, reads7 = time.strftime("%Y-%m-%d"), {}
+    for day, g in d["reads"].items():
+        if day >= time.strftime("%Y-%m-%d", time.localtime(now - 6 * 86400)):
+            for k, v in g.items():
+                reads7[k] = reads7.get(k, 0) + v
+    recent = []
+    for e in reversed(d["events"]):                       # gleiche Aktion desselben Schlüssels innerhalb 15 min zusammenfassen
+        last = recent[-1] if recent else None
+        if last and last["action"] == e["action"] and last["key"] == e["key"] and last["t0"] - e["t"] < 900:
+            last["n"] += e.get("n", 1)
+            last["t0"] = e["t"]
+            if e.get("detail") and e["detail"] not in last["details"] and len(last["details"]) < 3:
+                last["details"].append(e["detail"])
+            continue
+        if len(recent) >= 12:
+            break
+        recent.append({"t": e["t"], "t0": e["t"], "key": e["key"], "action": e["action"], "n": e.get("n", 1),
+                       "details": [e["detail"]] if e.get("detail") else []})
+    return {"day": sums(86400), "week": sums(7 * 86400), "reads_today": d["reads"].get(today, {}),
+            "reads_week": dict(sorted(reads7.items(), key=lambda x: -x[1])), "recent": recent}
+
 
 def _check(scope: str, key: str | None, read: bool = False) -> None:
     d = _all()
@@ -77,6 +164,9 @@ def _check(scope: str, key: str | None, read: bool = False) -> None:
     k = next((x for x in d["keys"] if secrets.compare_digest(x["hash"], hk)), None)
     if not k:
         raise HTTPException(401, "API-Schlüssel ungültig")
+    h = _ctx.get()
+    if h is not None:
+        h["key"] = k.get("name") or k.get("hint")
     if scope not in k["scopes"]:
         raise HTTPException(403, f"Schlüssel hat kein Recht „{scope}“")
     k["uses"] = (k.get("uses") or 0) + 1
@@ -347,7 +437,9 @@ async def _send(steamids: list[str], text: str) -> dict:
 @router.post("/bot/message", dependencies=[Depends(auth("bot"))])
 async def v1_bot_message(data: MsgIn):
     """Nachricht an Spieler (nur Freunde des Bots; die anderen kommen in „not_friends“ zurück)."""
-    return await _send(data.steamids, data.text)
+    r = await _send(data.steamids, data.text)
+    note("Bot-Nachricht", len(r["sent"]) or 1, data.text[:60])
+    return r
 
 
 class InviteIn(BaseModel):
@@ -497,7 +589,9 @@ def _sync_user(M, data: UserSyncIn) -> dict:
 @router.post("/users", dependencies=[Depends(auth("users"))])
 async def v1_user_sync(data: UserSyncIn):
     """Konto anlegen oder aktualisieren. Neue Konten sehen nur die öffentliche Seite, bis ein Admin Rechte vergibt."""
-    return _sync_user(_M(), data)
+    r = _sync_user(_M(), data)
+    note("Benutzer angelegt" if r.get("created") else "Benutzer aktualisiert", 1, r["username"])
+    return r
 
 
 @router.post("/users/bulk", dependencies=[Depends(auth("users"))])
@@ -509,7 +603,11 @@ async def v1_user_bulk(data: UserBulkIn):
             res.append({"ok": True, **_sync_user(M, x)})
         except HTTPException as e:
             res.append({"ok": False, "external_id": x.external_id, "error": e.detail})
-    return {"results": res, "created": sum(1 for r in res if r.get("created")), "failed": sum(1 for r in res if not r["ok"])}
+    out = {"results": res, "created": sum(1 for r in res if r.get("created")), "failed": sum(1 for r in res if not r["ok"])}
+    note("Benutzer angelegt", out["created"])
+    note("Benutzer aktualisiert", sum(1 for r in res if r["ok"] and not r.get("created")))
+    note("Benutzer abgelehnt", out["failed"], "; ".join(sorted({str(r.get("error"))[:40] for r in res if not r["ok"]}))[:80])
+    return out
 
 
 @router.get("/users/{external_id}", dependencies=[Depends(auth("users"))])
@@ -534,6 +632,7 @@ async def v1_user_delete(external_id: str):
     for p in M.playerdb.all_players():
         if p.get("user") == name:
             M.playerdb.update(p["id"], {"user": ""})
+    note("Benutzer gelöscht", 1, name)
     return {"ok": True, "username": name}
 
 
@@ -603,6 +702,7 @@ async def v1_tour_import(data: TourImportIn):
         M.tour.plan(d)
     M._tour_names.clear()
     M.tour.save(d)
+    note("Turnier übertragen", 1, f"{d['name']} · {len(d['teams'])} Teams")
     return {"ok": True, "external_id": d["external_id"], "name": d["name"], "teams": len(d["teams"]),
             "matches": len(d["matches"]), "servers_needed": M.tour.needed_servers(d) if d["matches"] else 0,
             "team_ids": {t["ext_id"]: t["id"] for t in d["teams"]}}

@@ -9627,6 +9627,24 @@ def external_allowed(path: str) -> bool:
 
 
 @app.middleware("http")
+async def api_activity(request: Request, call_next):
+    """Homepage-API: jeden Aufruf zusammengefasst mitschreiben (Anzeige unter 🔌 API)."""
+    if not request.url.path.startswith("/api/v1/"):
+        return await call_next(request)
+    h: dict = {}
+    tok = extapi._ctx.set(h)
+    try:
+        resp = await call_next(request)
+    finally:
+        extapi._ctx.reset(tok)
+    try:
+        extapi.log_request(request.method, request.url.path, resp.status_code, h)
+    except Exception:  # noqa: BLE001 – Mitschreiben darf nie einen Aufruf stören
+        log.exception("API-Aktivität")
+    return resp
+
+
+@app.middleware("http")
 async def tunnel_gate(request: Request, call_next):
     if via_tunnel(request) and not external_allowed(request.url.path) \
             and not automation.get_settings().get("external_admin"):
@@ -9904,7 +9922,8 @@ class ApiOptIn(BaseModel):
 @app.get("/api/apikeys", dependencies=auth)
 async def apikeys_list(request: Request):
     _need_admin(request)
-    return {**extapi.list_keys(), "base": (automation.get_settings().get("external_url") or str(request.base_url)).rstrip("/")}
+    return {**extapi.list_keys(), "base": (automation.get_settings().get("external_url") or str(request.base_url)).rstrip("/"),
+            "activity": extapi.activity()}
 
 
 @app.post("/api/apikeys", dependencies=auth)
