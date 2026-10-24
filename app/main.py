@@ -5060,17 +5060,44 @@ async def steambot_get(request: Request):
     return {"settings": {k: v for k, v in d.items() if k not in ("key", "requested", "adds", "optout", "chat_seen")},
             "status": st, "players": players, "messages": (bot.get("messages") or [])[-30:], "friends": friends,
             "inbox": list(reversed(botchat.inbox()))[:40],
+            "create_games": {k: v.get("label") or k for k, v in templates.TEMPLATES.items()},
             "optouts": [{"steamid": s, "name": playerdb.display(playerdb.get(s)) if playerdb.get(s) else s, "t": t} for s, t in oo.items()]}
 
 
 class InboxIn(BaseModel):
-    status: str = Field(pattern="^(offen|erledigt)$")
+    status: str | None = Field(None, pattern="^(offen|erledigt)$")
+    game: str | None = Field(None, max_length=40)
 
 
 @app.post("/api/steambot/inbox/{eid}", dependencies=auth)
 async def steambot_inbox_set(eid: str, data: InboxIn, request: Request):
     _need_admin(request)
-    botchat.inbox_set(eid, data.status)
+    if data.game and data.game not in templates.TEMPLATES:
+        raise HTTPException(400, "Unbekanntes Spiel")
+    botchat.inbox_set(eid, data.status, game=data.game)
+    return {"ok": True}
+
+
+class InboxDecideIn(BaseModel):
+    game: str | None = Field(None, max_length=40)
+    reason: str = Field("", max_length=200)
+
+
+@app.post("/api/steambot/inbox/{eid}/approve", dependencies=auth)
+async def steambot_inbox_approve(eid: str, data: InboxDecideIn, request: Request):
+    """Serverwunsch: Ja – Server mit Standardwerten anlegen, der Spieler bekommt Bescheid und später die Adresse."""
+    _need_admin(request)
+    ok, msg = await botchat.approve(eid, data.game, by=request.state.user["username"])
+    if not ok:
+        raise HTTPException(400, msg)
+    return {"ok": True, "message": msg}
+
+
+@app.post("/api/steambot/inbox/{eid}/deny", dependencies=auth)
+async def steambot_inbox_deny(eid: str, data: InboxDecideIn, request: Request):
+    _need_admin(request)
+    if not await botchat.deny(eid, data.reason):
+        raise HTTPException(404, "Eintrag nicht gefunden")
     return {"ok": True}
 
 
@@ -7199,6 +7226,29 @@ async def gslt_assign(sid: str):
     gslt.assign(t["token"], name)
     drop_client(sid)
     return {"ok": True, "memo": t.get("memo")}
+
+
+async def create_default_server(game: str) -> dict:
+    """Neuen Server eines Spiels mit den Standardwerten anlegen (wie „Neuen Server anlegen“ ohne Änderungen).
+    Liefert den Anlege-Auftrag (id, …) – z. B. für Serverwünsche über den Steam-Bot."""
+    _need_docker()
+    if game not in templates.TEMPLATES:
+        raise HTTPException(400, "Unbekanntes Spiel")
+    sug = await suggest(game)
+    n, t = sug["n"], templates.TEMPLATES[game]
+    vals = {}
+    for k, _label, typ, dv, hint in t["fields"]:
+        v = str(dv if dv is not None else "")
+        v = v.replace("{n}", str(n)).replace("{port}", str(27030 + n)).replace("{tvport}", str(27020 + n))
+        vals[k] = _brandify(v)
+    vals = {k: (templates.default_admin_pw() if v == "{default_admin_pw}" else templates.default_join_pw() if v == "{default_join_pw}" else v)
+            for k, v in vals.items()}
+    vals.update({k: str(v) for k, v in (sug.get("values") or {}).items()})
+    base = (automation.get_settings().get("games_base") or "/srv/gameserver").rstrip("/")
+    data_dir = t["data_default"].replace("{base}", base).replace("{n}", str(n)).replace("{name}", vals.get("name") or f"{game}-{n}")
+    lan = [x["host"] for x in load_servers() if x.get("container") and re.fullmatch(r"\d+\.\d+\.\d+\.\d+", x.get("host") or "")]
+    host = max(set(lan), key=lan.count) if lan else _docker_host_ip()
+    return await _create_start(CreateIn(game=game, values=vals, data_dir=data_dir, host=host), host)
 
 
 @app.get("/api/templates/{game}/suggest", dependencies=auth)
@@ -9381,6 +9431,11 @@ async def create_server(data: CreateIn, request: Request):
     if data.game not in templates.TEMPLATES:
         raise HTTPException(400, "Unbekanntes Spiel")
     need_game(request, data.game, 4)
+    return await _create_start(data, _docker_host_ip(request))
+
+
+async def _create_start(data: CreateIn, default_host: str) -> dict:
+    """Server anlegen (Prüfungen, Steam-Token, Ports) und den Anlege-Auftrag starten – ohne Rechteprüfung."""
     if data.game in gslt.APPS and not (data.values.get("token") or "").strip():
         try:   # Steam-Token automatisch: freien gespeicherten nehmen oder (mit API-Schlüssel) neu anlegen
             t = await gslt.get_or_create(gslt.APPS[data.game], (data.values.get("name") or data.game)[:32], set(await _gslt_reconcile()))
@@ -9416,7 +9471,7 @@ async def create_server(data: CreateIn, request: Request):
     dup = [str(p) for p, k in inner.items() if len(k) > 1]
     if dup:
         raise HTTPException(400, "Port doppelt angegeben: " + ", ".join(dup))
-    host = (data.host or "").strip() or _docker_host_ip(request)
+    host = (data.host or "").strip() or default_host
     try:   # öffentliche IP als Server-Adresse taugt nicht (RCON/Status laufen im LAN) -> LAN-Adresse der anderen Server
         if not ipaddress.ip_address(host).is_private:
             lan = [x["host"] for x in load_servers() if re.fullmatch(r"\d+\.\d+\.\d+\.\d+", x.get("host") or "")

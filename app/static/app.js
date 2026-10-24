@@ -4128,15 +4128,38 @@ function renderBotFriends(){
 $("#botFriendFilter").addEventListener("input", renderBotFriends);
 function renderBotInbox(){
   const d = botData; if (!d) return;
-  const items = d.inbox || [], open = items.filter(x => x.status !== "erledigt").length;
+  const items = d.inbox || [], open = items.filter(x => x.status === "offen").length;
+  const ST = {angelegt: "⏳ wird angelegt", fertig: "✅ läuft", abgelehnt: "✕ abgelehnt", fehler: "⚠️ Fehler", erledigt: "✓ erledigt"};
+  const gameOpts = sel => `<option value="">Spiel wählen …</option>` + Object.entries(d.create_games || {})
+    .sort((a, b) => a[1].localeCompare(b[1])).map(([k, l]) => `<option value="${k}" ${k === sel ? "selected" : ""}>${esc(l)}</option>`).join("");
   $("#botInboxSub").textContent = open ? `${open} offen` : "Vorschläge und Serverwünsche per Chat";
-  $("#botInbox").innerHTML = items.slice(0, 12).map(x => `<div class="ibx ${x.status === "erledigt" ? "done" : ""}">
-      <span class="k">${x.kind === "server" ? "🖥️ Server" + (x.game && GAMES[x.game] ? " · " + esc(GAMES[x.game].short || GAMES[x.game].label) : "") : "💡 Idee"}</span>
-      <div class="tx"><b>${esc(x.name)}</b> <span class="hint">${new Date(x.t * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"})}</span><div>${esc(x.text)}</div></div>
-      <span style="flex:none">${x.status === "erledigt" ? `<button class="small" data-ibx="${x.id}" data-st="offen" title="wieder öffnen">↺</button>` : `<button class="small" data-ibx="${x.id}" data-st="erledigt" title="erledigt">✓</button>`}<button class="small danger" data-ibxdel="${x.id}" title="löschen">✕</button></span></div>`).join("")
-    || `<div class="hint">Noch nichts. Spieler schreiben dem Bot z. B. „Vorschlag: …“ oder „Server: Valheim für 6 Leute“.</div>`;
-  $$("[data-ibx]").forEach(b => b.onclick = async () => { await api(`/api/steambot/inbox/${b.dataset.ibx}`, {body: {status: b.dataset.st}}); botLoaded = false; loadBot(); });
-  $$("[data-ibxdel]").forEach(b => b.onclick = async () => { await api(`/api/steambot/inbox/${b.dataset.ibxdel}`, {method: "DELETE"}); botLoaded = false; loadBot(); });
+  $("#botInbox").innerHTML = items.slice(0, 12).map(x => {
+    const isSrv = x.kind === "server", undecided = x.status === "offen" || x.status === "fehler";
+    const head = isSrv ? "🖥️ Server" + (x.game && GAMES[x.game] ? " · " + esc(GAMES[x.game].short || GAMES[x.game].label) : "") : "💡 Idee";
+    let act;
+    if (isSrv && undecided) act = `<div class="row" style="gap:4px;margin-top:4px;flex-wrap:wrap"><select data-ibxgame="${x.id}" style="width:auto;padding:3px 6px">${gameOpts(x.game)}</select>
+        <button class="small primary" data-ibxyes="${x.id}" title="Server mit Standardwerten anlegen – der Spieler bekommt Bescheid und später die Adresse">✓ Ja, anlegen</button>
+        <button class="small danger" data-ibxno="${x.id}" title="ablehnen – der Spieler bekommt Bescheid">✕ Nein</button></div>`;
+    else act = "";
+    const right = isSrv && !undecided ? `<span class="hint">${esc(ST[x.status] || x.status)}${x.by ? " · " + esc(x.by) : ""}</span>`
+      : !isSrv ? (x.status === "erledigt" ? `<button class="small" data-ibx="${x.id}" data-st="offen" title="wieder öffnen">↺</button>` : `<button class="small" data-ibx="${x.id}" data-st="erledigt" title="erledigt">✓</button>`) : "";
+    return `<div class="ibx ${x.status !== "offen" && x.status !== "fehler" ? "done" : ""}"><span class="k">${head}</span>
+      <div class="tx"><b>${esc(x.name)}</b> <span class="hint">${new Date(x.t * 1000).toLocaleString("de-DE", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"})}</span>
+        <div>${esc(x.text)}</div>${x.status === "fehler" && x.note ? `<div class="hint" style="color:var(--bad,#e5534b)">${esc(x.note)}</div>` : ""}${act}</div>
+      <span style="flex:none;display:flex;gap:4px;align-items:center">${right}<button class="small danger" data-ibxdel="${x.id}" title="löschen">🗑</button></span></div>`;
+  }).join("") || `<div class="hint">Noch nichts. Spieler schreiben dem Bot z. B. „Vorschlag: …“ oder „Server: Valheim für 6 Leute“.</div>`;
+  const reload = () => { botLoaded = false; loadBot(); };
+  $$("[data-ibx]").forEach(b => b.onclick = async () => { await api(`/api/steambot/inbox/${b.dataset.ibx}`, {body: {status: b.dataset.st}}); reload(); });
+  $$("[data-ibxdel]").forEach(b => b.onclick = async () => { await api(`/api/steambot/inbox/${b.dataset.ibxdel}`, {method: "DELETE"}); reload(); });
+  $$("[data-ibxgame]").forEach(sel => sel.onchange = async () => { try { await api(`/api/steambot/inbox/${sel.dataset.ibxgame}`, {body: {game: sel.value}}); } catch (e) { toast(e.message, true); } });
+  $$("[data-ibxyes]").forEach(b => b.onclick = async () => {
+    const game = $(`[data-ibxgame="${b.dataset.ibxyes}"]`)?.value; if (!game) return toast("Erst das Spiel auswählen", true);
+    b.disabled = true;
+    try { await api(`/api/steambot/inbox/${b.dataset.ibxyes}/approve`, {body: {game}}); toast(`${GAMES[game]?.label || game}-Server wird angelegt – der Spieler bekommt Bescheid`); reload(); }
+    catch (e) { toast(e.message, true); b.disabled = false; } });
+  $$("[data-ibxno]").forEach(b => b.onclick = async () => {
+    const reason = prompt("Ablehnen – Begründung für den Spieler (optional):", ""); if (reason === null) return;
+    try { await api(`/api/steambot/inbox/${b.dataset.ibxno}/deny`, {body: {reason}}); toast("Abgelehnt – der Spieler bekommt Bescheid"); reload(); } catch (e) { toast(e.message, true); } });
 }
 function renderBotMsgs(msgs, names){
   // ausgehende Rundschreiben (gleicher Text kurz hintereinander) zu einer Zeile zusammenfassen
