@@ -1457,7 +1457,16 @@ async def _apply_auto_name(s: dict, g: str, st: dict) -> None:
             base = _auto_name(s, st.get("hostname"), "") or ""
             t_ = _wf_pending_restart.get(s["id"])
             # nur wenn der Name gar nicht zum Schema passt (Modus wechselt mit der Rotation – dafür kein Neustart)
-            if want and base and not st["hostname"].startswith(base) and not (t_ and not t_.done()) and time.time() - _rename_try.get(s["id"], 0) > 300:
+            hn = re.sub(r"\s+", " ", st["hostname"]).strip().lower()
+            fits = hn.startswith(re.sub(r"\s+", " ", base).strip().lower()) or (len(hn) >= 20 and base.lower().startswith(hn))  # evtl. gekürzt
+            tries = [t for t in _wf_name_restarts.get(s["id"], []) if time.time() - t < 86400]
+            if want and base and not fits and len(tries) >= 2:
+                if not _wf_name_warned.get(s["id"]):
+                    _wf_name_warned[s["id"]] = True
+                    log.warning("Wreckfest %s: Name „%s“ passt nach 2 Neustarts noch nicht zu „%s“ – keine weiteren Neustarts heute",
+                                s["container"], st["hostname"], want)
+            elif want and base and not fits and not (t_ and not t_.done()) and time.time() - _rename_try.get(s["id"], 0) > 300:
+                _wf_name_restarts[s["id"]] = tries + [time.time()]
                 _rename_try[s["id"]] = time.time()
                 await _wf_write(s["container"], {"server_name": want})
                 _wf_pending_restart[s["id"]] = asyncio.create_task(_wf_restart_when_empty(s["id"], s["container"]))
@@ -1483,6 +1492,8 @@ async def _apply_auto_name(s: dict, g: str, st: dict) -> None:
 
 
 _rename_try: dict[str, float] = {}
+_wf_name_restarts: dict[str, list[float]] = {}   # Schutz gegen Neustart-Schleifen, wenn Wreckfest den Namen anders anzeigt
+_wf_name_warned: dict[str, bool] = {}
 
 
 def _mode_hostname(s: dict, hostname: str | None, mode_label: str, settings: dict) -> str | None:
